@@ -33,6 +33,12 @@ axis, column titles. Not compared.
 The fixed band after the Body (at the bottom when time runs down): legend, stamp. Not
 compared. It moves with the end of the Body, so each Plan has its own Footer position.
 
+**Ignored area**
+A part of the Body that is not compared, like the Header and Footer: usually a
+sidebar along the whole Body, sometimes a single box. It is usually in the same place in
+every version of a Plan, but not always.
+_Avoid_: mask, exclusion, sidebar (only one kind)
+
 **Body**
 The part of a Plan between Header and Footer, where the schedule itself is drawn,
 including the time labels along its edge. The only part that is compared. Its length
@@ -47,7 +53,8 @@ _Avoid_: bar (only one of its shapes), task
 
 **Offset**
 How far the New Plan's Body is shifted along the Time direction so that it lies exactly
-on the Old Plan's Body. One Offset for the whole Body, set by the user by eye.
+on the Old Plan's Body. One Offset for the whole Body, found from the drawing and
+confirmed by the user. Often 0, when both Plans cover the same timespan.
 _Avoid_: shift, registration
 
 **Overhang**
@@ -58,15 +65,23 @@ no Differences.
 ## Result
 
 **Difference**
-Something drawn in one Plan and missing in the other, once the Plans are aligned. It is
-about the drawing, not the meaning: an Activity that moved by three days shows up as one
-Removed and one Added Difference, not as "moved".
+A drawn object or a word that is not identical in both Plans once they are aligned: it
+moved, changed shape or colour, appeared, disappeared, or its text changed. It is about
+the drawing, not the meaning: an Activity that moved by three days shows as its Removed
+part, its Added part and its Unchanged part, not as "moved".
 
 **Added**
-A Difference that is in the New Plan but not in the Old Plan. Shown in red.
+The part of a Difference that only the New Plan draws; also a recoloured object and a
+new or replaced word. Shown in red.
 _Avoid_: new, inserted
 
 **Removed**
-A Difference that is in the Old Plan but not in the New Plan. Shown in yellow, outlined
-with a dashed x–x–x line, as demolition is marked in German construction drawings.
+The part of a Difference that only the Old Plan draws; also a deleted word or a word
+that only lost letters. Shown in yellow, outlined with a dashed x–x–x line, as
+demolition is marked in German construction drawings.
 _Avoid_: deleted, old
+
+**Unchanged part**
+The part of a Difference that both Plans draw in the same place, such as the common
+stretch of a hatched stripe that was extended. Shown in a neutral grey.
+_Avoid_: overlap, kept
