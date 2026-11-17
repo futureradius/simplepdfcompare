@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Difference detection prototype</title>
+<style>
+  :root {
+    --bg: #fbfaf8; --panel: #ffffff; --ink: #1d1d1f; --muted: #6b6b70; --line: #e4e2dd;
+    --accent: #2f5fd0; --ok: #1f7a3d; --bad: #b42318;
+    --removed: #e8b400; --removed-fill: rgba(255, 214, 0, .35); --added: #d92d20; --added-fill: rgba(217, 45, 32, .18); --gt: #2f5fd0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --bg: #161618; --panel: #1f1f22; --ink: #ececef; --muted: #9a9aa2; --line: #333338; --accent: #7aa2ff; --ok: #5cc27f; --bad: #ff7b6e; --gt: #7aa2ff; }
+  }
+  :root[data-theme="dark"] { --bg: #161618; --panel: #1f1f22; --ink: #ececef; --muted: #9a9aa2; --line: #333338; --accent: #7aa2ff; --ok: #5cc27f; --bad: #ff7b6e; --gt: #7aa2ff; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1180px; margin: 0 auto; padding: 28px 16px 80px; }
+  h1 { font-size: 24px; margin: 0 0 4px; }
+  h2 { font-size: 17px; margin: 32px 0 10px; }
+  p { margin: 6px 0; }
+  .muted { color: var(--muted); }
+  .q { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin: 16px 0; }
+  .pairs { display: flex; gap: 8px; flex-wrap: wrap; margin: 18px 0 8px; }
+  button.pill { border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 999px; padding: 6px 14px; font: inherit; cursor: pointer; }
+  button.pill[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .tablewrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { font-size: 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+  tbody tr.sel { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .ok { color: var(--ok); font-weight: 600; } .bad { color: var(--bad); font-weight: 600; }
+  .stats { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--muted); margin: 8px 0 0; }
+  .stats b { color: var(--ink); font-weight: 600; }
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 13px; color: var(--muted); margin: 6px 0 12px; }
+  .sw { display: inline-block; width: 18px; height: 11px; vertical-align: -1px; margin-right: 5px; border-radius: 2px; }
+  .change { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin: 12px 0; }
+  .change h3 { font-size: 15px; margin: 0 0 4px; }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; font-size: 13px; margin-bottom: 8px; }
+  .chip { border: 1px solid var(--line); border-radius: 6px; padding: 1px 8px; }
+  .crops { display: flex; gap: 14px; flex-wrap: wrap; }
+  figure { margin: 0; }
+  figcaption { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  .crop { position: relative; display: inline-block; line-height: 0; border: 1px solid var(--line); background: #fff; max-width: 100%; }
+  .crop img { display: block; max-width: 100%; height: auto; }
+  .crop svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .notes li { margin: 4px 0; }
+  code { font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Difference detection prototype</h1>
+  <p class="muted">Throwaway prototype for the ticket <i>"Which Difference detection holds up on the synthetic pair?"</i>. Generated <span id="gen"></span>.</p>
+  <div class="q">
+    <b>Question:</b> which way of detecting Differences holds up on the synthetic pair, and what shape does a Difference have?
+    Two methods run on both sample pairs, with the exact Offset and with a by-eye Offset that is <span id="eyeerr"></span> mm off:
+    <ul>
+      <li><b>Objects</b> match every drawn line, area, hatch and letter in the Old Plan with the same thing in the New Plan, moved by the Offset. Anything left over is a Difference, outlined as the whole object; changed letters widen to the whole word or the whole label. "Auto-refined" first corrects the by-eye Offset by voting.</li>
+      <li><b>Raster</b> renders both Bodies at 4 px/mm, one on top of the other, and marks ink that has no ink in the other Plan within the tolerance (±0.25 or ±0.5 mm). Differences are pixel regions, outlined by their box.</li>
+    </ul>
+    Pick a pair, then click a row to see where its Differences land.
+  </div>
+
+  <div class="pairs" id="pairs"></div>
+  <p class="muted" id="pairinfo"></p>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Scenario</th><th>Planted found</th><th>Box fit</th><th>False alarms</th><th>Body flagged</th><th>Time</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table></div>
+  <div class="stats" id="stats"></div>
+
+  <h2>Planted changes</h2>
+  <div class="legend">
+    <span><span class="sw" style="border:1.5px dashed var(--gt)"></span>ground truth</span>
+    <span><span class="sw" style="background:var(--removed-fill);border:1.5px dashed var(--removed)"></span>detected Removed (Old Plan)</span>
+    <span><span class="sw" style="background:var(--added-fill);border:1.5px solid var(--added)"></span>detected Added (New Plan)</span>
+  </div>
+  <div id="changes"></div>
+
+  <h2>False alarms <span class="muted" id="facount"></span></h2>
+  <p class="muted">Detected Differences that touch no planted change. The first 8, each shown in the Old and the New Plan.</p>
+  <div id="fas"></div>
+
+  <h2>Things to look at</h2>
+  <ul class="notes">
+    <li><b>Long pair, Raster, exact Offset:</b> the false alarms sit on the 7 dashed station lines (control C1). Their dashes start at each Body's top, so after the Offset they are out of phase.</li>
+    <li><b>D5 / D6 under Raster:</b> missed. The labels sit on a hatched area, and the tolerance around the hatch lines swallows the changed letters. At 4 px/mm, "15" → "18" (R2) also hides inside the tolerance.</li>
+    <li><b>D4 (stripe extended):</b> Objects mark the whole old stripe and the whole new stripe. Raster marks only the part that changed. Which one should the user see?</li>
+    <li><b>D5 / D6 text:</b> compare "Objects, exact Offset" (changed word) with "…whole label" (the whole label, as the ground truth draws it).</li>
+    <li><b>By-eye Offset without refinement:</b> Objects flags nearly every object (exact matching has no slack). Raster at ±0.25 mm explodes; at ±0.5 mm it is quiet but misses more. With auto-refinement, Objects is back to exact.</li>
+  </ul>
+</main>
+<script>
+const DATA = /*DATA*/null;
+const $ = (id) => document.getElementById(id);
+const state = { pair: 0, sc: DATA.scenarios[0].id };
+try { const s = JSON.parse(localStorage.getItem("detproto") || "null"); if (s && DATA.pairs[s.pair]) Object.assign(state, s); } catch {}
+const save = () => { try { localStorage.setItem("detproto", JSON.stringify(state)); } catch {} };
+$("gen").textContent = new Date(DATA.generated).toLocaleString();
+$("eyeerr").textContent = DATA.byEyeError;
+
+const NS = "http://www.w3.org/2000/svg";
+const area = (b) => Math.max(0, b.x1 - b.x0) * Math.max(0, b.y1 - b.y0);
+const hit = (a, b) => a.x0 <= b.x1 && b.x0 <= a.x1 && a.y0 <= b.y1 && b.y0 <= a.y1;
+const fmtMs = (ms) => (ms >= 1000 ? (ms / 1000).toFixed(1) + " s" : ms + " ms");
+
+function flaggedShare(pair, r) {
+  const across = pair.axis === "y" ? pair.pageMm.old[0] : pair.pageMm.old[1];
+  const total = (pair.window[1] - pair.window[0]) * across;
+  const a = r.detected.Removed.reduce((s, b) => s + area(b), 0) + r.detected.Added.reduce((s, b) => s + area(b), 0);
+  return Math.min(1, a / 2 / total);
+}
+function boxFit(r) {
+  const parts = r.score.rows.flatMap((x) => x.parts).filter((p) => p.found);
+  return parts.length ? parts.reduce((s, p) => s + p.iou, 0) / parts.length : 0;
+}
+
+function overlay(crop, gtBoxes, detBoxes, kind) {
+  const wrap = document.createElement("div");
+  wrap.className = "crop";
+  const img = new Image();
+  img.src = crop.src; img.alt = "";
+  wrap.append(img);
+  const r = crop.rect, svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("viewBox", `${r.x0} ${r.y0} ${r.x1 - r.x0} ${r.y1 - r.y0}`);
+  svg.setAttribute("preserveAspectRatio", "none");
+  const rect = (b, attrs) => {
+    if (!hit(b, r)) return;
+    const e = document.createElementNS(NS, "rect");
+    e.setAttribute("x", b.x0); e.setAttribute("y", b.y0);
+    e.setAttribute("width", Math.max(0.05, b.x1 - b.x0)); e.setAttribute("height", Math.max(0.05, b.y1 - b.y0));
+    e.setAttribute("vector-effect", "non-scaling-stroke");
+    for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+    svg.append(e);
+  };
+  const det = kind === "Removed"
+    ? { fill: "var(--removed-fill)", stroke: "var(--removed)", "stroke-width": 2, "stroke-dasharray": "5 3" }
+    : { fill: "var(--added-fill)", stroke: "var(--added)", "stroke-width": 2 };
+  for (const b of detBoxes) rect(b, det);
+  for (const b of gtBoxes) rect(b, { fill: "none", stroke: "var(--gt)", "stroke-width": 1.5, "stroke-dasharray": "3 3" });
+  wrap.append(svg);
+  return wrap;
+}
+
+function fig(caption, node) {
+  const f = document.createElement("figure"), c = document.createElement("figcaption");
+  c.textContent = caption; f.append(c, node); return f;
+}
+
+function render() {
+  const pair = DATA.pairs[state.pair];
+  const r = pair.results.find((x) => x.id === state.sc) || pair.results[0];
+  $("pairs").replaceChildren(...DATA.pairs.map((p, i) => {
+    const b = document.createElement("button");
+    b.className = "pill"; b.setAttribute("aria-pressed", i === state.pair);
+    b.textContent = p.name === "down" ? "Long pair: time ↓ (14 m)" : "Small pair: time →";
+    b.onclick = () => { state.pair = i; save(); render(); };
+    return b;
+  }));
+  $("pairinfo").textContent = `Offset ${pair.offsetMm} mm · ${pair.objects.old.toLocaleString()} / ${pair.objects.new.toLocaleString()} objects (Old / New) · display list ${pair.prep.displayList.join(" / ")} ms · object extraction ${pair.prep.extract.join(" / ")} ms`;
+
+  $("rows").replaceChildren(...pair.results.map((x) => {
+    const sc = DATA.scenarios.find((s) => s.id === x.id), tr = document.createElement("tr");
+    if (x.id === r.id) tr.className = "sel";
+    const all = x.score.found === x.score.total, fa = x.faCount, share = flaggedShare(pair, x);
+    tr.innerHTML = `<td>${sc.label}</td><td class="num ${all ? "ok" : "bad"}">${x.score.found} / ${x.score.total}</td>`
+      + `<td class="num">${(boxFit(x) * 100).toFixed(0)} %</td><td class="num ${fa ? "bad" : "ok"}">${fa.toLocaleString()}</td>`
+      + `<td class="num ${share > 0.05 ? "bad" : ""}">${(share * 100).toFixed(share < 0.01 ? 2 : 0)} %</td><td class="num">${fmtMs(x.totalMs)}</td>`;
+    tr.onclick = () => { state.sc = x.id; save(); render(); };
+    return tr;
+  }));
+
+  const st = [];
+  if (r.refined) st.push(`Offset refined from <b>${(pair.offsetMm + DATA.byEyeError).toFixed(2)}</b> to <b>${r.offset.toFixed(3)}</b> mm (${r.refined.votes} votes)`);
+  else st.push(`Offset used <b>${r.offset.toFixed(2)}</b> mm`);
+  const s = r.stats;
+  if ("unmatchedOld" in s) st.push(`left over: <b>${s.unmatchedOld.toLocaleString()}</b> of ${s.objectsOld.toLocaleString()} Old, <b>${s.unmatchedNew.toLocaleString()}</b> of ${s.objectsNew.toLocaleString()} New objects in the compared window`, `changed words <b>${s.changedWords}</b>`);
+  if ("diffPx" in s) st.push(`differing pixels <b>${s.diffPx.toLocaleString()}</b> of ${s.mpxPerPlan} Mpx per Plan`);
+  st.push("time: " + Object.entries(r.timings).map(([k, v]) => `${k} <b>${fmtMs(v)}</b>`).join(", "));
+  $("stats").innerHTML = st.map((x) => `<span>${x}</span>`).join("");
+
+  $("changes").replaceChildren(...pair.changes.map((c) => {
+    const row = r.score.rows.find((x) => x.id === c.id);
+    const d = document.createElement("div");
+    d.className = "change";
+    d.innerHTML = `<h3>${c.id} · ${c.what}</h3>`;
+    const chips = document.createElement("div");
+    chips.className = "chips";
+    chips.innerHTML = row.parts.map((p) => `<span class="chip">${p.kind}: ${p.found ? `<span class="ok">found</span> · box fit ${(p.iou * 100).toFixed(0)} %${p.pieces > 1 ? ` · ${p.pieces} pieces` : ""}` : `<span class="bad">missed</span>`}</span>`).join("");
+    const gtOld = c.gt.filter((g) => g.plan === "old").map((g) => g.boxMm), gtNew = c.gt.filter((g) => g.plan === "new").map((g) => g.boxMm);
+    const crops = document.createElement("div");
+    crops.className = "crops";
+    crops.append(fig("Old Plan · Removed", overlay(c.old, gtOld, r.detected.Removed, "Removed")), fig("New Plan · Added", overlay(c.new, gtNew, r.detected.Added, "Added")));
+    d.append(chips, crops);
+    return d;
+  }));
+
+  $("facount").textContent = `(${r.faCount.toLocaleString()})`;
+  $("fas").replaceChildren(...(r.faCrops.length ? r.faCrops.map((f, i) => {
+    const d = document.createElement("div");
+    d.className = "change";
+    d.innerHTML = `<h3>${f.kind} #${i + 1}</h3>`;
+    const crops = document.createElement("div");
+    crops.className = "crops";
+    crops.append(fig("Old Plan", overlay(f.old, [], r.detected.Removed, "Removed")), fig("New Plan", overlay(f.new, [], r.detected.Added, "Added")));
+    d.append(crops);
+    return d;
+  }) : [Object.assign(document.createElement("p"), { className: "ok", textContent: "None." })]));
+}
+render();
+</script>
+</body>
+</html>

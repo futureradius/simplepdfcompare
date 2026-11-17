@@ -1,0 +1,667 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Compare prototype</title>
+<script type="importmap">{ "imports": { "mupdf": "/node_modules/mupdf/dist/mupdf.js" } }</script>
+<style>
+  :root {
+    --bg: #fbfaf8; --panel: #fff; --ink: #1d1d1f; --muted: #6b6b70; --line: #e4e2dd; --accent: #2f5fd0;
+    --yellow: #f0be00; --red: #dc2a1e; --grey: #4a4a4a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --bg: #161618; --panel: #1f1f22; --ink: #ececef; --muted: #9a9aa2; --line: #333338; --accent: #7aa2ff; }
+  }
+  :root[data-theme="dark"] { --bg: #161618; --panel: #1f1f22; --ink: #ececef; --muted: #9a9aa2; --line: #333338; --accent: #7aa2ff; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1400px; margin: 0 auto; padding: 20px 16px 60px; }
+  h1 { font-size: 21px; margin: 0; }
+  h2 { font-size: 15px; margin: 0 0 8px; }
+  .muted { color: var(--muted); }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin: 14px 0; }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; }
+  label { display: inline-flex; align-items: center; gap: 6px; margin-right: 14px; }
+  input[type=number] { width: 90px; font: inherit; padding: 2px 6px; background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; }
+  button { font: inherit; padding: 6px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  .strips { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+  .strip figcaption { font-size: 12px; color: var(--muted); }
+  .strip canvas { display: block; border: 1px solid var(--line); cursor: crosshair; background: #fff; max-width: 100%; }
+  figure { margin: 0; }
+  #status { min-height: 1.5em; }
+  .layout { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 14px; align-items: start; }
+  .layout > * { min-width: 0; }
+  @media (max-width: 800px) { .layout { grid-template-columns: minmax(0, 1fr); } }
+  #list { max-height: 70vh; overflow: auto; padding: 0; margin: 0; list-style: none; }
+  #list li { padding: 6px 8px; border-radius: 6px; cursor: pointer; display: flex; gap: 8px; align-items: baseline; }
+  #list li:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+  #list li.sel { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+  .dot { width: 10px; height: 10px; border-radius: 50%; flex: none; display: inline-block; }
+  .viewwrap { overflow: auto; max-height: 78vh; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+  #view { display: block; max-width: none; }
+  #overview { width: 100%; height: 26px; display: block; cursor: pointer; border-radius: 4px; background: color-mix(in srgb, var(--ink) 6%, transparent); }
+  .controls { display: flex; flex-wrap: wrap; gap: 6px 4px; align-items: center; margin-bottom: 10px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 13px; color: var(--muted); margin: 6px 0 10px; }
+  .cands label { display: flex; margin: 2px 0; }
+  pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px; overflow: auto; max-height: 340px; font-size: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Compare prototype: object matching</h1>
+  <p class="muted">Throwaway prototype for the ticket <i>"Which Difference detection holds up on the synthetic pair?"</i>. Runs only on this computer: the PDFs are read by this browser tab and never sent anywhere.</p>
+
+  <div class="panel">
+    <h2>1 · Plans</h2>
+    <div class="grid2">
+      <div id="setup-old"><b>Old Plan</b> <input type="file" accept="application/pdf" id="file-old"></div>
+      <div id="setup-new"><b>New Plan</b> <input type="file" accept="application/pdf" id="file-new"></div>
+    </div>
+    <p style="margin:10px 0 0">Time direction:
+      <label><input type="radio" name="dir" value="y" checked> ↓ down</label>
+      <label><input type="radio" name="dir" value="x"> → right</label>
+    </p>
+    <p class="muted" style="margin:6px 0 0">Or first <button id="demo-down">Try the synthetic pair ↓</button> <button id="demo-right">Try the synthetic pair →</button></p>
+  </div>
+
+  <div class="panel" id="bodies" hidden>
+    <h2>2 · Header and Footer lines</h2>
+    <p class="muted" style="margin:0">Click in the strips to set where each Plan's Header ends and its Footer starts (or type mm). Everything outside is not compared.<br>
+      <b>Sidebars:</b> drag across a strip to ignore that band over the whole length of the Plan. <label style="margin:0"><input type="checkbox" id="band-both" checked> in both Plans</label></p>
+    <div class="grid2" id="bodyrows"></div>
+    <div id="ignores" class="muted" style="margin-top:8px"></div>
+    <p style="margin:12px 0 0"><button class="primary" id="go">Compare</button> <span id="status" class="muted"></span></p>
+  </div>
+
+  <div id="results" hidden>
+    <div class="panel">
+      <div class="grid2">
+        <div>
+          <h2>Offset</h2>
+          <div class="cands" id="cands"></div>
+          <label style="margin-top:6px">or type <input type="number" step="0.01" id="offset-manual"> mm <button id="offset-apply">Use</button></label>
+        </div>
+        <div>
+          <h2>View</h2>
+          <p style="margin:2px 0"><label>Outline <input type="range" id="outline" min="0" max="50" value="6"> <span id="outline-v"></span> px</label></p>
+          <p style="margin:2px 0"><label>Plan contrast <input type="range" id="contrast" min="10" max="100" value="45"> <span id="contrast-v"></span> %</label></p>
+          <p style="margin:2px 0"><label>Zoom <input type="range" id="zoom" min="1" max="8" step="0.5" value="1"> <span id="zoom-v"></span>×</label></p>
+          <p style="margin:2px 0"><label><input type="checkbox" id="show-recol" checked> Show recoloured objects (red: a recolour is a change)</label></p>
+          <p style="margin:2px 0"><label>Match tolerance <select id="tol"><option>0.05</option><option>0.1</option><option>0.25</option><option>0.5</option></select> mm</label> <span class="muted">(reruns the comparison)</span></p>
+        </div>
+      </div>
+    </div>
+
+    <div class="layout">
+      <div class="panel" style="margin:0">
+        <h2 id="count"></h2>
+        <ul id="list"></ul>
+      </div>
+      <div class="panel" style="margin:0">
+        <div class="controls">
+          <button id="prev">← Previous</button><button id="next">Next →</button>
+          <span class="muted" id="where" style="margin-left:8px"></span>
+        </div>
+        <canvas id="overview" height="26"></canvas>
+        <div class="legend">
+          <span><span class="dot" style="background:var(--grey)"></span>stays (changed object, same in both)</span>
+          <span><span class="dot" style="background:var(--yellow)"></span>cut / removed (Old only)</span>
+          <span><span class="dot" style="background:var(--red)"></span>new (New only)</span>
+          <span>recoloured: red</span>
+          <span>Keys: ← → or J K · hold Space: Old Plan · Shift-drag: ignore a box</span>
+        </div>
+        <div class="viewwrap"><canvas id="view"></canvas></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Statistics (counts only, no text or drawing content)</h2>
+      <p class="muted" style="margin:0 0 6px">This is what you could paste back into the chat. Read it first; nothing else from the Plans is in it.</p>
+      <button id="copy">Copy</button>
+      <pre id="stats"></pre>
+    </div>
+  </div>
+</main>
+
+<script type="module">
+import * as mupdf from "mupdf";
+import { extractObjects, K } from "./extract.mjs";
+import { refineOffset, inBand, placeObjects, matchObjects, textChanges, groupItems, bboxOf } from "./detect.mjs";
+
+const $ = (id) => document.getElementById(id);
+const now = () => performance.now();
+const store = { get(k, d) { try { const v = localStorage.getItem("cmpproto." + k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set(k, v) { try { localStorage.setItem("cmpproto." + k, JSON.stringify(v)); } catch {} } };
+const COL = { grey: [74, 74, 74], yellow: [240, 190, 0], red: [220, 42, 30] };
+
+const S = { plans: {}, axis: "y", res: null, sel: 0, ignores: [] };
+const axisT = () => (S.axis === "y" ? 1 : 0);
+const lenOf = (p) => (S.axis === "y" ? p.pageMm[1] : p.pageMm[0]);
+const acrossOf = (p) => (S.axis === "y" ? p.pageMm[0] : p.pageMm[1]);
+
+for (const k of ["outline", "contrast", "zoom"]) { $(k).value = store.get(k, $(k).value); }
+const showVals = () => { $("outline-v").textContent = $("outline").value; $("contrast-v").textContent = $("contrast").value; $("zoom-v").textContent = $("zoom").value; };
+showVals();
+
+// ---------- loading ----------
+
+async function loadPlan(which, file, body) {
+  status(`Reading ${which} Plan…`);
+  const buf = new Uint8Array(await file.arrayBuffer());
+  const doc = mupdf.Document.openDocument(buf, "application/pdf");
+  const page = doc.loadPage(0);
+  const t0 = now();
+  const dl = page.toDisplayList();
+  const b = page.getBounds();
+  const plan = { doc, page, dl, pages: doc.countPages(), pageMm: [(b[2] - b[0]) * K, (b[3] - b[1]) * K], dlMs: Math.round(now() - t0), body };
+  S.plans[which] = plan;
+  if (!S.plans.old || !S.plans.new) { status(""); return; }
+  const tall = S.plans.old.pageMm[1] > S.plans.old.pageMm[0];
+  document.querySelector(`input[name=dir][value=${tall ? "y" : "x"}]`).checked = true;
+  S.axis = tall ? "y" : "x";
+  setupBodies();
+  status("");
+}
+$("file-old").onchange = (e) => e.target.files[0] && loadPlan("old", e.target.files[0]);
+$("file-new").onchange = (e) => e.target.files[0] && loadPlan("new", e.target.files[0]);
+for (const r of document.querySelectorAll("input[name=dir]")) r.onchange = () => { S.axis = r.value; if (S.plans.old && S.plans.new) setupBodies(); };
+
+// The synthetic pair, with Header/Footer lines from its ground truth.
+async function demo(name, auto) {
+  const gt = await (await fetch("/samples/ground-truth.json")).json(), pair = gt.pairs.find((p) => p.name === name);
+  S.plans = {};
+  document.querySelector(`input[name=dir][value=${pair.timeDirection === "down" ? "y" : "x"}]`).checked = true;
+  for (const which of ["old", "new"]) {
+    const blob = await (await fetch("/" + pair[which].file)).blob();
+    await loadPlan(which, blob, [pair[which].headerMm[1], pair[which].footerMm[0]]);
+  }
+  if (auto) $("go").click();
+}
+$("demo-down").onclick = () => demo("down");
+$("demo-right").onclick = () => demo("right");
+const q = new URLSearchParams(location.search);
+if (q.get("demo")) demo(q.get("demo"), q.has("auto"));
+if (q.get("sel")) addEventListener("compared", () => show(+q.get("sel")));
+
+function status(t) { $("status").textContent = t; }
+
+// ---------- Header / Footer ----------
+
+function renderRGB(dl, rect, s, shift = 0) {
+  const w = Math.max(1, Math.round((rect.x1 - rect.x0) * s)), h = Math.max(1, Math.round((rect.y1 - rect.y0) * s));
+  const pix = new mupdf.Pixmap(mupdf.ColorSpace.DeviceRGB, [0, 0, w, h], false);
+  pix.clear(255);
+  const dx = S.axis === "x" ? shift : 0, dy = S.axis === "y" ? shift : 0;
+  const dev = new mupdf.DrawDevice([K * s, 0, 0, K * s, (dx - rect.x0) * s, (dy - rect.y0) * s], pix);
+  dl.run(dev, mupdf.Matrix.identity);
+  dev.close();
+  const px = Uint8Array.from(pix.getPixels());
+  dev.destroy(); pix.destroy();
+  return { px, w, h };
+}
+function toCanvas(canvas, { px, w, h }) {
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext("2d"), img = ctx.createImageData(w, h);
+  for (let i = 0, j = 0; i < w * h; i++, j += 3) { img.data[4 * i] = px[j]; img.data[4 * i + 1] = px[j + 1]; img.data[4 * i + 2] = px[j + 2]; img.data[4 * i + 3] = 255; }
+  ctx.putImageData(img, 0, 0);
+  return ctx;
+}
+
+function setupBodies() {
+  $("bodies").hidden = false;
+  const rows = [];
+  for (const which of ["old", "new"]) {
+    const p = S.plans[which], L = lenOf(p), A = acrossOf(p);
+    p.body = p.body && p.body[1] <= L ? p.body : [0, L];
+    const div = document.createElement("div");
+    div.innerHTML = `<b>${which === "old" ? "Old" : "New"} Plan</b> <span class="muted">${p.pageMm.map((v) => v.toFixed(0)).join(" × ")} mm${p.pages > 1 ? ` · ${p.pages} pages, using page 1` : ""}</span><br>
+      <label>Header ends at <input type="number" step="0.5" value="${p.body[0].toFixed(1)}"> mm</label>
+      <label>Footer starts at <input type="number" step="0.5" value="${p.body[1].toFixed(1)}"> mm</label>`;
+    const [hIn, fIn] = div.querySelectorAll("input");
+    const strips = document.createElement("div");
+    strips.className = "strips";
+    const shown = Math.min(L, 700), s = Math.min(330 / A, 330 / shown);
+    const mk = (caption, from, idx) => {
+      const rect = S.axis === "y" ? { x0: 0, x1: A, y0: from, y1: from + shown } : { x0: from, x1: from + shown, y0: 0, y1: A };
+      const f = document.createElement("figure"), c = document.createElement("canvas");
+      f.className = "strip";
+      f.innerHTML = `<figcaption>${caption}</figcaption>`;
+      f.append(c);
+      const base = renderRGB(p.dl, rect, s);
+      const draw = () => {
+        const ctx = toCanvas(c, base);
+        ctx.strokeStyle = "#dc2a1e"; ctx.lineWidth = 2;
+        const v = (p.body[idx] - from) * s;
+        ctx.beginPath();
+        if (S.axis === "y") { ctx.moveTo(0, v); ctx.lineTo(c.width, v); } else { ctx.moveTo(v, 0); ctx.lineTo(v, c.height); }
+        ctx.stroke();
+        ctx.fillStyle = "rgba(90, 90, 90, .35)";
+        for (const ig of S.ignores) if (ig.plan === which) ctx.fillRect((ig.rect.x0 - rect.x0) * s, (ig.rect.y0 - rect.y0) * s, (ig.rect.x1 - ig.rect.x0) * s, (ig.rect.y1 - ig.rect.y0) * s);
+      };
+      let down = null;
+      const pos = (e) => { const r = c.getBoundingClientRect(), k = c.width / r.width; return [(e.clientX - r.left) * k, (e.clientY - r.top) * k]; };
+      c.onmousedown = (e) => { down = pos(e); e.preventDefault(); };
+      c.onmouseup = (e) => {
+        if (!down) return;
+        const [x0, y0] = down, [x1, y1] = pos(e);
+        down = null;
+        const acrossPx = S.axis === "y" ? [x0, x1] : [y0, y1];
+        if (Math.abs(acrossPx[1] - acrossPx[0]) > 6) { // a drag across the strip: a sidebar band
+          const a = Math.min(...acrossPx) / s, b = Math.max(...acrossPx) / s;
+          for (const w of $("band-both").checked ? ["old", "new"] : [which]) {
+            const q = S.plans[w], Lq = lenOf(q);
+            S.ignores.push({ plan: w, kind: "sidebar", rect: S.axis === "y" ? { x0: a, x1: b, y0: 0, y1: Lq } : { x0: 0, x1: Lq, y0: a, y1: b } });
+          }
+          setupBodies();
+          return;
+        }
+        const t = (S.axis === "y" ? y1 : x1) / s + from;
+        p.body[idx] = Math.round(t * 2) / 2;
+        (idx ? fIn : hIn).value = p.body[idx].toFixed(1);
+        draw();
+      };
+      (idx ? fIn : hIn).oninput = () => { p.body[idx] = +(idx ? fIn : hIn).value; draw(); };
+      draw();
+      return f;
+    };
+    strips.append(mk("Start: click where the Header ends, drag across for a sidebar", 0, 0), mk("End: click where the Footer starts", L - shown, 1));
+    div.append(strips);
+    rows.push(div);
+  }
+  $("bodyrows").replaceChildren(...rows);
+  renderIgnores();
+}
+
+function renderIgnores() {
+  const el = $("ignores");
+  if (!S.ignores.length) { el.textContent = "No ignored areas."; return; }
+  const name = { old: "Old Plan", new: "New Plan", both: "both Plans" };
+  el.replaceChildren(document.createTextNode("Ignored: "), ...S.ignores.map((ig, i) => {
+    const sp = document.createElement("span"), r = ig.rect, a = S.axis === "y" ? [r.x0, r.x1] : [r.y0, r.y1];
+    sp.style.marginRight = "12px";
+    sp.textContent = ig.kind === "sidebar" ? `sidebar ${a[0].toFixed(0)}–${a[1].toFixed(0)} mm (${name[ig.plan]}) ` : `box at ${(S.axis === "y" ? r.y0 : r.x0).toFixed(0)} mm (${name[ig.plan]}) `;
+    const x = document.createElement("button");
+    x.textContent = "×"; x.style.padding = "0 6px";
+    x.onclick = () => { S.ignores.splice(i, 1); setupBodies(); if (S.res) runCompare(S.res.offset, true); };
+    sp.append(x);
+    return sp;
+  }));
+}
+
+// ---------- compare ----------
+
+$("go").onclick = async () => {
+  $("go").disabled = true;
+  status("Extracting objects…");
+  await new Promise((r) => setTimeout(r, 30));
+  try {
+    const t = {};
+    for (const which of ["old", "new"]) {
+      const p = S.plans[which], t0 = now();
+      if (!p.objs || p.objsAxis !== S.axis) { p.objs = extractObjects(p.page); p.objsAxis = S.axis; p.extractMs = Math.round(now() - t0); }
+    }
+    status("Finding the Offset…");
+    await new Promise((r) => setTimeout(r, 30));
+    const O = S.plans.old, N = S.plans.new, t0 = now();
+    const r = refineOffset(O.objs.filter((o) => inBand(o, S.axis, O.body)), N.objs.filter((o) => inBand(o, S.axis, N.body)), { axis: S.axis, guess: 0, range: 1e6, top: 4 });
+    S.offsetMs = Math.round(now() - t0);
+    S.candidates = r.candidates;
+    renderCandidates(0);
+    runCompare(q.has("offset") ? +q.get("offset") : r.candidates.length ? r.candidates[0].offset : 0); // offset= only for testing
+  } catch (e) {
+    console.error(e);
+    status("Error: " + e.message);
+  }
+  $("go").disabled = false;
+};
+
+function renderCandidates(selIdx) {
+  $("cands").replaceChildren(...(S.candidates.length ? S.candidates.map((c, i) => {
+    const l = document.createElement("label");
+    l.innerHTML = `<input type="radio" name="cand" ${i === selIdx ? "checked" : ""}> ${c.offset.toFixed(2)} mm <span class="muted">· ${c.votes} votes</span>`;
+    l.querySelector("input").onchange = () => runCompare(c.offset);
+    return l;
+  }) : [Object.assign(document.createElement("p"), { textContent: "No candidates found: type an Offset." })]));
+}
+$("offset-apply").onclick = () => { for (const r of document.querySelectorAll("input[name=cand]")) r.checked = false; runCompare(+$("offset-manual").value); };
+
+// Ignored areas: an object is skipped when its centre lies in one (in its own Plan's page mm;
+// "both" boxes are in the Old frame and move by the Offset for the New Plan).
+function centreOf(o) {
+  if (!o._c) { if (o.kind === "glyph") o._c = o.origin; else { const b = bboxOf(o.polys.flatMap((p) => p.pts)); o._c = [(b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2]; } }
+  return o._c;
+}
+function notIgnored(objs, which, offset) {
+  const rects = S.ignores.filter((ig) => ig.plan === which || ig.plan === "both").map((ig) => {
+    if (ig.plan !== "both" || which === "old") return ig.rect;
+    const r = ig.rect;
+    return S.axis === "y" ? { ...r, y0: r.y0 - offset, y1: r.y1 - offset } : { ...r, x0: r.x0 - offset, x1: r.x1 - offset };
+  });
+  if (!rects.length) return objs;
+  return objs.filter((o) => { const [x, y] = centreOf(o); return !rects.some((r) => x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1); });
+}
+
+function runCompare(offset, keepPlace) {
+  status("Matching…");
+  const O = S.plans.old, N = S.plans.new, axis = S.axis, t = {};
+  const keepT = keepPlace && S.res && S.res.groups[S.sel] ? (axis === "y" ? S.res.groups[S.sel].box.y0 : S.res.groups[S.sel].box.x0) : null;
+  const win = [Math.max(O.body[0], N.body[0] + offset) + 0.5, Math.min(O.body[1], N.body[1] + offset) - 0.5];
+  let t0 = now();
+  const oP = placeObjects(notIgnored(O.objs, "old", offset), { axis, shift: 0, win }), nP = placeObjects(notIgnored(N.objs, "new", offset), { axis, shift: offset, win });
+  t.place = Math.round(now() - t0); t0 = now();
+  const tol = +$("tol").value;
+  const m1 = matchObjects(oP, nP, tol);
+  // Second pass: same shape and place, only the colour differs → recoloured, not a Difference.
+  const m = matchObjects(m1.oldUnmatched, m1.newUnmatched, tol, (o) => o.altKey);
+  const stillNew = new Set(m.newUnmatched), stillOld = new Set(m.oldUnmatched);
+  const recolNew = m1.newUnmatched.filter((o) => !stillNew.has(o)), recolOld = m1.oldUnmatched.filter((o) => !stillOld.has(o));
+  t.match = Math.round(now() - t0); t0 = now();
+  const text = textChanges(m.oldUnmatched, m.newUnmatched, oP, nP);
+  const geoOld = m.oldUnmatched.filter((o) => o.kind !== "glyph"), geoNew = m.newUnmatched.filter((o) => o.kind !== "glyph");
+  t.text = Math.round(now() - t0); t0 = now();
+  const items = [
+    ...geoOld.map((o) => ({ src: "old", o, box: o.bbox, kind: o.kind, segs: o.kind === "stroke" ? o.coords : null })),
+    ...geoNew.map((o) => ({ src: "new", o, box: o.bbox, kind: o.kind, segs: o.kind === "stroke" ? o.coords : null })),
+    ...text.map((x) => ({ src: x.kind === "Removed" ? "old" : "new", text: x, box: x.box, kind: "word" })),
+    ...($("show-recol").checked ? recolNew.map((o) => ({ src: "recol", o, box: o.bbox, kind: o.kind === "glyph" ? "word" : o.kind, segs: o.kind === "stroke" ? o.coords : null })) : []),
+  ];
+  const groups = groupItems(items, { axis, cell: 5, maxLen: 300 });
+  t.group = Math.round(now() - t0);
+  S.res = { offset, win, oP, nP, m, m1, recolOld, recolNew, text, items, groups, t, tol };
+  S.sel = 0;
+  if (keepT !== null) { let bd = Infinity; groups.forEach((g, i) => { const d = Math.abs((axis === "y" ? g.box.y0 : g.box.x0) - keepT); if (d < bd) { bd = d; S.sel = i; } }); }
+  $("results").hidden = false;
+  $("offset-manual").value = offset.toFixed(2);
+  renderList();
+  renderStats();
+  show(S.sel);
+  status(`Done: ${groups.length} places with Differences.`);
+  console.log("compare", JSON.stringify({ places: groups.length, biggest: Math.max(0, ...groups.map((g) => g.items.length)), ms: t }));
+  dispatchEvent(new Event("compared"));
+}
+
+// ---------- list, overview ----------
+
+function groupColor(g) {
+  const o = g.items.some((i) => i.src === "old"), n = g.items.some((i) => i.src === "new");
+  return o && n ? "linear-gradient(90deg, var(--yellow) 50%, var(--red) 50%)" : o ? "var(--yellow)" : "var(--red)";
+}
+function describe(g) {
+  const c = {};
+  for (const i of g.items) { const k = i.kind === "stroke" ? "lines" : i.kind === "word" ? "words" : "areas"; c[k] = (c[k] || 0) + 1; }
+  return Object.entries(c).map(([k, v]) => `${v} ${v === 1 ? k.slice(0, -1) : k}`).join(", ");
+}
+function renderList() {
+  const g = S.res.groups;
+  $("count").textContent = `${g.length} place${g.length === 1 ? "" : "s"} with Differences`;
+  $("list").replaceChildren(...g.map((x, i) => {
+    const li = document.createElement("li");
+    const t = axisT() ? x.box.y0 : x.box.x0;
+    li.innerHTML = `<span class="dot" style="background:${groupColor(x)}"></span><span><b>${i + 1}</b> · at ${Math.round(t).toLocaleString()} mm<br><span class="muted">${describe(x)}</span></span>`;
+    li.onclick = () => show(i);
+    return li;
+  }));
+}
+function drawOverview() {
+  const c = $("overview"), w = c.clientWidth;
+  c.width = w * devicePixelRatio; c.height = 26 * devicePixelRatio;
+  const ctx = c.getContext("2d");
+  ctx.scale(devicePixelRatio, devicePixelRatio);
+  const [w0, w1] = S.res.win, ti = axisT();
+  const css = getComputedStyle(document.documentElement);
+  S.res.groups.forEach((g, i) => {
+    const a = ((ti ? g.box.y0 : g.box.x0) - w0) / (w1 - w0) * w, b = ((ti ? g.box.y1 : g.box.x1) - w0) / (w1 - w0) * w;
+    const o = g.items.some((x) => x.src === "old"), n = g.items.some((x) => x.src === "new");
+    ctx.fillStyle = o && !n ? css.getPropertyValue("--yellow") : css.getPropertyValue("--red");
+    ctx.fillRect(a, i === S.sel ? 0 : 6, Math.max(2, b - a), i === S.sel ? 26 : 14);
+  });
+}
+$("overview").onclick = (e) => {
+  const r = e.currentTarget.getBoundingClientRect(), [w0, w1] = S.res.win, ti = axisT();
+  const t = w0 + (e.clientX - r.left) / r.width * (w1 - w0);
+  let best = 0, bd = Infinity;
+  S.res.groups.forEach((g, i) => { const d = Math.abs((ti ? (g.box.y0 + g.box.y1) : (g.box.x0 + g.box.x1)) / 2 - t); if (d < bd) { bd = d; best = i; } });
+  show(best);
+};
+$("prev").onclick = () => show(S.sel - 1);
+$("next").onclick = () => show(S.sel + 1);
+document.addEventListener("keydown", (e) => {
+  if (!S.res || e.target.tagName === "INPUT") return;
+  if (e.key === "ArrowRight" || e.key === "j") show(S.sel + 1);
+  if (e.key === "ArrowLeft" || e.key === "k") show(S.sel - 1);
+  if (e.key === " ") { e.preventDefault(); if (!S.flicker) { S.flicker = true; paint(); } }
+});
+document.addEventListener("keyup", (e) => { if (e.key === " " && S.flicker) { S.flicker = false; paint(); } });
+$("tol").onchange = () => { if (S.res) runCompare(S.res.offset, true); };
+$("show-recol").onchange = () => { if (S.res) runCompare(S.res.offset, true); };
+
+// ---------- the view ----------
+
+let base = null; // cached base render for (group, zoom, contrast)
+
+function show(i) {
+  const g = S.res.groups;
+  if (!g.length) { $("view").width = 1; $("where").textContent = "No Differences."; drawOverview(); return; }
+  S.sel = (i + g.length) % g.length;
+  for (const [k, li] of [...$("list").children].entries()) li.classList.toggle("sel", k === S.sel);
+  $("list").children[S.sel].scrollIntoView({ block: "nearest" });
+  $("where").textContent = `${S.sel + 1} of ${g.length}`;
+  base = null;
+  drawOverview();
+  paint();
+}
+
+function paint() {
+  const g = S.res.groups[S.sel];
+  if (!g) return;
+  const zoom = +$("zoom").value, outline = +$("outline").value, contrast = +$("contrast").value / 100;
+  const b = { ...g.box };
+  if (g.clipT) { const [a, z] = g.clipT; if (S.axis === "y") { b.y0 = Math.max(b.y0, a); b.y1 = Math.min(b.y1, z); } else { b.x0 = Math.max(b.x0, a); b.x1 = Math.min(b.x1, z); } }
+  const m = Math.max(8, 0.15 * Math.max(b.x1 - b.x0, b.y1 - b.y0)) + outline / 2;
+  const rect = { x0: b.x0 - m, y0: b.y0 - m, x1: b.x1 + m, y1: b.y1 + m };
+  const wrapW = $("view").parentElement.clientWidth - 2 || 800;
+  const s = Math.min(wrapW / (rect.x1 - rect.x0), (innerHeight * 0.72) / (rect.y1 - rect.y0), 40) * zoom;
+  const key = `${S.sel}|${zoom}|${contrast}|${wrapW}`;
+  if (!base || base.key !== key) {
+    const o = renderRGB(S.plans.old.dl, rect, s, 0), n = renderRGB(S.plans.new.dl, rect, s, S.res.offset);
+    const w = o.w, h = o.h, px = new Uint8ClampedArray(w * h * 4);
+    // Base: the New Plan, faded. Removed things are drawn from their own geometry / ink.
+    for (let p = 0, j = 0; p < w * h; p++, j += 3) for (let c = 0; c < 3; c++) {
+      px[4 * p + c] = 255 - (255 - n.px[j + c]) * contrast;
+      px[4 * p + 3] = 255;
+    }
+    base = { key, w, h, px, o, n };
+  }
+  const { w, h } = base;
+  const view = $("view");
+  if (view.width !== w || view.height !== h) { view.width = w; view.height = h; }
+  // Hold Space: the Old Plan as it is, to judge the marks by eye.
+  if (S.flicker) {
+    if (!base.oldImg) {
+      base.oldImg = new ImageData(w, h);
+      for (let p = 0, j = 0; p < w * h; p++, j += 3) { const d = base.oldImg.data; d[4 * p] = base.o.px[j]; d[4 * p + 1] = base.o.px[j + 1]; d[4 * p + 2] = base.o.px[j + 2]; d[4 * p + 3] = 255; }
+    }
+    view.getContext("2d").putImageData(base.oldImg, 0, 0);
+    return;
+  }
+  if (base.marked && base.marked.outline === outline) { view.getContext("2d").putImageData(base.marked.img, 0, 0); return; }
+  const out = new ImageData(new Uint8ClampedArray(base.px), w, h);
+
+  // Changed objects: R = line, G = area, B = outline, per Plan.
+  const mask = (src) => {
+    const c = new OffscreenCanvas(w, h), ctx = c.getContext("2d");
+    ctx.setTransform(s, 0, 0, s, -rect.x0 * s, -rect.y0 * s);
+    ctx.globalCompositeOperation = "lighter";
+    ctx.lineCap = "round"; ctx.lineJoin = "round";
+    for (const it of g.items) {
+      if (it.src !== src || !it.o) continue;
+      const o = it.o, k = o.coords;
+      const path = new Path2D();
+      if (o.kind === "stroke") {
+        for (let q = 0; q < k.length; q += 4) { path.moveTo(k[q], k[q + 1]); path.lineTo(k[q + 2], k[q + 3]); }
+        const lw = Math.max(o.nums ? o.nums[0] : 0.2, 1.5 / s);
+        if (outline) { ctx.strokeStyle = "#0000ff"; ctx.lineWidth = lw + (2 * outline) / s; ctx.stroke(path); }
+        ctx.strokeStyle = "#ff0000"; ctx.lineWidth = lw; ctx.stroke(path);
+      } else {
+        let start = true;
+        for (let q = 0; q < k.length; q += 2) {
+          if (Number.isNaN(k[q])) { path.closePath(); start = true; continue; }
+          if (start) { path.moveTo(k[q], k[q + 1]); start = false; } else path.lineTo(k[q], k[q + 1]);
+        }
+        if (outline) { ctx.strokeStyle = "#0000ff"; ctx.lineWidth = (2 * outline) / s; ctx.stroke(path); }
+        ctx.fillStyle = "#00ff00"; ctx.fill(path);
+      }
+    }
+    return ctx.getImageData(0, 0, w, h).data;
+  };
+  const mo = mask("old"), mn = mask("new"), d = out.data;
+  const blend = (p, col, a) => { for (let c = 0; c < 3; c++) d[4 * p + c] = d[4 * p + c] * (1 - a) + col[c] * a; };
+  for (let p = 0; p < w * h; p++) {
+    const q = 4 * p;
+    const lo = mo[q] > 110, ln = mn[q] > 110, ao = mo[q + 1] > 110, an = mn[q + 1] > 110, ho = mo[q + 2] > 110, hn = mn[q + 2] > 110;
+    const pick = (x, y) => (x && y ? COL.grey : x ? COL.yellow : COL.red);
+    if (lo || ln) blend(p, pick(lo || ao, ln || an), 1);
+    else if (ao || an) blend(p, pick(ao, an), 0.45);
+    else if (ho || hn) blend(p, pick(ho || ao, hn || an), 0.3);
+  }
+
+  // Changed words: the glyphs' own ink, coloured, plus an outline around them.
+  for (const it of g.items) {
+    if (!it.text) continue;
+    const plan = it.src === "old" ? base.o : base.n, col = it.text.kind === "Removed" ? COL.yellow : COL.red;
+    const bx0 = Math.max(0, Math.floor((it.box.x0 - rect.x0) * s)), by0 = Math.max(0, Math.floor((it.box.y0 - rect.y0) * s));
+    const bx1 = Math.min(w, Math.ceil((it.box.x1 - rect.x0) * s)), by1 = Math.min(h, Math.ceil((it.box.y1 - rect.y0) * s));
+    const r = Math.round(outline), X0 = Math.max(0, bx0 - r), Y0 = Math.max(0, by0 - r), X1 = Math.min(w, bx1 + r), Y1 = Math.min(h, by1 + r);
+    const W = X1 - X0, H = Y1 - Y0, ink = new Uint8Array(W * H);
+    for (let y = by0; y < by1; y++) for (let x = bx0; x < bx1; x++) { const j = 3 * (y * w + x); if (Math.max(plan.px[j], plan.px[j + 1], plan.px[j + 2]) < 110) ink[(y - Y0) * W + (x - X0)] = 1; }
+    let halo = ink;
+    if (r) { // square dilation, separable
+      const tmp = new Uint8Array(W * H); halo = new Uint8Array(W * H);
+      for (let y = 0; y < H; y++) { let last = -1e9; for (let x = 0; x < W; x++) { if (ink[y * W + x]) last = x; if (x - last <= r) tmp[y * W + x] = 1; } last = 1e9; for (let x = W - 1; x >= 0; x--) { if (ink[y * W + x]) last = x; if (last - x <= r) tmp[y * W + x] = 1; } }
+      for (let x = 0; x < W; x++) { let last = -1e9; for (let y = 0; y < H; y++) { if (tmp[y * W + x]) last = y; if (y - last <= r) halo[y * W + x] = 1; } last = 1e9; for (let y = H - 1; y >= 0; y--) { if (tmp[y * W + x]) last = y; if (last - y <= r) halo[y * W + x] = 1; } }
+    }
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const p = (y + Y0) * w + (x + X0);
+      if (ink[y * W + x]) blend(p, col, 1); else if (halo[y * W + x]) blend(p, col, 0.3);
+    }
+  }
+  const vctx = view.getContext("2d");
+  vctx.putImageData(out, 0, 0);
+  vctx.save();
+  vctx.setTransform(s, 0, 0, s, -rect.x0 * s, -rect.y0 * s);
+  vctx.lineCap = "round"; vctx.lineJoin = "round";
+  for (const it of g.items) {
+    if (it.src !== "recol") continue;
+    const o = it.o, k = o.coords, path = new Path2D();
+    if (o.kind === "glyph") { const b = o.bbox; path.rect(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0); }
+    else if (o.kind === "stroke") for (let q = 0; q < k.length; q += 4) { path.moveTo(k[q], k[q + 1]); path.lineTo(k[q + 2], k[q + 3]); }
+    else { let st = true; for (let q = 0; q < k.length; q += 2) { if (Number.isNaN(k[q])) { path.closePath(); st = true; continue; } if (st) { path.moveTo(k[q], k[q + 1]); st = false; } else path.lineTo(k[q], k[q + 1]); } }
+    vctx.strokeStyle = "rgba(220, 42, 30, .3)"; vctx.lineWidth = Math.max(o.nums ? o.nums[0] : 0, 1 / s) + (2 * Math.max(outline, 2)) / s; vctx.stroke(path);
+    vctx.strokeStyle = "#dc2a1e"; vctx.lineWidth = Math.max(o.nums ? o.nums[0] : 0, 1.5 / s); vctx.stroke(path);
+  }
+  vctx.setLineDash([6 / s, 4 / s]); vctx.strokeStyle = "#555"; vctx.lineWidth = 1.5 / s; vctx.fillStyle = "rgba(120,120,120,.25)";
+  for (const ig of S.ignores) {
+    if (ig.plan === "new") continue;
+    const r = ig.rect;
+    vctx.fillRect(r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0); vctx.strokeRect(r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0);
+  }
+  vctx.restore();
+  S.viewXf = { rect, s };
+  base.marked = { outline, img: vctx.getImageData(0, 0, w, h) };
+}
+
+// Shift-drag in the view: ignore that box (both Plans).
+{
+  let down = null;
+  const pos = (e) => { const c = $("view"), r = c.getBoundingClientRect(), k = c.width / r.width, { rect, s } = S.viewXf; return [rect.x0 + (e.clientX - r.left) * k / s, rect.y0 + (e.clientY - r.top) * k / s]; };
+  $("view").onmousedown = (e) => { if (e.shiftKey && S.viewXf) { down = pos(e); e.preventDefault(); } };
+  $("view").onmouseup = (e) => {
+    if (!down) return;
+    const [x0, y0] = down, [x1, y1] = pos(e);
+    down = null;
+    if (Math.abs(x1 - x0) < 0.5 || Math.abs(y1 - y0) < 0.5) return;
+    S.ignores.push({ plan: "both", kind: "box", rect: { x0: Math.min(x0, x1), x1: Math.max(x0, x1), y0: Math.min(y0, y1), y1: Math.max(y0, y1) } });
+    renderIgnores();
+    runCompare(S.res.offset, true);
+  };
+}
+
+for (const k of ["outline", "contrast", "zoom"]) $(k).oninput = () => { store.set(k, $(k).value); showVals(); if (S.res) paint(); };
+addEventListener("resize", () => { if (S.res) { drawOverview(); base = null; paint(); } });
+
+// ---------- statistics (counts only) ----------
+
+function renderStats() {
+  const R = S.res, O = S.plans.old, N = S.plans.new;
+  const byKind = (list) => list.reduce((a, o) => ((a[o.kind] = (a[o.kind] || 0) + 1), a), {});
+  const r1 = (v) => Math.round(v * 10) / 10;
+  // Near misses: a left-over object with a same-style left-over on the other side within 2 mm:
+  // how far apart are their coordinates? Many tiny distances = tolerance or producer noise.
+  const near = { under0_1mm: 0, under0_5mm: 0, under2mm: 0, none: 0 };
+  const idx = new Map();
+  for (const o of R.m.newUnmatched) (idx.get(o.key) || idx.set(o.key, []).get(o.key)).push(o);
+  for (const o of R.m.oldUnmatched) {
+    let best = Infinity;
+    for (const n of idx.get(o.key) || []) {
+      if (Math.abs(n.bbox.x0 - o.bbox.x0) > 2 || Math.abs(n.bbox.y0 - o.bbox.y0) > 2) continue;
+      let dmax = 0;
+      for (let i = 0; i < o.coords.length; i++) if (!Number.isNaN(o.coords[i])) dmax = Math.max(dmax, Math.abs(o.coords[i] - n.coords[i]));
+      best = Math.min(best, dmax);
+    }
+    if (best < 0.1) near.under0_1mm++; else if (best < 0.5) near.under0_5mm++; else if (best < 2) near.under2mm++; else near.none++;
+  }
+  const tenths = new Array(10).fill(0), ti = axisT(), [w0, w1] = R.win;
+  for (const o of [...R.m.oldUnmatched, ...R.m.newUnmatched]) {
+    const c = ti ? (o.bbox.y0 + o.bbox.y1) / 2 : (o.bbox.x0 + o.bbox.x1) / 2;
+    tenths[Math.min(9, Math.max(0, Math.floor((c - w0) / (w1 - w0) * 10)))]++;
+  }
+  // Moved twins: a left-over object whose identical shape is left over in the other Plan at
+  // the same across position, shifted along the Time direction. Only the shift is reported.
+  const relKey = (o) => { const b = o.bbox; return o.key + "|" + o.coords.map((v, i) => (Number.isNaN(v) ? "n" : Math.round((v - (i % 2 ? b.y0 : b.x0)) * 10))).join(","); };
+  const across = (o) => (ti ? o.bbox.x0 : o.bbox.y0), along = (o) => (ti ? o.bbox.y0 : o.bbox.x0);
+  const twins = new Map();
+  for (const o of R.m.newUnmatched) { const k = relKey(o); (twins.get(k) || twins.set(k, []).get(k)).push(o); }
+  const shifts = new Map(), moved = { movedTwin: 0, noTwin: 0, tooCommonToTell: 0 };
+  for (const o of R.m.oldUnmatched) {
+    const list = twins.get(relKey(o));
+    if (!list) { moved.noTwin++; continue; }
+    if (list.length > 200) { moved.tooCommonToTell++; continue; }
+    let best = null;
+    for (const n of list) { if (Math.abs(across(n) - across(o)) > 0.2) continue; const d = along(n) - along(o); if (Math.abs(d) <= 1000 && (best === null || Math.abs(d) < Math.abs(best))) best = d; }
+    if (best === null) { moved.noTwin++; continue; }
+    moved.movedTwin++;
+    const k = Math.round(best * 10) / 10;
+    shifts.set(k, (shifts.get(k) || 0) + 1);
+  }
+  moved.topShiftsMm = [...shifts].sort((a, b) => b[1] - a[1]).slice(0, 10).map(([mm, n]) => ({ mm, n }));
+  const sizes = { "1": 0, "2-5": 0, "6-20": 0, "21-100": 0, ">100": 0 };
+  for (const g of R.groups) { const n = g.items.length; sizes[n === 1 ? "1" : n <= 5 ? "2-5" : n <= 20 ? "6-20" : n <= 100 ? "21-100" : ">100"]++; }
+  const why = R.text.reduce((a, x) => ((a[`${x.kind}:${x.why}`] = (a[`${x.kind}:${x.why}`] || 0) + 1), a), {});
+  const stats = {
+    prototype: "simplepdfcompare object matching v3",
+    toleranceMm: +$("tol").value,
+    timeDirection: S.axis === "y" ? "down" : "right",
+    old: { pageMm: O.pageMm.map(r1), pages: O.pages, bodyMm: O.body, objects: byKind(O.objs), displayListMs: O.dlMs, extractMs: O.extractMs },
+    new: { pageMm: N.pageMm.map(r1), pages: N.pages, bodyMm: N.body, objects: byKind(N.objs), displayListMs: N.dlMs, extractMs: N.extractMs },
+    offset: { candidates: S.candidates.map((c) => ({ mm: Math.round(c.offset * 1000) / 1000, votes: c.votes })), used: Math.round(R.offset * 1000) / 1000, searchMs: S.offsetMs },
+    comparedLengthMm: r1(w1 - w0),
+    ignoredAreas: { sidebars: S.ignores.filter((i) => i.kind === "sidebar").length, boxes: S.ignores.filter((i) => i.kind === "box").length },
+    inWindow: { old: R.oP.length, new: R.nP.length },
+    recolouredOnly: { old: byKind(R.recolOld), new: byKind(R.recolNew) },
+    leftOver: { old: byKind(R.m.oldUnmatched), new: byKind(R.m.newUnmatched) },
+    leftOverOldNearestSameStyleNew: near,
+    leftOverOldTwinInNew: moved,
+    leftOverPerTenthOfLength: tenths,
+    changedWords: why,
+    places: R.groups.length,
+    objectsPerPlace: sizes,
+    ms: R.t,
+  };
+  $("stats").textContent = JSON.stringify(stats, null, 1);
+}
+$("copy").onclick = () => navigator.clipboard.writeText($("stats").textContent).then(() => { $("copy").textContent = "Copied"; setTimeout(() => ($("copy").textContent = "Copy"), 1200); });
+</script>
+</body>
+</html>
