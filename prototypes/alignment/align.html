@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ausrichten · Prototyp</title>
+<!--
+  PROTOTYPE (throwaway) for the ticket "How does the user set the Header/Footer lines and
+  Ignored areas, and confirm the Offset?".
+  Three variants of the setup before comparing, switchable via ?variant=A|B|C:
+    A  Schritte       a separate guided setup: Old Plan, New Plan, then the Offset
+    B  Nebeneinander  one setup screen, both Plans side by side, scroll-linked by the Offset
+    C  Übereinander   no setup step: straight into one overlay that is also the comparison
+  Run: npm run proto:align   (?demo=down|right loads the synthetic pair)
+-->
+<script type="importmap">{ "imports": { "mupdf": "/node_modules/mupdf/dist/mupdf.js" } }</script>
+<style>
+  :root { --bg: #f4f4f2; --panel: #fff; --ink: #1d1d1f; --muted: #6b6b70; --line: #dcdad5; --accent: #1d5fd6; --snap: #e8a100; --old: #1d74c9; --new: #d0215f; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; display: flex; flex-direction: column; }
+  header.app { display: flex; align-items: center; gap: 14px; padding: 8px 14px; background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header.app h1 { font-size: 15px; margin: 0 10px 0 0; font-weight: 650; letter-spacing: .01em; }
+  header.app h1 span { color: var(--muted); font-weight: 400; }
+  #stage { flex: 1; min-height: 0; position: relative; }
+  .muted { color: var(--muted); }
+  button, select, input { font: inherit; color: inherit; }
+  button { padding: 5px 12px; border-radius: 7px; border: 1px solid var(--line); background: var(--panel); cursor: pointer; }
+  button:hover { border-color: #b9b6ae; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.on { background: color-mix(in srgb, var(--accent) 14%, var(--panel)); border-color: var(--accent); color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  input[type=number] { width: 92px; padding: 3px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; border-right: 1px solid var(--line); }
+  .seg button:last-child { border-right: 0; }
+  .ig { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 3px 0; font-size: 13px; }
+  .x { padding: 0 7px; line-height: 1.4; }
+  .chip { display: inline-flex; gap: 6px; align-items: center; padding: 3px 10px; border-radius: 99px; border: 1px solid var(--line); background: var(--panel); cursor: pointer; font-size: 13px; }
+  .chip.sel { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
+  .bar { height: 5px; border-radius: 3px; background: var(--accent); opacity: .7; }
+  .view { background: #fff; }
+  .hint { font-size: 12px; color: var(--muted); }
+  kbd { font: 11px/1 ui-monospace, monospace; padding: 2px 4px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; background: var(--panel); }
+  .landing { height: 100%; overflow: auto; padding: 40px 16px 90px; }
+  .landing .inner { max-width: 760px; margin: 0 auto; }
+  .landing h2 { font-size: 30px; margin: 0 0 4px; letter-spacing: -.01em; }
+  .landing .lead { font-size: 17px; margin: 0 0 18px; }
+  .landing ol { margin: 6px 0 0; padding-left: 22px; }
+  .landing ol li { margin: 3px 0; }
+  .drops { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 10px; align-items: center; margin: 22px 0 12px; }
+  @media (max-width: 620px) { .drops { grid-template-columns: minmax(0, 1fr); } }
+  .drop .fname { font-weight: 600; color: var(--ink); overflow-wrap: anywhere; max-width: 100%; }
+  .swapbtn { width: 40px; height: 40px; border-radius: 50%; padding: 0; font-size: 18px; }
+  .drop { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-height: 130px; border: 2px dashed #c4c1b9; border-radius: 12px; background: var(--panel); cursor: pointer; text-align: center; padding: 14px; }
+  .drop:hover, .drop.over { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, var(--panel)); }
+  .drop.has { border-style: solid; border-color: var(--accent); }
+  .drop b { font-size: 16px; }
+  .note { padding: 10px 12px; border-radius: 10px; background: color-mix(in srgb, var(--accent) 8%, var(--panel)); font-size: 13px; }
+
+  /* prototype chrome: not part of the design being judged */
+  #switcher { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 50; display: flex; gap: 4px; align-items: center; padding: 5px; border-radius: 99px; background: #111; color: #fff; box-shadow: 0 6px 24px rgba(0,0,0,.35); font: 13px system-ui, sans-serif; }
+  #switcher button { background: transparent; color: #fff; border: 0; border-radius: 99px; padding: 4px 10px; }
+  #switcher button:hover { background: #333; }
+  #switcher .label { padding: 0 8px; min-width: 190px; text-align: center; font-weight: 600; }
+  #statepanel { position: fixed; right: 12px; bottom: 64px; z-index: 50; width: 360px; max-height: 60vh; overflow: auto; background: #111; color: #d7f5d7; font: 11px/1.4 ui-monospace, monospace; padding: 10px; border-radius: 10px; white-space: pre; box-shadow: 0 6px 24px rgba(0,0,0,.35); }
+</style>
+</head>
+<body>
+<header class="app">
+  <h1>simple pdf compare <span>· Prototyp Ausrichten</span></h1>
+  <span class="muted">Synthetisches Paar:</span>
+  <button id="demo-down">Weg-Zeit ↓ (14 m)</button>
+  <button id="demo-right">Balken →</button>
+  <button id="home" title="Zur Startseite, anderes Planpaar wählen">⌂ Start</button>
+  <span id="loading" class="muted"></span>
+</header>
+<div id="stage"></div>
+<div id="switcher">
+  <button id="sw-prev" title="Vorherige Variante (←, wenn kein Feld aktiv)">◀</button>
+  <span class="label" id="sw-label"></span>
+  <button id="sw-next" title="Nächste Variante">▶</button>
+  <button id="sw-state" title="Zustand anzeigen">state</button>
+  <button id="sw-forget" title="Gemerkte Einstellungen löschen">forget</button>
+</div>
+<div id="statepanel" hidden></div>
+
+<script type="module">
+import * as E from "./engine.mjs";
+import { S, on, setPair, ignoresFor } from "./shared.mjs";
+import variantA from "./variant-a.mjs";
+import variantB from "./variant-b.mjs";
+import variantC from "./variant-c.mjs";
+
+const VARIANTS = { A: ["Schritte", variantA], B: ["Nebeneinander", variantB], C: ["Übereinander, direkt", variantC] };
+const keys = Object.keys(VARIANTS);
+const $ = (id) => document.getElementById(id);
+const q = new URLSearchParams(location.search);
+let current = keys.includes(q.get("variant")) ? q.get("variant") : "A", unmount = null;
+
+function mount() {
+  if (unmount) unmount();
+  $("stage").replaceChildren();
+  $("sw-label").textContent = `${current} · ${VARIANTS[current][0]}`;
+  if (!S.plans) { landing(); unmount = null; return; }
+  unmount = VARIANTS[current][1]($("stage"));
+}
+function go(d) {
+  current = keys[(keys.indexOf(current) + d + keys.length) % keys.length];
+  const u = new URL(location); u.searchParams.set("variant", current); history.replaceState(null, "", u);
+  mount();
+}
+$("sw-prev").onclick = () => go(-1);
+$("sw-next").onclick = () => go(1);
+// ← → switch variants only with Ctrl+Alt, since plain arrows nudge the Offset in the variants.
+addEventListener("keydown", (e) => { if (e.ctrlKey && e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) { e.preventDefault(); go(e.key === "ArrowLeft" ? -1 : 1); } });
+$("sw-state").onclick = () => { $("statepanel").hidden = !$("statepanel").hidden; showState(); };
+$("sw-forget").onclick = () => { E.forget(); $("sw-forget").textContent = "forgotten"; setTimeout(() => ($("sw-forget").textContent = "forget"), 1200); showState(); };
+
+function showState() {
+  if ($("statepanel").hidden) return;
+  const r1 = (v) => Math.round(v * 100) / 100;
+  const st = S.plans ? {
+    pair: S.pairName,
+    timeDirection: S.axis === "y" ? "down" : "right",
+    bodyMm: { old: S.body.old.map(r1), new: S.body.new.map(r1), from: S.bodyFrom },
+    offset: { mm: S.offset, from: S.offsetFrom, candidates: S.cands.map((c) => `${r1(c.offset)} mm · ${c.votes} votes`), searchMs: S.candMs },
+    ignored: S.ignores.map((ig) => ({ plan: ig.plan, kind: ig.kind, rect: Object.fromEntries(Object.entries(ig.rect).map(([k, v]) => [k, Math.abs(v) > 9e4 ? "∞" : r1(v)])) })),
+    ignoredPerPlan: { old: ignoresFor("old").length, new: ignoresFor("new").length },
+    quickCompare: S.result && { places: S.result.groups.length, leftOver: { old: S.result.leftOld, new: S.result.leftNew }, comparedMm: S.result.win.map(r1), ms: S.result.ms },
+    remembered: E.recall(),
+    busy: S.busy,
+  } : { note: "no pair loaded", remembered: E.recall() };
+  $("statepanel").textContent = JSON.stringify(st, null, 1);
+}
+on(showState);
+
+async function loadBytes(oldBytes, newBytes, name, names) {
+  $("loading").textContent = "lese Pläne…";
+  await new Promise((r) => setTimeout(r, 20));
+  const t0 = performance.now();
+  const plans = { old: await E.loadPlan(oldBytes, "old"), new: await E.loadPlan(newBytes, "new") };
+  $("loading").textContent = `gelesen in ${((performance.now() - t0) / 1000).toFixed(1)} s`;
+  S.names = names || { old: "", new: "" };
+  setPair(plans, name);
+  mount();
+}
+async function demo(name) {
+  const get = async (f) => new Uint8Array(await (await fetch(`/samples/${name}-${f}.pdf`)).arrayBuffer());
+  await loadBytes(await get("old"), await get("new"), "synthetic " + name, { old: `${name}-old.pdf (Beispiel)`, new: `${name}-new.pdf (Beispiel)` });
+  const u = new URL(location); u.searchParams.set("demo", name); history.replaceState(null, "", u);
+}
+$("demo-down").onclick = () => demo("down");
+$("demo-right").onclick = () => demo("right");
+// ---------- landing page (before a pair is loaded) ----------
+const files = {};
+function landing() {
+  $("stage").innerHTML = `<div class="landing"><div class="inner">
+    <h2>simple pdf compare</h2>
+    <p class="lead">Vergleicht zwei Stände eines Bauablaufplans und zeigt, was <b style="color:#dc2a1e">dazugekommen</b> und was <b style="color:#b38600">weggefallen</b> ist.</p>
+    <p>Zwischen zwei Ständen bleiben Kopf und Fuß des Plans stehen, der Ablauf dazwischen rutscht entlang der Zeit, sobald ein Stand einen anderen Zeitraum abdeckt.
+      simple pdf compare legt die beiden Pläne passend übereinander und vergleicht die Zeichnung selbst: jede Linie, jede Fläche, jedes Wort.
+      Neues erscheint rot, Entfallenes gelb mit gestrichelter x–x–x-Umrandung wie beim Abbruch in Bauzeichnungen. Für Vektor-PDFs mit einer Seite, nicht für Scans.</p>
+    <div class="drops">
+      <label class="drop" id="drop-old"><b>Alter Plan</b><span class="muted" id="name-old"></span><input type="file" accept="application/pdf" hidden></label>
+      <button class="swapbtn" id="swap" title="Reihenfolge tauschen: der alte Plan wird zum neuen und umgekehrt">⇄</button>
+      <label class="drop" id="drop-new"><b>Neuer Plan</b><span class="muted" id="name-new"></span><input type="file" accept="application/pdf" hidden></label>
+    </div>
+    <p style="display:flex;justify-content:flex-end;margin:0 0 12px"><button class="primary" id="go" disabled style="padding:8px 18px">Weiter →</button></p>
+    <p class="note">Läuft vollständig auf diesem Rechner: keine Anmeldung, kein Hochladen. Die Pläne verlassen den Browser nicht.</p>
+    <h3 style="margin:24px 0 0;font-size:16px">So geht's</h3>
+    <ol>
+      <li><b>Zeitrichtung</b>: läuft die Zeit nach unten (Weg-Zeit-Diagramm) oder nach rechts (Balkenplan)?</li>
+      <li><b>Alter Plan</b>: Kopf und Fuß abgrenzen, Bereiche markieren, die nicht verglichen werden (z. B. eine Randspalte).</li>
+      <li><b>Neuer Plan</b>: die Bereiche sind vom alten Plan übernommen, nur noch prüfen und anpassen.</li>
+      <li><b>Versatz</b>: wie weit der neue Plan entlang der Zeit verschoben ist, wird automatisch gefunden. Bestätigen, dann vergleichen.</li>
+    </ol>
+    <p class="muted" style="margin-top:14px">Beim nächsten Vergleich sind Kopf, Fuß und Bereiche schon so eingestellt wie beim letzten Mal.</p>
+    <p style="margin-top:22px">Noch keine Pläne zur Hand? Mit einem Beispiel ausprobieren:
+      <button id="l-down">Weg-Zeit-Diagramm ↓</button> <button id="l-right">Balkenplan →</button></p>
+    <p class="hint" style="margin-top:30px">Freie Software (AGPL-3.0)</p>
+  </div></div>`;
+  $("l-down").onclick = () => demo("down");
+  $("l-right").onclick = () => demo("right");
+  const HINT = { old: "der frühere Stand · PDF hierher ziehen oder klicken", new: "der aktuelle Stand · PDF hierher ziehen oder klicken" };
+  const drawFiles = () => {
+    for (const w of ["old", "new"]) {
+      const f = files[w], el = $("name-" + w);
+      el.className = f ? "fname" : "muted";
+      el.textContent = f ? f.name : HINT[w];
+      $("drop-" + w).classList.toggle("has", !!f);
+    }
+    $("go").disabled = !(files.old && files.new);
+  };
+  drawFiles();
+  $("swap").onclick = () => { [files.old, files.new] = [files.new, files.old]; drawFiles(); };
+  $("go").onclick = async () => {
+    $("go").disabled = true;
+    const names = { old: files.old.name, new: files.new.name };
+    await loadBytes(new Uint8Array(await files.old.arrayBuffer()), new Uint8Array(await files.new.arrayBuffer()), "own files", names);
+  };
+  for (const w of ["old", "new"]) {
+    const box = $("drop-" + w), inp = box.querySelector("input");
+    const take = (f) => { if (!f) return; files[w] = f; drawFiles(); };
+    inp.onchange = () => take(inp.files[0]);
+    box.ondragover = (e) => { e.preventDefault(); box.classList.add("over"); };
+    box.ondragleave = () => box.classList.remove("over");
+    box.ondrop = (e) => { e.preventDefault(); box.classList.remove("over"); take(e.dataTransfer.files[0]); };
+  }
+}
+$("home").onclick = () => {
+  S.plans = null;
+  const u = new URL(location); u.searchParams.delete("demo"); history.replaceState(null, "", u);
+  $("loading").textContent = "";
+  mount();
+};
+mount();
+if (q.get("demo")) demo(q.get("demo"));
+</script>
+</body>
+</html>

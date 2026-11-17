@@ -8,7 +8,8 @@
   "scripts": {
     "samples": "node scripts/make-sample-plans.mjs",
     "proto:detection": "node --max-old-space-size=8192 prototypes/detection/run.mjs",
-    "proto:compare": "node prototypes/detection/serve.mjs"
+    "proto:compare": "node prototypes/detection/serve.mjs",
+    "proto:align": "node prototypes/alignment/serve.mjs"
   },
   "dependencies": {
     "mupdf": "^1.28.1"
