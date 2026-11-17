@@ -51,6 +51,11 @@ _Avoid_: bar (only one of its shapes), task
 
 ## Alignment
 
+**Snap**
+While a Header or Footer line or an edge of an Ignored area is dragged, it jumps to a
+straight line drawn in the Plan nearby, as Clip edges do in simplepdfclipper. Alt drags
+without it.
+
 **Offset**
 How far the New Plan's Body is shifted along the Time direction so that it lies exactly
 on the Old Plan's Body. One Offset for the whole Body, found from the drawing and
