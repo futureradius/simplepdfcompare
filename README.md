@@ -11,6 +11,21 @@ no server, no upload.
 > Status: planning. See [`GLOSSARY.md`](GLOSSARY.md) for the domain and the
 > `wayfinder:map` issue for the open decisions.
 
+## Sample Plans
+
+Real Plans are confidential, so development runs against synthetic pairs:
+
+```sh
+npm install
+npm run samples
+```
+
+writes to `samples/` (git-ignored) an Old/New pair with time running down (a 14 m
+time-distance diagram), a small pair with time running right (a bar chart), and
+`ground-truth.json` with each pair's Offset, Header/Body/Footer bounds, the planted
+changes (with the Added/Removed boxes they must produce) and controls that look
+different but are not Differences.
+
 ## License
 
 AGPL-3.0-or-later (planned to bundle MuPDF.js, as the sibling does). See [`LICENSE`](LICENSE).
