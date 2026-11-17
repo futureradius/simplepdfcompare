@@ -1,8 +1,9 @@
 # simplepdfcompare
 
-Compare two versions of a vector PDF construction schedule: align them Row by Row
-(Header and Footer stay put, Rows in between shift) and show on screen what was
-**Added** (red) and what was **Removed** (yellow, dashed x–x–x outline).
+Compare two versions of a vector PDF construction schedule: line up their Bodies by
+eye (Header and Footer stay put, the schedule in between shifts along the time
+direction) and show on screen what was **Added** (red) and what was **Removed**
+(yellow, dashed x–x–x outline).
 
 Runs fully local, like its sibling [simplepdfclipper](https://github.com/futureradius/simplepdfclipper):
 no server, no upload.
