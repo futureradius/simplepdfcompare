@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Render bench · issue 11</title>
+<!--
+  RESEARCH (throwaway) for issue #11. run.mjs drives it headlessly on the synthetic pair.
+  It can also measure two PDFs picked here: they are opened by the browser from disk and
+  never reach the server (127.0.0.1, static files only). The result shows only timings,
+  counts and page sizes in mm: no file names, no text, no pictures.
+-->
+<style>body { margin: 0; padding: 12px; font: 13px system-ui; } canvas { display: block; } pre { font: 12px ui-monospace, monospace; }</style>
+</head>
+<body>
+<p>Old Plan <input type="file" id="old" accept="application/pdf"> New Plan <input type="file" id="new" accept="application/pdf">
+  <button id="go">Measure (timings and counts only)</button></p>
+<pre id="out">run.mjs calls window.bench(); or pick two PDFs and press Measure.</pre>
+<script type="module" src="./bench.mjs"></script>
+</body>
+</html>
