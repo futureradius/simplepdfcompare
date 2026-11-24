@@ -73,7 +73,8 @@ const hidden = { plans: null, keys: new Set() };
 const placeKey = (p) => `${p.cat}|${[p.box.x0, p.box.y0, p.box.x1, p.box.y1].map((v) => Math.round(v)).join(",")}`;
 const hiddenKeys = () => { if (hidden.plans !== S.plans) { hidden.plans = S.plans; hidden.keys = new Set(); } return hidden.keys; };
 export const isHidden = (p) => hiddenKeys().has(placeKey(p));
-export function setHidden(p, on) { const k = hiddenKeys(); if (on) k.add(placeKey(p)); else k.delete(placeKey(p)); emit("hidden"); }
+/** Hide or show one place or several (an array) at once. */
+export function setHidden(p, on) { const k = hiddenKeys(); for (const x of [].concat(p)) { if (on) k.add(placeKey(x)); else k.delete(placeKey(x)); } emit("hidden"); }
 export const hiddenCount = () => allPlaces().filter(isHidden).length;
 /** Is a place on the plan and in the list: let through by the filter and not hidden. */
 export const shownPlace = (p) => catOn(p.cat) && !isHidden(p);
@@ -406,12 +407,16 @@ export function drawOverlay(ctx, V, { plans, selected = true, label = null, only
         ring(ctx, cx, cy, 11, only || kindOf(gs[i]));
       }
     }
-    if (selected && gs[CS.sel] && !CS.peek) {
-      const b = placeBox(gs[CS.sel]), m = 8 + CV.outline;
+    // Selected places (round 5: a set, may be empty; B and C still use one index).
+    const sels = CS.selSet ? gs.filter((g) => CS.selSet.has(g)) : [gs[CS.sel]].filter(Boolean);
+    if (selected && !CS.peek) for (const g of sels) {
+      const b = placeBox(g), m = 8 + CV.outline;
       const x = (b.x0 - V.x0) * V.s - m, y = (b.y0 - V.y0) * V.s - m, w = (b.x1 - b.x0) * V.s + 2 * m, hh = (b.y1 - b.y0) * V.s + 2 * m;
+      if (x > V.w + 40 || y > V.h + 40 || x + w < -40 || y + hh < -40) continue;
       ctx.strokeStyle = "#1d1d1f"; ctx.lineWidth = 1.5; ctx.setLineDash([6, 4]);
       ctx.beginPath(); ctx.roundRect(x, y, Math.max(w, 12), Math.max(hh, 12), 6); ctx.stroke(); ctx.setLineDash([]);
-      pill(ctx, x, y - 24 < 2 ? y + hh + 4 : y - 24, `${CS.sel + 1} / ${gs.length}`, { bg: "#1d1d1f" });
+      const n = gs.indexOf(g) + 1;
+      pill(ctx, x, y - 24 < 2 ? y + hh + 4 : y - 24, sels.length === 1 ? `${n} / ${gs.length}` : String(n), { bg: "#1d1d1f" });
     }
     if (CS.peek) pill(ctx, V.w / 2 - 90, 12, label || "Plan ohne Markierungen (Shift)", { bg: "#1d1d1f" });
   });
@@ -459,7 +464,7 @@ function stickyTag(ctx, V, r, text, bg) {
  * A map view of the comparison. only: null (one Plan with all marks) or "old" / "new".
  * Returns the viewer from alignment/viewer.mjs.
  */
-export function compareViewer(host, { only = null, onChange, overlayExtra } = {}) {
+export function compareViewer(host, { only = null, onChange, overlayExtra, down = () => ({}), hover = () => "default" } = {}) {
   const cache = layerCache();
   const viewer = createViewer(host, {
     paint: (view, w, hh) => {
@@ -473,10 +478,10 @@ export function compareViewer(host, { only = null, onChange, overlayExtra } = {}
       drawOverlay(ctx, V, { plans, only, label });
       if (overlayExtra) overlayExtra(ctx, V);
     },
-    hover: () => "default",
-    // Nothing to edit in the comparison: a left click does nothing. Pan with the right or
-    // middle mouse button (round 3: Space no longer pans anywhere).
-    down: () => ({}),
+    // Left button: by default nothing (B, C); variant A selects places (round 5). Pan with the
+    // right or middle mouse button (round 3: Space no longer pans anywhere).
+    hover,
+    down,
     onChange,
   });
   return viewer;
@@ -506,7 +511,7 @@ export function fitAcross(viewer, t) {
  * ← / → (and J / K): previous / next place. Hold Space: only the New Plan, without marks;
  * Shift + Space: only the Old Plan. M: marks on/off. Returns a cleanup function.
  */
-export function keys({ go, redraw, hide }) {
+export function keys({ go, redraw, hide, esc }) {
   let space = false;
   const peek = (p) => { if (CS.peek !== p) { CS.peek = p; redraw(); } };
   const down = (e) => {
@@ -518,6 +523,7 @@ export function keys({ go, redraw, hide }) {
     else if (e.key === "ArrowLeft" || e.key === "k" || e.key === "K") { e.preventDefault(); go(-1); }
     else if (e.key === "m" || e.key === "M") setCV({ marks: !CV.marks });
     else if ((e.key === "h" || e.key === "H") && hide) hide();
+    else if (e.key === "Escape" && esc) esc();
   };
   const up = (e) => {
     if (e.key === " ") { space = false; peek(null); }

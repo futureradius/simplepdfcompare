@@ -1,15 +1,19 @@
-// PROTOTYPE (throwaway) · Comparison view, variant A "Plan + Liste" (round 2, the chosen one).
+// PROTOTYPE (throwaway) · Comparison view, variant A "Plan + Liste" (the chosen one; round 5).
 // One map view of the whole Plan with all marks and a sidebar:
 //   - the count, a filter by kind of change (like Excel's) and filter presets ("Vorlage"),
 //   - the list of places, each with a small picture (drawn when it scrolls into sight),
 //   - "Darstellung" folded away (settings are kept per browser).
 // The sidebar's right edge can be dragged wider or narrower. Under the view, ◀ ▶ with the
-// current place's number and kind of change between them. A strip along the view's edge
-// shows every place along the time axis; click it to jump.
+// current place between them. A strip along the view's edge shows every place along time.
+// Round 5: a selection of places, shared by list and plan, which may be empty:
+//   - click a place (list or plan) to select it, click empty plan or Esc to clear;
+//   - drag a box on the plan, as in CAD: left to right selects what lies fully inside (solid
+//     blue), right to left what the box touches (dashed green); Shift adds, Ctrl removes (red);
+//   - H or "ausblenden" hides the selection; the plan does not move, nothing stays selected.
 import { S, on, h, CV, CS, setCV, groups, allPlaces, describe, placeLabel, where, dot, totals, compareViewer, fitPlace, fitWhole, keys,
   baseSwitch, outlineSlider, fadeSlider, removedSwitch, xSizeSlider, check, legend, bindRedraw, placeBox, tLo, tHi, kindOf, drawThumb,
   CATS, catOn, BUILTIN, userPresets, savePresets, fullFilter, sameFilter, setFilter, RED, YELLOW, YELLOW_INK,
-  hiddenCount, setHidden, fmt } from "./common.mjs";
+  hiddenCount, setHidden, isHidden, fmt, screen } from "./common.mjs";
 
 const SIDE_KEY = "compareview.side";
 const sideWidth = () => { try { return +localStorage.getItem(SIDE_KEY) || 330; } catch { return 330; } };
@@ -45,7 +49,40 @@ export default function mount(host, { back }) {
     if (confirm(`Vorlage „${name}“ löschen?`)) savePresets(userPresets().filter((p) => p.name !== name));
   } }, "×");
 
-  // Round 3: places that are no real change can be hidden (list, plan, ◀ ▶, export).
+  // ---------- selection (round 5) ----------
+  const sel = new Set();
+  CS.selSet = sel;
+  offs.push(() => { delete CS.selSet; });
+  // Where ◀ ▶ go on from: an index into the shown places, or i - 0.5 ("between", after hiding).
+  let anchor = CS.sel, pendingAnchor = null;
+  const selRow = h("div", { style: "display:none;align-items:center;gap:6px;font-size:13px" });
+  function drawSelRow() {
+    if (!sel.size) { selRow.style.display = "none"; return; }
+    selRow.style.display = "flex";
+    selRow.replaceChildren(h("b", {}, `${sel.size} ausgewählt`), h("span", { style: "flex:1" }),
+      h("button", { style: "padding:2px 8px;font-size:12px;display:flex;gap:5px;align-items:center", title: "Ausgewählte Stellen ausblenden (H)", onclick: () => hidePlaces([...sel]) }, EYE_OFF(), "ausblenden"),
+      h("button", { style: "padding:2px 8px;font-size:12px", title: "Auswahl aufheben (Esc)", onclick: clearSel }, "aufheben"));
+  }
+  function refreshSel() { drawSelRow(); drawList(); drawNav(); drawStrip(); viewer.redrawOverlay(); }
+  function clearSel() { if (!sel.size) return; sel.clear(); refreshSel(); }
+  const setAnchor = (g) => { const i = groups().indexOf(g); if (i >= 0) { anchor = i; CS.sel = i; } };
+  /** Select only place i of the shown ones; fit: also move the plan to it (list, ◀ ▶, strip). */
+  function selectOnly(i, fit = true) {
+    const gs = groups();
+    if (!gs.length) return;
+    anchor = ((i % gs.length) + gs.length) % gs.length; CS.sel = anchor;
+    sel.clear(); sel.add(gs[anchor]); scrollToSel = true;
+    drawSelRow(); drawList(); drawNav();
+    if (fit) fitPlace(viewer, gs[anchor]);
+    drawStrip(); viewer.redrawOverlay();
+  }
+  const go = (d) => { if (groups().length) selectOnly(d > 0 ? Math.floor(anchor) + 1 : Math.ceil(anchor) - 1); };
+  function toggleSel(g, mode) {
+    if (mode === "remove" || (mode === "toggle" && sel.has(g))) sel.delete(g); else { sel.add(g); setAnchor(g); }
+    refreshSel();
+  }
+
+  // Round 3/4: places that are no real change can be hidden (list, plan, ◀ ▶, export).
   let showHidden = false;
   const hiddenRow = h("div", { class: "hint", style: "display:flex;align-items:center;gap:8px;min-height:20px" });
   function drawHiddenRow() {
@@ -54,9 +91,8 @@ export default function mount(host, { back }) {
     hiddenRow.style.display = "flex";
     hiddenRow.replaceChildren(EYE_OFF(), `${n} ausgeblendet`, h("button", { style: "padding:1px 8px;font-size:12px", onclick: toggleShowHidden }, showHidden ? "verbergen" : "zeigen"));
   }
-
-  // Round 4: the list stays where it is when places are hidden or shown again. A hidden item
-  // folds away and the items below slide up into its place; items that come back unfold.
+  // The list stays where it is when places are hidden or shown again. A hidden item folds
+  // away and the items below slide up into its place; items that come back unfold.
   const SLIDE = { duration: 220, easing: "cubic-bezier(.4,0,.2,1)" };
   const folding = new Set(), unfolding = new Set();
   const liOf = (g) => [...list.children].find((li) => li._g === g);
@@ -64,12 +100,18 @@ export default function mount(host, { back }) {
     li.style.overflow = "hidden";
     return li.animate([{ height: li.offsetHeight + "px", opacity: 1 }, { height: "0px", opacity: 0, paddingTop: "0px", paddingBottom: "0px" }], { ...SLIDE, fill: "forwards" }).finished;
   };
-  function hidePlace(g) {
-    const li = liOf(g);
-    if (folding.has(g)) return;
-    if (showHidden || !li) { setHidden(g, true); return; } // stays listed (greyed): nothing to fold
-    folding.add(g);
-    fold(li).then(() => { folding.delete(g); setHidden(g, true); });
+  /** Deselect, then hide: the plan stays where it is and nothing is selected afterwards. */
+  function hidePlaces(targets) {
+    targets = targets.filter((g) => !folding.has(g) && !isHidden(g));
+    if (!targets.length) return;
+    const gs = groups(), idx = targets.map((g) => gs.indexOf(g)).filter((i) => i >= 0);
+    if (idx.length) pendingAnchor = Math.min(...idx) - 0.5; // ◀ ▶ go on from where the first one was
+    for (const g of targets) sel.delete(g);
+    drawSelRow(); drawNav(); viewer.redrawOverlay();
+    const lis = showHidden ? [] : targets.map(liOf).filter(Boolean);
+    for (const li of lis) li.style.background = "transparent";
+    targets.forEach((g) => folding.add(g));
+    Promise.all(lis.map(fold)).then(() => { targets.forEach((g) => folding.delete(g)); setHidden(targets, true); });
   }
   function showPlace(g) {
     setHidden(g, false);
@@ -78,7 +120,6 @@ export default function mount(host, { back }) {
   }
   function toggleShowHidden() {
     if (showHidden) {
-      // Fold the greyed rows away, then drop them.
       const rows = [...list.children].filter((li) => li._off);
       Promise.all(rows.map(fold)).then(() => { showHidden = false; drawSide(); });
     } else {
@@ -95,6 +136,7 @@ export default function mount(host, { back }) {
     h("div", { style: "display:flex;align-items:center;gap:6px" }, fbtn),
     fpanel,
     hiddenRow,
+    selRow,
     list,
     h("details", {}, h("summary", { style: "cursor:pointer;font-weight:600" }, "Darstellung ", h("span", { class: "hint", style: "font-weight:400" }, "(bleibt in diesem Browser gespeichert)")),
       h("div", { style: "display:flex;flex-direction:column;gap:8px;margin-top:8px" },
@@ -110,9 +152,8 @@ export default function mount(host, { back }) {
   // ---------- main view ----------
   const vwrap = h("div", { class: "view", style: "position:absolute;inset:10px 40px 10px 10px;border:1px solid var(--line);border-radius:8px" });
   const strip = h("canvas", { title: "Übersicht: alle Stellen entlang der Zeit. Klicken springt dorthin.", style: "position:absolute;top:10px;height:calc(100% - 20px);right:8px;width:24px;cursor:pointer;border-radius:6px;background:#fff;border:1px solid var(--line)" });
-  // ◀ current place ▶, where the prototype switcher used to be.
-  // Round 3: a fixed width, so ◀ and ▶ stay under the pointer while stepping through.
-  const navText = h("button", { title: "Zur aktuellen Stelle", style: "flex:1;min-width:0;background:transparent;color:#fff;border:0;display:flex;align-items:center;justify-content:center;gap:8px;overflow:hidden;white-space:nowrap", onclick: () => select(CS.sel) });
+  // ◀ current place ▶ (fixed width, so ◀ and ▶ stay under the pointer while stepping through).
+  const navText = h("button", { title: "Zur ausgewählten Stelle", style: "flex:1;min-width:0;background:transparent;color:#fff;border:0;display:flex;align-items:center;justify-content:center;gap:8px;overflow:hidden;white-space:nowrap", onclick: () => { if (sel.size === 1) fitPlace(viewer, [...sel][0]); } });
   const navBtn = (t, d, tip) => h("button", { title: tip, style: "flex:none;background:transparent;color:#fff;border:0;border-radius:99px;padding:4px 12px;font-size:15px", onclick: () => go(d) }, t);
   const nav = h("div", { style: "position:absolute;left:50%;bottom:22px;transform:translateX(-50%);z-index:6;display:flex;align-items:center;gap:2px;padding:5px;border-radius:99px;background:#1d1d1f;color:#fff;box-shadow:0 6px 24px rgba(0,0,0,.3);font-size:13px;width:min(460px, calc(100% - 80px))" },
     navBtn("◀", -1, "Vorige Stelle (←)"), navText, navBtn("▶", 1, "Nächste Stelle (→)"));
@@ -121,7 +162,69 @@ export default function mount(host, { back }) {
   host.append(root);
   if (S.axis === "x") { vwrap.style.inset = "10px 10px 40px 10px"; Object.assign(strip.style, { top: "auto", left: "10px", right: "auto", bottom: "8px", width: "calc(100% - 20px)", height: "24px" }); nav.style.bottom = "48px"; }
 
-  const viewer = compareViewer(vwrap, { onChange: () => drawStrip() });
+  // ---------- picking on the plan (round 5) ----------
+  let box = null; // the selection box while dragging: { a, b, mode } with a / b pointer points
+  /** The smallest shown place under the pointer (its lines, areas, words, or its ring). */
+  function placeAt(pt, V) {
+    const tol = (Math.max(CV.outline, 3) + 3) / V.s;
+    let best = null, bestA = Infinity;
+    for (const g of groups()) {
+      const b = placeBox(g);
+      let hit = false;
+      if (CV.rings && CV.marks && Math.max(b.x1 - b.x0, b.y1 - b.y0) * V.s < 18) hit = Math.hypot(pt.x - (b.x0 + b.x1) / 2, pt.y - (b.y0 + b.y1) / 2) * V.s <= 14;
+      if (!hit) hit = g.items.some((it) => itemNear(it, pt, tol));
+      const a = (b.x1 - b.x0) * (b.y1 - b.y0);
+      if (hit && a < bestA) { bestA = a; best = g; }
+    }
+    return best;
+  }
+  function pickDown(pt, e) {
+    const mode = e.ctrlKey || e.metaKey ? "remove" : e.shiftKey ? "add" : "replace", a = pt;
+    box = null;
+    return {
+      move(p) { if (box || Math.hypot(p.px - a.px, p.py - a.py) > 4) box = { a, b: p, mode }; },
+      up(p, ev, V) {
+        if (!box) { clickAt(a, V, mode); return; }
+        const r = { x0: Math.min(a.x, p.x), x1: Math.max(a.x, p.x), y0: Math.min(a.y, p.y), y1: Math.max(a.y, p.y) };
+        const crossing = p.px < a.px; // right to left: what the box touches; left to right: what lies fully inside
+        const hits = groups().filter((g) => (crossing ? touches(g, r) : encloses(g, r)));
+        box = null;
+        if (mode === "replace") sel.clear();
+        for (const g of hits) if (mode === "remove") sel.delete(g); else sel.add(g);
+        if (sel.size) { setAnchor([...sel].sort((x, y) => groups().indexOf(x) - groups().indexOf(y))[0]); scrollToSel = mode !== "remove"; }
+        refreshSel();
+      },
+    };
+  }
+  function clickAt(pt, V, mode) {
+    const g = placeAt(pt, V);
+    if (!g) { if (mode === "replace") clearSel(); return; } // click on empty plan: nothing selected
+    if (mode === "remove") return toggleSel(g, "remove");
+    if (mode === "add") return toggleSel(g, "toggle");
+    sel.clear(); sel.add(g); setAnchor(g); scrollToSel = true; refreshSel(); // the plan stays where it is
+  }
+  const drawBox = (ctx, V) => {
+    if (!box) return;
+    screen(ctx, () => {
+      const ax = (box.a.x - V.x0) * V.s, ay = (box.a.y - V.y0) * V.s, bx = (box.b.x - V.x0) * V.s, by = (box.b.y - V.y0) * V.s;
+      const crossing = box.b.px < box.a.px;
+      const col = box.mode === "remove" ? "#d0215f" : crossing ? "#16a34a" : "#1d5fd6";
+      ctx.fillStyle = col + "1f"; ctx.strokeStyle = col; ctx.lineWidth = 1.3;
+      ctx.setLineDash(crossing ? [6, 4] : []);
+      ctx.fillRect(Math.min(ax, bx), Math.min(ay, by), Math.abs(bx - ax), Math.abs(by - ay));
+      ctx.strokeRect(Math.min(ax, bx), Math.min(ay, by), Math.abs(bx - ax), Math.abs(by - ay));
+      ctx.setLineDash([]);
+    });
+  };
+  const viewer = compareViewer(vwrap, {
+    onChange: () => drawStrip(),
+    down: pickDown,
+    hover: (pt, e, V) => (placeAt(pt, V) ? "pointer" : "crosshair"),
+    overlayExtra: drawBox,
+  });
+
+  window.__cv = { viewer, sel }; // prototype: lets the headless test check that the plan does not move
+  offs.push(() => { delete window.__cv; });
 
   grip.onpointerdown = (e) => {
     grip.setPointerCapture(e.pointerId);
@@ -134,7 +237,7 @@ export default function mount(host, { back }) {
   function drawSide() {
     const gs = groups(), all = allPlaces(), c = totals();
     drawPresets(); drawFilterButton();
-    drawHiddenRow();
+    drawHiddenRow(); drawSelRow();
     if (!S.result) { count.textContent = "Vergleiche…"; sums.textContent = ""; list.replaceChildren(); drawNav(); return; }
     count.textContent = !all.length ? "Keine Unterschiede" : gs.length === all.length ? `${all.length} Stellen mit Unterschieden` : `${gs.length} von ${all.length} Stellen`;
     sums.replaceChildren(
@@ -163,6 +266,7 @@ export default function mount(host, { back }) {
       if (queue.length) pump();
     }, 10);
   }
+  let scrollToSel = true;
   function drawList() {
     const gs = groups(), tw = Math.round(Math.min(220, Math.max(84, W * 0.34))), th = Math.round(tw * 0.68);
     // With "zeigen", hidden places are listed too (greyed, with "einblenden"); they stay off the plan.
@@ -177,11 +281,17 @@ export default function mount(host, { back }) {
       const tog = h("button", {
         title: off ? "Wieder einblenden" : "Ausblenden: keine echte Änderung (H)",
         style: "flex:none;margin-left:auto;padding:2px 6px;border-color:transparent;background:transparent;color:var(--muted)",
-        onclick: (e) => { e.stopPropagation(); if (off) showPlace(g); else hidePlace(g); },
+        onclick: (e) => { e.stopPropagation(); if (off) showPlace(g); else hidePlaces([g]); },
       }, off ? h("span", { style: "font-size:12px" }, "einblenden") : EYE_OFF());
       const li = h("li", {
-        style: `display:flex;gap:9px;align-items:flex-start;padding:7px 8px;cursor:${off ? "default" : "pointer"};border-radius:6px;${off ? "opacity:.45;" : ""}${i === CS.sel ? "background:color-mix(in srgb,var(--accent) 12%,#fff)" : ""}`,
-        onclick: () => { if (!off) select(i); },
+        title: off ? "" : "Klicken: auswählen und hinspringen · Strg+Klick: zur Auswahl dazu oder weg",
+        style: `display:flex;gap:9px;align-items:flex-start;padding:7px 8px;cursor:${off ? "default" : "pointer"};border-radius:6px;${off ? "opacity:.45;" : ""}${sel.has(g) ? "background:color-mix(in srgb,var(--accent) 12%,#fff)" : ""}`,
+        onclick: (e) => {
+          if (off) return;
+          if (e.ctrlKey || e.metaKey) toggleSel(g, "toggle");
+          else if (e.shiftKey) toggleSel(g, "add");
+          else selectOnly(i);
+        },
       }, box, h("div", { style: "min-width:0;flex:1" },
         h("div", { style: "display:flex;align-items:center;gap:6px" }, h("b", { style: "font-variant-numeric:tabular-nums" }, off ? "–" : String(i + 1)), dot(g), h("b", {}, placeLabel(g)), tog),
         g.detail ? h("div", { style: "font-size:13px" }, g.detail) : null,
@@ -198,14 +308,13 @@ export default function mount(host, { back }) {
       li.animate([{ height: "0px", opacity: 0, paddingTop: "0px", paddingBottom: "0px" }, { height: li.offsetHeight + "px", opacity: li._off ? 0.45 : 1 }], SLIDE);
     }
     unfolding.clear();
-    // Scroll only when the user moved to another place (◀ ▶, list, strip), not on hide / show.
+    // Scroll only when the user picked a place (◀ ▶, list, plan, strip), not on hide / show.
     if (scrollToSel) {
       scrollToSel = false;
-      const cur = [...list.children].find((li) => li._g === gs[CS.sel]);
+      const cur = [...list.children].find((li) => sel.has(li._g));
       if (cur) cur.scrollIntoView({ block: "nearest", behavior: "smooth" });
     }
   }
-  let scrollToSel = true;
 
   function drawFilterButton() {
     const on = CATS.filter(([k]) => catOn(k)).length;
@@ -241,10 +350,13 @@ export default function mount(host, { back }) {
   }
 
   function drawNav() {
-    const gs = groups(), g = gs[CS.sel];
+    const gs = groups();
     nav.style.display = S.result ? "flex" : "none";
-    if (!g) { navText.replaceChildren(gs.length || !allPlaces().length ? "Keine Unterschiede" : "Keine Stelle passt zum Filter"); return; }
-    navText.replaceChildren(dot(g, 10), h("b", { style: "font-variant-numeric:tabular-nums" }, `${CS.sel + 1} / ${gs.length}`), h("span", {}, "·"), h("b", {}, placeLabel(g)),
+    if (!gs.length) { navText.replaceChildren(allPlaces().length ? "Keine Stelle passt zum Filter" : "Keine Unterschiede"); return; }
+    if (sel.size > 1) { navText.replaceChildren(h("b", {}, `${sel.size} ausgewählt`), h("span", { style: "opacity:.7" }, "· H blendet sie aus · Esc hebt auf")); return; }
+    const g = sel.size ? [...sel][0] : null;
+    if (!g) { navText.replaceChildren(h("span", { style: "opacity:.75" }, `Keine Auswahl · ${gs.length} Stellen`)); return; }
+    navText.replaceChildren(dot(g, 10), h("b", { style: "font-variant-numeric:tabular-nums" }, `${gs.indexOf(g) + 1} / ${gs.length}`), h("span", {}, "·"), h("b", {}, placeLabel(g)),
       g.detail ? h("span", { style: "opacity:.8" }, g.detail) : null, h("span", { style: "opacity:.6" }, "· " + where(g)));
   }
 
@@ -258,11 +370,11 @@ export default function mount(host, { back }) {
     const rect = (a, b, c0, c1, col) => { ctx.fillStyle = col; if (vert) ctx.fillRect(c0, a, c1 - c0, Math.max(2, b - a)); else ctx.fillRect(a, c0, Math.max(2, b - a), c1 - c0); };
     const V = viewer.V, v0 = vert ? V.y0 : V.x0, v1 = v0 + (vert ? V.h : V.w) / V.s;
     rect(at(Math.max(v0, w0)), at(Math.min(v1, w1)), 1, thick - 1, "rgba(29,95,214,.14)");
-    groups().forEach((g, i) => {
-      const b = placeBox(g), k = kindOf(g), sel = i === CS.sel;
-      if (k === "both") { rect(at(tLo(b)), at(tHi(b)), sel ? 1 : 5, thick / 2, YELLOW); rect(at(tLo(b)), at(tHi(b)), thick / 2, sel ? thick - 1 : thick - 5, RED); }
-      else rect(at(tLo(b)), at(tHi(b)), sel ? 1 : 5, sel ? thick - 1 : thick - 5, k === "old" ? YELLOW : RED);
-      if (sel) { ctx.strokeStyle = "#1d1d1f"; ctx.lineWidth = 1.5; const a = at(tLo(b)) - 2, z = Math.max(at(tHi(b)) + 2, a + 5); if (vert) ctx.strokeRect(0.75, a, thick - 1.5, z - a); else ctx.strokeRect(a, 0.75, z - a, thick - 1.5); }
+    groups().forEach((g) => {
+      const b = placeBox(g), k = kindOf(g), on = sel.has(g);
+      if (k === "both") { rect(at(tLo(b)), at(tHi(b)), on ? 1 : 5, thick / 2, YELLOW); rect(at(tLo(b)), at(tHi(b)), thick / 2, on ? thick - 1 : thick - 5, RED); }
+      else rect(at(tLo(b)), at(tHi(b)), on ? 1 : 5, on ? thick - 1 : thick - 5, k === "old" ? YELLOW : RED);
+      if (on) { ctx.strokeStyle = "#1d1d1f"; ctx.lineWidth = 1.5; const a = at(tLo(b)) - 2, z = Math.max(at(tHi(b)) + 2, a + 5); if (vert) ctx.strokeRect(0.75, a, thick - 1.5, z - a); else ctx.strokeRect(a, 0.75, z - a, thick - 1.5); }
     });
   }
   strip.onclick = (e) => {
@@ -271,19 +383,11 @@ export default function mount(host, { back }) {
     let best = -1, bd = Infinity;
     groups().forEach((g, i) => { const b = placeBox(g), c = (tLo(b) + tHi(b)) / 2, dd = Math.abs(c - t); if (dd < bd) { bd = dd; best = i; } });
     const px = bd / (w1 - w0) * (vert ? r.height : r.width);
-    if (best >= 0 && px < 12) select(best);
+    if (best >= 0 && px < 12) selectOnly(best);
     else { const V = viewer.V; if (vert) viewer.setView(V.x0, t - V.h / 2 / V.s); else viewer.setView(t - V.w / 2 / V.s, V.y0); }
   };
 
-  function select(i) {
-    const gs = groups();
-    if (!gs.length) { drawSide(); return; }
-    CS.sel = (i + gs.length) % gs.length; scrollToSel = true;
-    drawSide(); fitPlace(viewer, gs[CS.sel]); drawStrip();
-  }
-  const go = (d) => select(CS.sel + d);
-
-  offs.push(keys({ go, redraw: () => viewer.update(1), hide: () => { const g = groups()[CS.sel]; if (g) hidePlace(g); } }));
+  offs.push(keys({ go, redraw: () => viewer.update(1), hide: () => hidePlaces([...sel]), esc: clearSel }));
   offs.push(bindRedraw(...ctrls));
 
   // "Änderungen exportieren" (top right): the list as shown (filter applied, hidden ones left out),
@@ -298,48 +402,83 @@ export default function mount(host, { back }) {
     document.body.append(a); a.click(); a.remove();
   };
   offs.push(() => { delete S.exportChanges; });
+
+  /** After the shown places changed: drop what is no longer shown from the selection. */
+  function pruneSel() {
+    const gs = new Set(groups());
+    for (const g of [...sel]) if (!gs.has(g)) sel.delete(g);
+    if (sel.size === 1) setAnchor([...sel][0]);
+    else anchor = Math.min(anchor, Math.max(0, gs.size - 1));
+  }
   let lastFilter = JSON.stringify(fullFilter()), cvTimer = 0;
   offs.push(on((w) => {
     if (w === "cv") {
       const f = JSON.stringify(fullFilter());
-      if (f !== lastFilter) {
-        // Keep the same place selected if it is still shown.
-        const was = allPlaces().find((p) => p === lastShown[CS.sel]);
-        lastFilter = f;
-        const i = groups().indexOf(was);
-        CS.sel = i >= 0 ? i : 0;
-        lastShown = groups();
-        drawSide(); if (!fpanel.hidden) drawFilter();
-      }
+      if (f !== lastFilter) { lastFilter = f; pruneSel(); drawSide(); if (!fpanel.hidden) drawFilter(); }
       viewer.update(20); drawStrip();
       clearTimeout(cvTimer); cvTimer = setTimeout(drawList, 300); // pictures follow the settings
     }
     if (w === "presets") drawPresets();
     if (w === "hidden") {
-      // Stay on the same place, or on the next one if this one was hidden.
-      const was = lastShown[CS.sel], gs = groups();
-      let i = gs.indexOf(was);
-      if (i < 0) i = Math.min(CS.sel, gs.length - 1);
-      lastShown = gs;
-      viewer.update(10);
-      if (i >= 0 && gs[i] === was) { CS.sel = i; drawSide(); drawStrip(); } else select(Math.max(0, i)); // hid the current one: go to the next
+      // Nothing moves: the plan stays, the list stays, nothing new gets selected.
+      pruneSel();
+      if (pendingAnchor !== null) { anchor = pendingAnchor; pendingAnchor = null; }
+      drawSide(); drawStrip(); viewer.update(10);
     }
     if (w === "result") {
-      lastShown = groups();
-      CS.sel = Math.min(CS.sel, Math.max(0, groups().length - 1));
-      if (!fitted && groups().length) { fitted = true; requestAnimationFrame(() => select(CS.sel)); }
+      sel.clear(); // new places: the old selection does not apply
+      if (!fitted && groups().length) { fitted = true; requestAnimationFrame(() => selectOnly(Math.min(CS.sel, groups().length - 1))); }
       drawSide(); viewer.update(10); drawStrip();
     }
   }));
-  let lastShown = groups();
   let fitted = !!S.result;
   drawSide();
-  requestAnimationFrame(() => { if (S.result && groups().length) select(CS.sel); else fitWhole(viewer); drawStrip(); });
+  requestAnimationFrame(() => { if (S.result && groups().length) selectOnly(Math.min(CS.sel, groups().length - 1)); else fitWhole(viewer); drawStrip(); });
   new ResizeObserver(() => drawStrip()).observe(strip);
   return () => { offs.forEach((f) => f()); clearTimeout(qtimer); root.remove(); };
 }
 export const NAME = "Plan + Liste";
 void setCV;
+
+// ---------- geometry for picking ----------
+
+function distSeg(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay, L = dx * dx + dy * dy;
+  const u = L ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / L)) : 0;
+  return Math.hypot(px - ax - u * dx, py - ay - u * dy);
+}
+/** Is the pointer on this changed item: near one of its line segments, or inside its box. */
+function itemNear(it, p, tol) {
+  const b = it.box;
+  if (p.x < b.x0 - tol || p.x > b.x1 + tol || p.y < b.y0 - tol || p.y > b.y1 + tol) return false;
+  if (!it.segs) return true;
+  const k = it.segs, hw = it.o && it.o.nums ? it.o.nums[0] / 2 : 0;
+  for (let q = 0; q + 3 < k.length; q += 4) if (distSeg(p.x, p.y, k[q], k[q + 1], k[q + 2], k[q + 3]) <= tol + hw) return true;
+  return false;
+}
+const inRect = (b, r) => b.x0 >= r.x0 && b.x1 <= r.x1 && b.y0 >= r.y0 && b.y1 <= r.y1;
+const overlaps = (b, r) => b.x0 <= r.x1 && b.x1 >= r.x0 && b.y0 <= r.y1 && b.y1 >= r.y0;
+/** Liang–Barsky: does the segment touch the rectangle? */
+function segTouches(x0, y0, x1, y1, r) {
+  let t0 = 0, t1 = 1;
+  const dx = x1 - x0, dy = y1 - y0;
+  for (const [p, q] of [[-dx, x0 - r.x0], [dx, r.x1 - x0], [-dy, y0 - r.y0], [dy, r.y1 - y0]]) {
+    if (p === 0) { if (q < 0) return false; continue; }
+    const t = q / p;
+    if (p < 0) { if (t > t1) return false; if (t > t0) t0 = t; } else { if (t < t0) return false; if (t < t1) t1 = t; }
+  }
+  return true;
+}
+/** Crossing box: the place counts when any of its lines, areas or words touches the box. */
+const touches = (g, r) => g.items.some((it) => {
+  if (!overlaps(it.box, r)) return false;
+  if (!it.segs) return true;
+  const k = it.segs;
+  for (let q = 0; q + 3 < k.length; q += 4) if (segTouches(k[q], k[q + 1], k[q + 2], k[q + 3], r)) return true;
+  return false;
+});
+/** Window box: the place counts only when all of it lies inside the box. */
+const encloses = (g, r) => g.items.every((it) => inRect(it.box, r));
 
 // Small grey icons (drawn here, simple shapes).
 const icon = (inner, title = "") => { const s = document.createElementNS("http://www.w3.org/2000/svg", "svg"); s.setAttribute("width", "15"); s.setAttribute("height", "15"); s.setAttribute("viewBox", "0 0 24 24"); s.setAttribute("fill", "none"); s.setAttribute("stroke", "#8a8a90"); s.setAttribute("stroke-width", "2"); s.setAttribute("stroke-linecap", "round"); s.setAttribute("stroke-linejoin", "round"); s.style.flex = "none"; s.innerHTML = inner; if (title) s.setAttribute("aria-label", title); return s; };
