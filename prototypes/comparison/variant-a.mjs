@@ -71,7 +71,7 @@ export default function mount(host, { back }) {
     const gs = groups();
     if (!gs.length) return;
     anchor = ((i % gs.length) + gs.length) % gs.length; CS.sel = anchor;
-    sel.clear(); sel.add(gs[anchor]); scrollToSel = true;
+    sel.clear(); sel.add(gs[anchor]); scrollToSel = true; rangeFrom = gs[anchor];
     drawSelRow(); drawList(); drawNav();
     if (fit) fitPlace(viewer, gs[anchor]);
     drawStrip(); viewer.redrawOverlay();
@@ -79,6 +79,19 @@ export default function mount(host, { back }) {
   const go = (d) => { if (groups().length) selectOnly(d > 0 ? Math.floor(anchor) + 1 : Math.ceil(anchor) - 1); };
   function toggleSel(g, mode) {
     if (mode === "remove" || (mode === "toggle" && sel.has(g))) sel.delete(g); else { sel.add(g); setAnchor(g); }
+    rangeFrom = g;
+    refreshSel();
+  }
+  // Round 6, list selection as in Windows Explorer: Shift + click selects everything from the
+  // last clicked place to this one (Ctrl + Shift adds that range to the selection).
+  let rangeFrom = null;
+  function selectRange(g, add) {
+    const gs = groups(), b = gs.indexOf(g);
+    let a = gs.indexOf(rangeFrom);
+    if (a < 0) a = Number.isInteger(anchor) ? anchor : b;
+    if (!add) sel.clear();
+    for (let k = Math.min(a, b); k <= Math.max(a, b); k++) sel.add(gs[k]);
+    setAnchor(g); // ◀ ▶ go on from the place clicked last; the range keeps its start
     refreshSel();
   }
 
@@ -201,7 +214,7 @@ export default function mount(host, { back }) {
     if (!g) { if (mode === "replace") clearSel(); return; } // click on empty plan: nothing selected
     if (mode === "remove") return toggleSel(g, "remove");
     if (mode === "add") return toggleSel(g, "toggle");
-    sel.clear(); sel.add(g); setAnchor(g); scrollToSel = true; refreshSel(); // the plan stays where it is
+    sel.clear(); sel.add(g); setAnchor(g); rangeFrom = g; scrollToSel = true; refreshSel(); // the plan stays where it is
   }
   const drawBox = (ctx, V) => {
     if (!box) return;
@@ -229,9 +242,23 @@ export default function mount(host, { back }) {
   grip.onpointerdown = (e) => {
     grip.setPointerCapture(e.pointerId);
     const x0 = root.getBoundingClientRect().left;
-    grip.onpointermove = (ev) => { W = Math.round(Math.min(700, Math.max(240, ev.clientX - x0))); root.style.gridTemplateColumns = `${W}px minmax(0,1fr)`; };
+    // Round 6: the pictures follow the edge while dragging (just stretched); they are drawn
+    // anew, sharp, only after letting go.
+    grip.onpointermove = (ev) => {
+      W = Math.round(Math.min(700, Math.max(240, ev.clientX - x0)));
+      root.style.gridTemplateColumns = `${W}px minmax(0,1fr)`;
+      const ts = thumbSize();
+      for (const li of list.children) {
+        const b = li._box;
+        if (!b) continue;
+        if (!ts) { b.style.display = "none"; continue; }
+        b.style.display = ""; b.style.width = ts.tw + "px"; b.style.height = ts.th + "px";
+      }
+    };
     grip.onpointerup = () => { grip.onpointermove = null; try { localStorage.setItem(SIDE_KEY, String(W)); } catch {} drawList(); };
   };
+  /** Size of the small pictures for the sidebar's width; none when it is narrow. */
+  const thumbSize = () => (W < 280 ? null : { tw: Math.round(Math.min(220, W * 0.34)), th: Math.round(Math.min(220, W * 0.34) * 0.68) });
 
   // ---------- drawing the sidebar ----------
   function drawSide() {
@@ -268,28 +295,33 @@ export default function mount(host, { back }) {
   }
   let scrollToSel = true;
   function drawList() {
-    const gs = groups(), tw = Math.round(Math.min(220, Math.max(84, W * 0.34))), th = Math.round(tw * 0.68);
+    const gs = groups(), ts = thumbSize(), tw = ts ? ts.tw : 0, th = ts ? ts.th : 0;
     // With "zeigen", hidden places are listed too (greyed, with "einblenden"); they stay off the plan.
     const rows = showHidden ? allPlaces().filter((p) => catOn(p.cat)) : gs;
     io.disconnect(); queue = [];
     const scroll = list.scrollTop; // rebuilding must not move the list
     list.replaceChildren(...rows.map((g) => {
       const i = gs.indexOf(g), off = i < 0;
-      const box = h("div", { style: `flex:none;width:${tw}px;height:${th}px;border-radius:6px;overflow:hidden;background:#f2f1ee;border:1px solid var(--line)` });
+      const box = h("div", { style: `flex:none;width:${tw}px;height:${th}px;border-radius:6px;overflow:hidden;background:#f2f1ee;border:1px solid var(--line);${ts ? "" : "display:none"}` });
+      // An older picture (other size or settings) stands in, stretched, until the new one is drawn.
       const t = thumbs.get(g);
-      if (t && t.key === thumbKey(tw)) box.append(t.canvas);
+      if (t && ts) box.append(t.canvas);
+      // On a selected place, the button hides the whole selection (round 6).
+      const many = !off && sel.has(g) && sel.size > 1;
       const tog = h("button", {
-        title: off ? "Wieder einblenden" : "Ausblenden: keine echte Änderung (H)",
+        title: off ? "Wieder einblenden" : many ? `Alle ${sel.size} ausgewählten Stellen ausblenden (H)` : "Ausblenden: keine echte Änderung (H)",
         style: "flex:none;margin-left:auto;padding:2px 6px;border-color:transparent;background:transparent;color:var(--muted)",
-        onclick: (e) => { e.stopPropagation(); if (off) showPlace(g); else hidePlaces([g]); },
+        onclick: (e) => { e.stopPropagation(); if (off) showPlace(g); else hidePlaces(sel.has(g) ? [...sel] : [g]); },
       }, off ? h("span", { style: "font-size:12px" }, "einblenden") : EYE_OFF());
       const li = h("li", {
-        title: off ? "" : "Klicken: auswählen und hinspringen · Strg+Klick: zur Auswahl dazu oder weg",
+        title: off ? "" : "Klicken: auswählen und hinspringen · Strg+Klick: dazu oder weg · Shift+Klick: alles bis hierher",
         style: `display:flex;gap:9px;align-items:flex-start;padding:7px 8px;cursor:${off ? "default" : "pointer"};border-radius:6px;${off ? "opacity:.45;" : ""}${sel.has(g) ? "background:color-mix(in srgb,var(--accent) 12%,#fff)" : ""}`,
+        onmousedown: (e) => { if (e.shiftKey) e.preventDefault(); }, // no text selection on Shift + click
         onclick: (e) => {
           if (off) return;
-          if (e.ctrlKey || e.metaKey) toggleSel(g, "toggle");
-          else if (e.shiftKey) toggleSel(g, "add");
+          const ctrl = e.ctrlKey || e.metaKey;
+          if (e.shiftKey) selectRange(g, ctrl);
+          else if (ctrl) toggleSel(g, "toggle");
           else selectOnly(i);
         },
       }, box, h("div", { style: "min-width:0;flex:1" },
@@ -298,7 +330,7 @@ export default function mount(host, { back }) {
         h("div", { class: "muted", style: "font-size:13px" }, where(g)),
         h("div", { class: "hint" }, describe(g))));
       Object.assign(li, { _g: g, _tw: tw, _th: th, _box: box, _off: off });
-      io.observe(li);
+      if (ts) io.observe(li);
       return li;
     }));
     list.scrollTop = scroll;
