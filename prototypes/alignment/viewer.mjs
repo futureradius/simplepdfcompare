@@ -79,7 +79,7 @@ export function createViewer(host, { paint, overlay = () => {}, down = () => nul
   top.addEventListener("contextmenu", (e) => e.preventDefault());
   top.addEventListener("pointerdown", (e) => {
     top.setPointerCapture(e.pointerId);
-    const pt = toMm(e), pan = e.button === 1 || e.button === 2 || spaceDown;
+    const pt = toMm(e), pan = e.button === 1 || e.button === 2; // round 3: Space no longer pans (it shows the New Plan in the comparison)
     const h = pan ? null : down(pt, e, V);
     drag = h ? { h } : { pan: { px: pt.px, py: pt.py, x0: V.x0, y0: V.y0 } };
     if (!h) top.style.cursor = "grabbing";
@@ -87,7 +87,7 @@ export function createViewer(host, { paint, overlay = () => {}, down = () => nul
   });
   top.addEventListener("pointermove", (e) => {
     const pt = toMm(e);
-    if (!drag) { top.style.cursor = spaceDown ? "grab" : hover(pt, e, V) || "grab"; return; }
+    if (!drag) { top.style.cursor = hover(pt, e, V) || "grab"; return; }
     if (drag.h) { drag.h.move && drag.h.move(pt, e, V); drawTop(); return; }
     V.x0 = drag.pan.x0 - (pt.px - drag.pan.px) / V.s;
     V.y0 = drag.pan.y0 - (pt.py - drag.pan.py) / V.s;

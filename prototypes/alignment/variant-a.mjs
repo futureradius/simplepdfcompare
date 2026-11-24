@@ -49,7 +49,10 @@ export default function mount(stage) {
       }, `${i < c ? "✓" : i + 1} ${name}`)),
       h("span", { style: "flex:1" }),
       h("span", { class: "muted", style: "margin-right:8px" }, S.live ? S.busy || "" : ""),
-      h("button", { class: "primary", disabled: c >= 3 ? null : "", title: c >= 3 ? "" : "Erst alle Schritte durchgehen", onclick: () => { S._aConfirmed = 4; done = true; show(step); } }, "Vergleichen →"),
+      // Comparison-view prototype, round 3: while comparing, this button exports the list of changes.
+      done && S.exportChanges
+        ? h("button", { class: "primary", title: "Die Liste der Änderungen (wie gefiltert, ohne ausgeblendete) als Tabelle speichern", onclick: () => S.exportChanges() }, "Änderungen exportieren ⤓")
+        : h("button", { class: "primary", disabled: c >= 3 ? null : "", title: c >= 3 ? "" : "Erst alle Schritte durchgehen", onclick: () => { S._aConfirmed = 4; done = true; show(step); } }, "Vergleichen →"),
     );
     for (const b of nav.querySelectorAll("button[disabled]")) b.disabled = true;
   }
@@ -69,7 +72,7 @@ export default function mount(stage) {
   const side = (...kids) => h("aside", { style: "padding:16px;background:#fff;border-right:1px solid var(--line);overflow:auto;display:flex;flex-direction:column;gap:12px" }, ...kids);
   const nextBack = (back, next, label = "Weiter") => h("div", { style: "display:flex;gap:8px;margin-top:auto;padding-top:12px" },
     back !== null ? h("button", { onclick: () => show(back) }, "← Zurück") : null, h("span", { style: "flex:1" }), h("button", { class: "primary", onclick: next }, label + " →"));
-  const navHint = () => h("p", { class: "hint", style: "margin:0" }, h("kbd", {}, "Mausrad"), " zoomen · ", h("kbd", {}, "Leertaste"), " oder rechte Maustaste + Ziehen: verschieben");
+  const navHint = () => h("p", { class: "hint", style: "margin:0" }, h("kbd", {}, "Mausrad"), " zoomen · ", "rechte oder mittlere Maustaste + Ziehen: verschieben");
   const mainView = () => { const v = h("div", { class: "view", style: "position:absolute;inset:10px;border:1px solid var(--line);border-radius:8px" }); body.append(h("div", { style: "position:relative;min-height:0" }, v)); return v; };
   const fitWhole = (viewer, which, shift = 0) => viewer.fit(rectTA(shift, shift + L(which), 0, A(which)), 24);
   const jump = (viewer, t, at) => {
@@ -426,6 +429,7 @@ export default function mount(stage) {
       const host = h("div", { style: "grid-column:1/-1;min-height:0;position:relative" });
       body.append(host);
       offs.push(S.compareView(host, { back: () => { done = false; show(3); } }));
+      drawNav(); // the view may offer "Änderungen exportieren"
       return;
     }
     const box = h("div", { style: "grid-column:1/-1;display:grid;place-items:center" });

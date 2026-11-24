@@ -8,7 +8,8 @@
 // shows every place along the time axis; click it to jump.
 import { S, on, h, CV, CS, setCV, groups, allPlaces, describe, placeLabel, where, dot, totals, compareViewer, fitPlace, fitWhole, keys,
   baseSwitch, outlineSlider, fadeSlider, removedSwitch, xSizeSlider, check, legend, bindRedraw, placeBox, tLo, tHi, kindOf, drawThumb,
-  CATS, catOn, BUILTIN, userPresets, savePresets, fullFilter, sameFilter, setFilter, RED, YELLOW, YELLOW_INK } from "./common.mjs";
+  CATS, catOn, BUILTIN, userPresets, savePresets, fullFilter, sameFilter, setFilter, RED, YELLOW, YELLOW_INK,
+  hiddenCount, setHidden, fmt } from "./common.mjs";
 
 const SIDE_KEY = "compareview.side";
 const sideWidth = () => { try { return +localStorage.getItem(SIDE_KEY) || 330; } catch { return 330; } };
@@ -20,11 +21,10 @@ export default function mount(host, { back }) {
   // ---------- sidebar ----------
   const count = h("div", { style: "font-size:20px;font-weight:650;line-height:1.2" });
   const sums = h("div", { class: "hint" });
-  const pos = h("span", { style: "flex:1;text-align:center;font-variant-numeric:tabular-nums" });
   const list = h("ol", { style: "list-style:none;margin:0;padding:0;overflow:auto;flex:1;min-height:120px;border-top:1px solid var(--line);border-bottom:1px solid var(--line)" });
 
   // Filter by kind of change: a button that opens a checkbox list, like Excel's filter.
-  const fbtn = h("button", { style: "flex:1;display:flex;justify-content:space-between;gap:6px;text-align:left", title: "Nach Art der Änderung filtern" });
+  const fbtn = h("button", { style: "flex:1;display:flex;align-items:center;gap:8px;text-align:left", title: "Nach Art der Änderung filtern" });
   const fpanel = h("div", { hidden: "", style: "position:absolute;left:14px;right:14px;z-index:8;background:#fff;border:1px solid var(--line);border-radius:10px;padding:8px;box-shadow:0 8px 30px rgba(0,0,0,.15);max-height:60vh;overflow:auto" });
   fbtn.onclick = () => { fpanel.hidden = !fpanel.hidden; if (!fpanel.hidden) { fpanel.style.top = fbtn.offsetTop + fbtn.offsetHeight + 4 + "px"; drawFilter(); } };
   const closeFilter = (e) => { if (!fpanel.hidden && !fpanel.contains(e.target) && !fbtn.contains(e.target)) fpanel.hidden = true; };
@@ -45,14 +45,23 @@ export default function mount(host, { back }) {
     if (confirm(`Vorlage „${name}“ löschen?`)) savePresets(userPresets().filter((p) => p.name !== name));
   } }, "×");
 
+  // Round 3: places that are no real change can be hidden (list, plan, ◀ ▶, export).
+  let showHidden = false;
+  const hiddenRow = h("div", { class: "hint", style: "display:flex;align-items:center;gap:8px;min-height:20px" });
+  function drawHiddenRow() {
+    const n = hiddenCount();
+    if (!n) { hiddenRow.replaceChildren(); hiddenRow.style.display = "none"; showHidden = false; return; }
+    hiddenRow.style.display = "flex";
+    hiddenRow.replaceChildren(EYE_OFF(), `${n} ausgeblendet`, h("button", { style: "padding:1px 8px;font-size:12px", onclick: () => { showHidden = !showHidden; drawSide(); } }, showHidden ? "verbergen" : "zeigen"));
+  }
+
   const ctrls = [baseSwitch(), check("Markierungen zeigen", "marks", "M"), outlineSlider(), removedSwitch(), xSizeSlider(), fadeSlider(), check("Kleine Stellen mit Ring zeigen", "rings")];
   const aside = h("aside", { style: "position:relative;padding:14px;background:#fff;border-right:1px solid var(--line);display:flex;flex-direction:column;gap:10px;min-height:0;overflow:hidden" },
     h("div", {}, count, sums),
     h("div", { style: "display:flex;align-items:center;gap:6px" }, h("span", { class: "hint" }, "Vorlage"), psel, psave, pdel),
     h("div", { style: "display:flex;align-items:center;gap:6px" }, fbtn),
     fpanel,
-    h("div", { style: "display:flex;align-items:center;gap:6px" },
-      h("button", { onclick: () => go(-1), title: "Vorige Stelle (←)" }, "◀ vorige"), pos, h("button", { onclick: () => go(1), title: "Nächste Stelle (→)" }, "nächste ▶")),
+    hiddenRow,
     list,
     h("details", {}, h("summary", { style: "cursor:pointer;font-weight:600" }, "Darstellung ", h("span", { class: "hint", style: "font-weight:400" }, "(bleibt in diesem Browser gespeichert)")),
       h("div", { style: "display:flex;flex-direction:column;gap:8px;margin-top:8px" },
@@ -69,9 +78,10 @@ export default function mount(host, { back }) {
   const vwrap = h("div", { class: "view", style: "position:absolute;inset:10px 40px 10px 10px;border:1px solid var(--line);border-radius:8px" });
   const strip = h("canvas", { title: "Übersicht: alle Stellen entlang der Zeit. Klicken springt dorthin.", style: "position:absolute;top:10px;height:calc(100% - 20px);right:8px;width:24px;cursor:pointer;border-radius:6px;background:#fff;border:1px solid var(--line)" });
   // ◀ current place ▶, where the prototype switcher used to be.
-  const navText = h("button", { title: "Zur aktuellen Stelle", style: "background:transparent;color:#fff;border:0;display:flex;align-items:center;gap:8px;max-width:520px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis", onclick: () => select(CS.sel) });
-  const navBtn = (t, d, tip) => h("button", { title: tip, style: "background:transparent;color:#fff;border:0;border-radius:99px;padding:4px 12px;font-size:15px", onclick: () => go(d) }, t);
-  const nav = h("div", { style: "position:absolute;left:50%;bottom:22px;transform:translateX(-50%);z-index:6;display:flex;align-items:center;gap:2px;padding:5px;border-radius:99px;background:#1d1d1f;color:#fff;box-shadow:0 6px 24px rgba(0,0,0,.3);font-size:13px;max-width:calc(100% - 80px)" },
+  // Round 3: a fixed width, so ◀ and ▶ stay under the pointer while stepping through.
+  const navText = h("button", { title: "Zur aktuellen Stelle", style: "flex:1;min-width:0;background:transparent;color:#fff;border:0;display:flex;align-items:center;justify-content:center;gap:8px;overflow:hidden;white-space:nowrap", onclick: () => select(CS.sel) });
+  const navBtn = (t, d, tip) => h("button", { title: tip, style: "flex:none;background:transparent;color:#fff;border:0;border-radius:99px;padding:4px 12px;font-size:15px", onclick: () => go(d) }, t);
+  const nav = h("div", { style: "position:absolute;left:50%;bottom:22px;transform:translateX(-50%);z-index:6;display:flex;align-items:center;gap:2px;padding:5px;border-radius:99px;background:#1d1d1f;color:#fff;box-shadow:0 6px 24px rgba(0,0,0,.3);font-size:13px;width:min(460px, calc(100% - 80px))" },
     navBtn("◀", -1, "Vorige Stelle (←)"), navText, navBtn("▶", 1, "Nächste Stelle (→)"));
   const main = h("div", { style: "position:relative;min-height:0;min-width:0" }, vwrap, strip, nav);
   const root = h("div", { style: `height:100%;display:grid;grid-template-columns:${W}px minmax(0,1fr)` }, aside, main);
@@ -91,13 +101,13 @@ export default function mount(host, { back }) {
   function drawSide() {
     const gs = groups(), all = allPlaces(), c = totals();
     drawPresets(); drawFilterButton();
-    if (!S.result) { count.textContent = "Vergleiche…"; sums.textContent = ""; list.replaceChildren(); pos.textContent = ""; drawNav(); return; }
+    drawHiddenRow();
+    if (!S.result) { count.textContent = "Vergleiche…"; sums.textContent = ""; list.replaceChildren(); drawNav(); return; }
     count.textContent = !all.length ? "Keine Unterschiede" : gs.length === all.length ? `${all.length} Stellen mit Unterschieden` : `${gs.length} von ${all.length} Stellen`;
     sums.replaceChildren(
       h("span", { style: `color:${RED};font-weight:600` }, `${c.new} nur dazu`), " · ",
       h("span", { style: `color:${YELLOW_INK};font-weight:600` }, `${c.old} nur weg`), " · ",
       h("span", { style: "font-weight:600" }, `${c.both} beides`));
-    pos.textContent = gs.length ? `${CS.sel + 1} von ${gs.length}` : "–";
     drawList(); drawNav();
   }
 
@@ -122,16 +132,24 @@ export default function mount(host, { back }) {
   }
   function drawList() {
     const gs = groups(), tw = Math.round(Math.min(220, Math.max(84, W * 0.34))), th = Math.round(tw * 0.68);
+    // With "zeigen", hidden places are listed too (greyed, with "einblenden"); they stay off the plan.
+    const rows = showHidden ? allPlaces().filter((p) => catOn(p.cat)) : gs;
     io.disconnect(); queue = [];
-    list.replaceChildren(...gs.map((g, i) => {
+    list.replaceChildren(...rows.map((g) => {
+      const i = gs.indexOf(g), off = i < 0;
       const box = h("div", { style: `flex:none;width:${tw}px;height:${th}px;border-radius:6px;overflow:hidden;background:#f2f1ee;border:1px solid var(--line)` });
       const t = thumbs.get(g);
       if (t && t.key === thumbKey(tw)) box.append(t.canvas);
+      const tog = h("button", {
+        title: off ? "Wieder einblenden" : "Ausblenden: keine echte Änderung (H)",
+        style: "flex:none;margin-left:auto;padding:2px 6px;border-color:transparent;background:transparent;color:var(--muted)",
+        onclick: (e) => { e.stopPropagation(); setHidden(g, !off); },
+      }, off ? h("span", { style: "font-size:12px" }, "einblenden") : EYE_OFF());
       const li = h("li", {
-        style: `display:flex;gap:9px;align-items:flex-start;padding:7px 8px;cursor:pointer;border-radius:6px;${i === CS.sel ? "background:color-mix(in srgb,var(--accent) 12%,#fff)" : ""}`,
-        onclick: () => select(i),
-      }, box, h("div", { style: "min-width:0" },
-        h("div", { style: "display:flex;align-items:center;gap:6px" }, h("b", { style: "font-variant-numeric:tabular-nums" }, String(i + 1)), dot(g), h("b", {}, placeLabel(g))),
+        style: `display:flex;gap:9px;align-items:flex-start;padding:7px 8px;cursor:${off ? "default" : "pointer"};border-radius:6px;${off ? "opacity:.45;" : ""}${i === CS.sel ? "background:color-mix(in srgb,var(--accent) 12%,#fff)" : ""}`,
+        onclick: () => { if (!off) select(i); },
+      }, box, h("div", { style: "min-width:0;flex:1" },
+        h("div", { style: "display:flex;align-items:center;gap:6px" }, h("b", { style: "font-variant-numeric:tabular-nums" }, off ? "–" : String(i + 1)), dot(g), h("b", {}, placeLabel(g)), tog),
         g.detail ? h("div", { style: "font-size:13px" }, g.detail) : null,
         h("div", { class: "muted", style: "font-size:13px" }, where(g)),
         h("div", { class: "hint" }, describe(g))));
@@ -139,13 +157,13 @@ export default function mount(host, { back }) {
       io.observe(li);
       return li;
     }));
-    const cur = list.children[CS.sel];
+    const cur = [...list.children].find((li) => li._g === gs[CS.sel]);
     if (cur) cur.scrollIntoView({ block: "nearest" });
   }
 
   function drawFilterButton() {
     const on = CATS.filter(([k]) => catOn(k)).length;
-    fbtn.replaceChildren(h("span", {}, "Art der Änderung"), h("span", { class: on === CATS.length ? "muted" : "", style: on === CATS.length ? "" : "color:var(--accent);font-weight:600" }, `${on === CATS.length ? "alle" : `${on} von ${CATS.length}`} ▾`));
+    fbtn.replaceChildren(FUNNEL(), h("span", { style: "flex:1" }, "Filter"), h("span", { class: on === CATS.length ? "muted" : "", style: on === CATS.length ? "" : "color:var(--accent);font-weight:600" }, `${on === CATS.length ? "alle" : `${on} von ${CATS.length}`} ▾`));
   }
   function drawFilter() {
     const counts = {};
@@ -219,8 +237,21 @@ export default function mount(host, { back }) {
   }
   const go = (d) => select(CS.sel + d);
 
-  offs.push(keys({ go, redraw: () => viewer.update(1) }));
+  offs.push(keys({ go, redraw: () => viewer.update(1), hide: () => { const g = groups()[CS.sel]; if (g) setHidden(g, true); } }));
   offs.push(bindRedraw(...ctrls));
+
+  // "Änderungen exportieren" (top right): the list as shown (filter applied, hidden ones left out),
+  // as a CSV that Excel opens (semicolons, UTF-8 with BOM).
+  S.exportChanges = () => {
+    const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const head = ["Nr", "Art", "Detail", "Lage (m Plan)", "Neu / weg", "Objekte", "Alter Plan", "Neuer Plan", "Versatz (mm)"];
+    const n = S.names || {}, kindWord = { new: "dazugekommen", old: "weggefallen", both: "beides" };
+    const rows = groups().map((g, i) => [i + 1, placeLabel(g), g.detail || "", fmt(tLo(placeBox(g)) / 1000, 2), kindWord[kindOf(g)], describe(g), n.old || "", n.new || "", fmt(S.offset, 2)]);
+    const csv = "﻿" + [head, ...rows].map((r) => r.map(q).join(";")).join("\r\n");
+    const a = h("a", { href: URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" })), download: `Aenderungen ${new Date().toISOString().slice(0, 10)}.csv` });
+    document.body.append(a); a.click(); a.remove();
+  };
+  offs.push(() => { delete S.exportChanges; });
   let lastFilter = JSON.stringify(fullFilter()), cvTimer = 0;
   offs.push(on((w) => {
     if (w === "cv") {
@@ -238,6 +269,15 @@ export default function mount(host, { back }) {
       clearTimeout(cvTimer); cvTimer = setTimeout(drawList, 300); // pictures follow the settings
     }
     if (w === "presets") drawPresets();
+    if (w === "hidden") {
+      // Stay on the same place, or on the next one if this one was hidden.
+      const was = lastShown[CS.sel], gs = groups();
+      let i = gs.indexOf(was);
+      if (i < 0) i = Math.min(CS.sel, gs.length - 1);
+      lastShown = gs;
+      viewer.update(10);
+      if (i >= 0 && gs[i] === was) { CS.sel = i; drawSide(); drawStrip(); } else select(Math.max(0, i)); // hid the current one: go to the next
+    }
     if (w === "result") {
       lastShown = groups();
       CS.sel = Math.min(CS.sel, Math.max(0, groups().length - 1));
@@ -254,3 +294,8 @@ export default function mount(host, { back }) {
 }
 export const NAME = "Plan + Liste";
 void setCV;
+
+// Small grey icons (drawn here, simple shapes).
+const icon = (inner, title = "") => { const s = document.createElementNS("http://www.w3.org/2000/svg", "svg"); s.setAttribute("width", "15"); s.setAttribute("height", "15"); s.setAttribute("viewBox", "0 0 24 24"); s.setAttribute("fill", "none"); s.setAttribute("stroke", "#8a8a90"); s.setAttribute("stroke-width", "2"); s.setAttribute("stroke-linecap", "round"); s.setAttribute("stroke-linejoin", "round"); s.style.flex = "none"; s.innerHTML = inner; if (title) s.setAttribute("aria-label", title); return s; };
+const FUNNEL = () => icon('<path d="M3 4h18l-7 8.5V19l-4 2v-8.5z"/>', "Filter");
+const EYE_OFF = () => icon('<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/><path d="M3 3l18 18"/>', "ausblenden");

@@ -13,8 +13,8 @@
     C  Alt | Neu          two synced views: Old with Removed, New with Added
   Run: npm run proto:view   (?demo=down|right loads the synthetic pair; &go=1 skips the setup)
 -->
-<!-- Same as the logo in the header: the "file-diff" icon from Lucide (ISC license), https://lucide.dev/icons/file-diff, with + red and − yellow -->
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><path stroke='%231d5fd6' d='M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z'/><path stroke='%23dc2a1e' d='M9 10h6'/><path stroke='%23dc2a1e' d='M12 13V7'/><path stroke='%23d9a400' d='M9 17h6'/></svg>" />
+<!-- Same as the logo in the header: the "file-diff" icon from Lucide (ISC license), https://lucide.dev/icons/file-diff, all in the project blue -->
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><path stroke='%231d5fd6' d='M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z'/><path stroke='%231d5fd6' d='M9 10h6'/><path stroke='%231d5fd6' d='M12 13V7'/><path stroke='%231d5fd6' d='M9 17h6'/></svg>" />
 <script type="importmap">{ "imports": { "mupdf": "/node_modules/mupdf/dist/mupdf.js" } }</script>
 <style>
   :root { --bg: #f4f4f2; --panel: #fff; --ink: #1d1d1f; --muted: #6b6b70; --line: #dcdad5; --accent: #1d5fd6; --snap: #e8a100; --old: #1d74c9; --new: #d0215f; }
@@ -77,10 +77,10 @@
 <body>
 <header class="app">
   <div class="brand">
-    <!-- Logo: "file-diff" from Lucide (ISC license), https://lucide.dev/icons/file-diff; + red (Added), − yellow (Removed) -->
+    <!-- Logo: "file-diff" from Lucide (ISC license), https://lucide.dev/icons/file-diff; all in the project blue -->
     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
       <path stroke="#1d5fd6" d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z" />
-      <path stroke="#dc2a1e" d="M9 10h6" /><path stroke="#dc2a1e" d="M12 13V7" /><path stroke="#d9a400" d="M9 17h6" />
+      <path stroke="#1d5fd6" d="M9 10h6" /><path stroke="#1d5fd6" d="M12 13V7" /><path stroke="#1d5fd6" d="M9 17h6" />
     </svg>
     <h1>simple pdf compare <span>· Prototyp Vergleichsansicht</span></h1>
   </div>
@@ -97,7 +97,7 @@
 <div id="stage"></div>
 <dialog id="about">
   <div class="body">
-    <h2><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path stroke="#1d5fd6" d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z" /><path stroke="#dc2a1e" d="M9 10h6" /><path stroke="#dc2a1e" d="M12 13V7" /><path stroke="#d9a400" d="M9 17h6" /></svg> simple pdf compare</h2>
+    <h2><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path stroke="#1d5fd6" d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z" /><path stroke="#1d5fd6" d="M9 10h6" /><path stroke="#1d5fd6" d="M12 13V7" /><path stroke="#1d5fd6" d="M9 17h6" /></svg> simple pdf compare</h2>
     <p>Vergleicht zwei Stände eines Bauablaufplans (Vektor-PDF, eine Seite) und zeigt, was <b style="color:#dc2a1e">dazugekommen</b> und was <b style="color:#b38600">weggefallen</b> ist. Läuft vollständig lokal; die Pläne verlassen diesen Computer nicht.</p>
     <h3>Tastenkürzel im Vergleich</h3>
     <table class="keys">
@@ -106,12 +106,13 @@
       <tr><td><kbd>←</kbd> <kbd>→</kbd> oder <kbd>K</kbd> <kbd>J</kbd></td><td>Vorige, nächste Stelle</td></tr>
       <tr><td><kbd>M</kbd></td><td>Markierungen aus- und einblenden</td></tr>
       <tr><td>Mausrad</td><td>Vergrößern, verkleinern</td></tr>
-      <tr><td>Rechte oder mittlere Maustaste ziehen</td><td>Plan verschieben (auch <kbd>Leertaste</kbd> + Ziehen)</td></tr>
+      <tr><td>Rechte oder mittlere Maustaste ziehen</td><td>Plan verschieben</td></tr>
+      <tr><td><kbd>H</kbd></td><td>Aktuelle Stelle ausblenden (keine echte Änderung)</td></tr>
     </table>
     <p class="muted" style="font-size:13px">
       Lizenz: GNU AGPL-3.0 oder neuer.<br>
       Verwendet <a href="https://mupdf.com/" target="_blank" rel="noopener">MuPDF</a> © Artifex Software, Inc. (AGPL-3.0).<br>
-      Logo: <a href="https://lucide.dev/icons/file-diff" target="_blank" rel="noopener">„file-diff“ von Lucide</a> (ISC-Lizenz), eingefärbt.<br>
+      Logo: <a href="https://lucide.dev/icons/file-diff" target="_blank" rel="noopener">„file-diff“ von Lucide</a> (ISC-Lizenz).<br>
       Erstellt von futureradius, entwickelt mit Claude.
     </p>
   </div>

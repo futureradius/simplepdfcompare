@@ -67,8 +67,19 @@ export function allPlaces() {
   if (derivedFor !== R) { derivedFor = R; derived = derive(R); }
   return derived;
 }
-/** The places the filter lets through (the list, the marks, ◀ ▶ all use these). */
-export const groups = () => allPlaces().filter((p) => catOn(p.cat));
+// Round 3: places the user hid ("not a real change"), per pair of Plans, for this session.
+// Keyed by kind and rounded box, so they stay hidden when the comparison reruns.
+const hidden = { plans: null, keys: new Set() };
+const placeKey = (p) => `${p.cat}|${[p.box.x0, p.box.y0, p.box.x1, p.box.y1].map((v) => Math.round(v)).join(",")}`;
+const hiddenKeys = () => { if (hidden.plans !== S.plans) { hidden.plans = S.plans; hidden.keys = new Set(); } return hidden.keys; };
+export const isHidden = (p) => hiddenKeys().has(placeKey(p));
+export function setHidden(p, on) { const k = hiddenKeys(); if (on) k.add(placeKey(p)); else k.delete(placeKey(p)); emit("hidden"); }
+export const hiddenCount = () => allPlaces().filter(isHidden).length;
+/** Is a place on the plan and in the list: let through by the filter and not hidden. */
+export const shownPlace = (p) => catOn(p.cat) && !isHidden(p);
+
+/** The places the filter lets through and the user did not hide (list, marks, ◀ ▶). */
+export const groups = () => allPlaces().filter(shownPlace);
 
 const TOL = 0.3; // mm
 const r1 = (v) => Math.round(v * 10) / 10;
@@ -209,7 +220,7 @@ export function paintCompare({ view, w, h: hh, gO, gN, only = null }) {
   const s = view.s, out = CV.outline * d, mmPad = (out + 6 * d) / s;
   const vr = { x0: view.x0 - mmPad, y0: view.y0 - mmPad, x1: view.x0 + w / s + mmPad, y1: view.y0 + hh / s + mmPad };
   allPlaces(); // sets it.place
-  const vis = R.items.filter((it) => (!it.place || catOn(it.place.cat)) && it.box.x1 >= vr.x0 && it.box.x0 <= vr.x1 && it.box.y1 >= vr.y0 && it.box.y0 <= vr.y1);
+  const vis = R.items.filter((it) => (!it.place || shownPlace(it.place)) && it.box.x1 >= vr.x0 && it.box.x0 <= vr.x1 && it.box.y1 >= vr.y0 && it.box.y0 <= vr.y1);
   if (!vis.length) return img;
   const xxx = CV.removed !== "halo";
 
@@ -464,7 +475,7 @@ export function compareViewer(host, { only = null, onChange, overlayExtra } = {}
     },
     hover: () => "default",
     // Nothing to edit in the comparison: a left click does nothing. Pan with the right or
-    // middle mouse button (or Space + drag, as in the setup steps).
+    // middle mouse button (round 3: Space no longer pans anywhere).
     down: () => ({}),
     onChange,
   });
@@ -495,7 +506,7 @@ export function fitAcross(viewer, t) {
  * ← / → (and J / K): previous / next place. Hold Space: only the New Plan, without marks;
  * Shift + Space: only the Old Plan. M: marks on/off. Returns a cleanup function.
  */
-export function keys({ go, redraw }) {
+export function keys({ go, redraw, hide }) {
   let space = false;
   const peek = (p) => { if (CS.peek !== p) { CS.peek = p; redraw(); } };
   const down = (e) => {
@@ -506,6 +517,7 @@ export function keys({ go, redraw }) {
     else if (e.key === "ArrowRight" || e.key === "j" || e.key === "J") { e.preventDefault(); go(+1); }
     else if (e.key === "ArrowLeft" || e.key === "k" || e.key === "K") { e.preventDefault(); go(-1); }
     else if (e.key === "m" || e.key === "M") setCV({ marks: !CV.marks });
+    else if ((e.key === "h" || e.key === "H") && hide) hide();
   };
   const up = (e) => {
     if (e.key === " ") { space = false; peek(null); }
