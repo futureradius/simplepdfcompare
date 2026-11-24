@@ -52,7 +52,40 @@ export default function mount(host, { back }) {
     const n = hiddenCount();
     if (!n) { hiddenRow.replaceChildren(); hiddenRow.style.display = "none"; showHidden = false; return; }
     hiddenRow.style.display = "flex";
-    hiddenRow.replaceChildren(EYE_OFF(), `${n} ausgeblendet`, h("button", { style: "padding:1px 8px;font-size:12px", onclick: () => { showHidden = !showHidden; drawSide(); } }, showHidden ? "verbergen" : "zeigen"));
+    hiddenRow.replaceChildren(EYE_OFF(), `${n} ausgeblendet`, h("button", { style: "padding:1px 8px;font-size:12px", onclick: toggleShowHidden }, showHidden ? "verbergen" : "zeigen"));
+  }
+
+  // Round 4: the list stays where it is when places are hidden or shown again. A hidden item
+  // folds away and the items below slide up into its place; items that come back unfold.
+  const SLIDE = { duration: 220, easing: "cubic-bezier(.4,0,.2,1)" };
+  const folding = new Set(), unfolding = new Set();
+  const liOf = (g) => [...list.children].find((li) => li._g === g);
+  const fold = (li) => {
+    li.style.overflow = "hidden";
+    return li.animate([{ height: li.offsetHeight + "px", opacity: 1 }, { height: "0px", opacity: 0, paddingTop: "0px", paddingBottom: "0px" }], { ...SLIDE, fill: "forwards" }).finished;
+  };
+  function hidePlace(g) {
+    const li = liOf(g);
+    if (folding.has(g)) return;
+    if (showHidden || !li) { setHidden(g, true); return; } // stays listed (greyed): nothing to fold
+    folding.add(g);
+    fold(li).then(() => { folding.delete(g); setHidden(g, true); });
+  }
+  function showPlace(g) {
+    setHidden(g, false);
+    const li = liOf(g);
+    if (li) li.animate([{ background: "color-mix(in srgb,var(--accent) 22%,#fff)" }, { background: "transparent" }], { duration: 700, easing: "ease-out" });
+  }
+  function toggleShowHidden() {
+    if (showHidden) {
+      // Fold the greyed rows away, then drop them.
+      const rows = [...list.children].filter((li) => li._off);
+      Promise.all(rows.map(fold)).then(() => { showHidden = false; drawSide(); });
+    } else {
+      showHidden = true;
+      for (const p of allPlaces()) if (catOn(p.cat) && !groups().includes(p)) unfolding.add(p);
+      drawSide();
+    }
   }
 
   const ctrls = [baseSwitch(), check("Markierungen zeigen", "marks", "M"), outlineSlider(), removedSwitch(), xSizeSlider(), fadeSlider(), check("Kleine Stellen mit Ring zeigen", "rings")];
@@ -135,6 +168,7 @@ export default function mount(host, { back }) {
     // With "zeigen", hidden places are listed too (greyed, with "einblenden"); they stay off the plan.
     const rows = showHidden ? allPlaces().filter((p) => catOn(p.cat)) : gs;
     io.disconnect(); queue = [];
+    const scroll = list.scrollTop; // rebuilding must not move the list
     list.replaceChildren(...rows.map((g) => {
       const i = gs.indexOf(g), off = i < 0;
       const box = h("div", { style: `flex:none;width:${tw}px;height:${th}px;border-radius:6px;overflow:hidden;background:#f2f1ee;border:1px solid var(--line)` });
@@ -143,7 +177,7 @@ export default function mount(host, { back }) {
       const tog = h("button", {
         title: off ? "Wieder einblenden" : "Ausblenden: keine echte Änderung (H)",
         style: "flex:none;margin-left:auto;padding:2px 6px;border-color:transparent;background:transparent;color:var(--muted)",
-        onclick: (e) => { e.stopPropagation(); setHidden(g, !off); },
+        onclick: (e) => { e.stopPropagation(); if (off) showPlace(g); else hidePlace(g); },
       }, off ? h("span", { style: "font-size:12px" }, "einblenden") : EYE_OFF());
       const li = h("li", {
         style: `display:flex;gap:9px;align-items:flex-start;padding:7px 8px;cursor:${off ? "default" : "pointer"};border-radius:6px;${off ? "opacity:.45;" : ""}${i === CS.sel ? "background:color-mix(in srgb,var(--accent) 12%,#fff)" : ""}`,
@@ -153,13 +187,25 @@ export default function mount(host, { back }) {
         g.detail ? h("div", { style: "font-size:13px" }, g.detail) : null,
         h("div", { class: "muted", style: "font-size:13px" }, where(g)),
         h("div", { class: "hint" }, describe(g))));
-      Object.assign(li, { _g: g, _tw: tw, _th: th, _box: box });
+      Object.assign(li, { _g: g, _tw: tw, _th: th, _box: box, _off: off });
       io.observe(li);
       return li;
     }));
-    const cur = [...list.children].find((li) => li._g === gs[CS.sel]);
-    if (cur) cur.scrollIntoView({ block: "nearest" });
+    list.scrollTop = scroll;
+    for (const li of list.children) {
+      if (!unfolding.has(li._g)) continue;
+      li.style.overflow = "hidden";
+      li.animate([{ height: "0px", opacity: 0, paddingTop: "0px", paddingBottom: "0px" }, { height: li.offsetHeight + "px", opacity: li._off ? 0.45 : 1 }], SLIDE);
+    }
+    unfolding.clear();
+    // Scroll only when the user moved to another place (◀ ▶, list, strip), not on hide / show.
+    if (scrollToSel) {
+      scrollToSel = false;
+      const cur = [...list.children].find((li) => li._g === gs[CS.sel]);
+      if (cur) cur.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
   }
+  let scrollToSel = true;
 
   function drawFilterButton() {
     const on = CATS.filter(([k]) => catOn(k)).length;
@@ -232,12 +278,12 @@ export default function mount(host, { back }) {
   function select(i) {
     const gs = groups();
     if (!gs.length) { drawSide(); return; }
-    CS.sel = (i + gs.length) % gs.length;
+    CS.sel = (i + gs.length) % gs.length; scrollToSel = true;
     drawSide(); fitPlace(viewer, gs[CS.sel]); drawStrip();
   }
   const go = (d) => select(CS.sel + d);
 
-  offs.push(keys({ go, redraw: () => viewer.update(1), hide: () => { const g = groups()[CS.sel]; if (g) setHidden(g, true); } }));
+  offs.push(keys({ go, redraw: () => viewer.update(1), hide: () => { const g = groups()[CS.sel]; if (g) hidePlace(g); } }));
   offs.push(bindRedraw(...ctrls));
 
   // "Änderungen exportieren" (top right): the list as shown (filter applied, hidden ones left out),

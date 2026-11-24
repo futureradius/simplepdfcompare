@@ -147,7 +147,9 @@ export function quickCompare(O, N, axis, bodyO, bodyN, offset, ignores) {
     ...text.map((x) => ({ src: x.kind === "Removed" ? "old" : "new", text: x, box: x.box, kind: "word" })),
     ...recol.map((o) => (o.kind === "glyph" ? { src: "new", text: { kind: "Added", box: o.bbox, why: "recoloured" }, box: o.bbox, kind: "word", recol: true } : geo("new", o, { recol: true }))),
   ];
-  const groups = groupItems(items, { axis, cell: 5, maxLen: 300 });
+  // Round 4: no 300 mm tiles. They cut a long Activity from its own foot (the place's centre
+  // decided the tile), so touching parts showed as two places.
+  const groups = groupItems(items, { axis, cell: 5, maxLen: Infinity });
   return { win, offset, items, groups, leftOld: m.oldUnmatched.length, leftNew: m.newUnmatched.length, inOld: oP.length, inNew: nP.length, ms: Math.round(performance.now() - t0) };
 }
 
