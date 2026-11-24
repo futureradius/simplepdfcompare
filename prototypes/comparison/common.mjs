@@ -6,13 +6,15 @@
 // Frame: every view is in the Old Plan's page mm; the New Plan sits at +Offset along time.
 import { createViewer } from "../alignment/viewer.mjs";
 import { S, on, emit, h, L, A, fmt, rectTA, layerCache, COLORS } from "../alignment/shared.mjs";
+import { renderGray } from "../alignment/engine.mjs";
 
 export { S, on, emit, h, L, A, fmt, rectTA };
 
 // ---------- display settings (shared by all variants, kept per browser) ----------
 
-const KEY = "compareview.settings";
-const DEFAULTS = { base: "new", marks: true, outline: 6, removed: "halo", fade: 35, rings: true };
+// Round 2: x–x–x is the default for Removed, with a size slider; a filter by kind of change.
+const KEY = "compareview.settings.v2";
+const DEFAULTS = { base: "new", marks: true, outline: 6, removed: "xxx", xsize: 70, fade: 35, rings: true, filter: {} };
 export const CV = (() => { try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(KEY) || "{}") }; } catch { return { ...DEFAULTS }; } })();
 export function setCV(patch) {
   Object.assign(CV, patch);
@@ -24,20 +26,132 @@ export const resetCV = () => setCV({ ...DEFAULTS });
 export const RED = "#dc2a1e", YELLOW = "#f0be00", YELLOW_INK = "#b88a00", GREY = "#4a4a4a";
 const COL = { grey: [74, 74, 74], yellow: [240, 190, 0], red: [220, 42, 30] };
 
-/** The selected place and the peek (Shift held: the other Plan as it is, without marks). */
-export const CS = { sel: 0, peek: false };
+/**
+ * The selected place and the peek: null, or "new" while Space is held / "old" while
+ * Shift + Space is held (that Plan alone, without marks).
+ */
+export const CS = { sel: 0, peek: null };
 
-export const groups = () => (S.result ? S.result.groups : []);
 export const tAx = () => (S.axis === "y" ? 1 : 0);
 export const tLo = (b) => (S.axis === "y" ? b.y0 : b.x0);
 export const tHi = (b) => (S.axis === "y" ? b.y1 : b.x1);
+const aLo = (b) => (S.axis === "y" ? b.x0 : b.y0);
+const aHi = (b) => (S.axis === "y" ? b.x1 : b.y1);
 
-/** A place's box, cut to its tile if a long place was split. */
-export function placeBox(g) {
-  const b = { ...g.box };
-  if (g.clipT) { const [a, z] = g.clipT; if (S.axis === "y") { b.y0 = Math.max(b.y0, a); b.y1 = Math.min(b.y1, z); } else { b.x0 = Math.max(b.x0, a); b.x1 = Math.min(b.x1, z); } }
-  return b;
+/** A place's box: all of its items (round 1 cut long places to a 300 mm tile). */
+export const placeBox = (g) => g.box;
+
+// ---------- kinds of change (round 2) ----------
+
+/** [key, label, explanation]; the order of the filter list. */
+export const CATS = [
+  ["later", "Später", "nach hinten verschoben, gleich lang"],
+  ["earlier", "Früher", "vorgezogen, gleich lang"],
+  ["longer", "Verlängert", "länger entlang der Zeit"],
+  ["shorter", "Verkürzt", "kürzer entlang der Zeit"],
+  ["across", "Quer verschoben", "anderer Ort (quer zur Zeit), gleiche Zeit"],
+  ["text", "Text geändert", "nur Beschriftung: neu, entfallen oder anders"],
+  ["added", "Neu", "nur im neuen Plan"],
+  ["removed", "Entfallen", "nur im alten Plan"],
+  ["recolour", "Umgefärbt", "gleiche Form, andere Farbe"],
+  ["other", "Sonstiges", "Form geändert oder mehreres zugleich"],
+];
+export const catLabel = (k) => (CATS.find((c) => c[0] === k) || [k, k])[1];
+export const catOn = (k) => CV.filter[k] !== false;
+
+let derivedFor = null, derived = [];
+/** All places of the current result, with moved pairs merged and a kind of change each. */
+export function allPlaces() {
+  const R = S.result;
+  if (!R) return [];
+  if (derivedFor !== R) { derivedFor = R; derived = derive(R); }
+  return derived;
 }
+/** The places the filter lets through (the list, the marks, ◀ ▶ all use these). */
+export const groups = () => allPlaces().filter((p) => catOn(p.cat));
+
+const TOL = 0.3; // mm
+const r1 = (v) => Math.round(v * 10) / 10;
+/** What an item looks like, independent of where it is (to pair a Removed place with its Added twin). */
+function itemSig(it) {
+  if (it.text) return "w:" + (it.text.text || "?");
+  const o = it.o, b = o.bbox, k = o.coords, rel = [];
+  for (let i = 0; i < k.length; i += 2) rel.push(Number.isNaN(k[i]) ? "n" : r1(k[i] - b.x0) + "," + r1(k[i + 1] - b.y0));
+  return `${o.kind}|${o.key}|${rel.join(" ")}`;
+}
+const union = (bs) => bs.reduce((a, b) => ({ x0: Math.min(a.x0, b.x0), y0: Math.min(a.y0, b.y0), x1: Math.max(a.x1, b.x1), y1: Math.max(a.y1, b.y1) }));
+const fmm = (v) => `${fmt(Math.abs(v), Math.abs(v) < 10 ? 1 : 0)} mm`;
+
+function derive(R) {
+  let places = R.groups.map((g) => ({ box: g.box, items: g.items }));
+  // Pair a place that only lost things with one that only gained the same things elsewhere:
+  // that is one change (moved), not two.
+  const only = (p, src) => p.items.every((it) => it.src === src && !it.recol);
+  const sig = (p) => p.items.map(itemSig).sort().join("\n");
+  const olds = places.filter((p) => only(p, "old")), news = places.filter((p) => only(p, "new"));
+  const bySig = new Map();
+  for (const p of news) { const s = sig(p); (bySig.get(s) || bySig.set(s, []).get(s)).push(p); }
+  const gone = new Set();
+  const merged = [];
+  for (const p of olds) {
+    const list = (bySig.get(sig(p)) || []).filter((q) => !gone.has(q));
+    if (!list.length) continue;
+    const c = (b) => [(b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2], [px, py] = c(p.box);
+    list.sort((a, b) => Math.hypot(c(a.box)[0] - px, c(a.box)[1] - py) - Math.hypot(c(b.box)[0] - px, c(b.box)[1] - py));
+    const q = list[0];
+    gone.add(p); gone.add(q);
+    merged.push({ box: union([p.box, q.box]), items: [...p.items, ...q.items], paired: true });
+  }
+  places = places.filter((p) => !gone.has(p)).concat(merged);
+  for (const p of places) { classify(p); for (const it of p.items) it.place = p; }
+  return places.sort((a, b) => tLo(a.box) - tLo(b.box));
+}
+
+/** Sets p.cat and p.detail (German, short). */
+function classify(p) {
+  const o = p.items.filter((i) => i.src === "old"), n = p.items.filter((i) => i.src === "new");
+  const words = (l) => l.length && l.every((i) => i.text && !i.recol);
+  const set = (cat, detail = "") => { p.cat = cat; p.detail = detail; };
+  if (p.items.every((i) => i.recol)) return set("recolour");
+  // A whole label that appears ("new") or disappears ("gone") belongs with a new or removed
+  // Activity: Neu / Entfallen. "Text geändert" is an edit to a label that is in both Plans.
+  const whys = new Set(p.items.filter((i) => i.text).map((i) => i.text.why));
+  const textDetail = () => (whys.has("replaced") ? "Text anders" : whys.has("shortened") ? "Text gekürzt" : whys.has("inserted") ? "Wort dazu" : "Wort weg");
+  if (!o.length) return words(n) && !n.every((i) => i.text.why === "new") ? set("text", textDetail()) : set("added", words(n) ? "Beschriftung" : "");
+  if (!n.length) return words(o) && !o.every((i) => i.text.why === "gone") ? set("text", textDetail()) : set("removed", words(o) ? "Beschriftung" : "");
+  let go = o.filter((i) => !i.text), gn = n.filter((i) => !i.text);
+  if (!go.length && !gn.length) {
+    const texts = (l) => l.map((i) => i.text.text).sort().join(" ");
+    if (texts(o) !== texts(n)) return set("text", textDetail());
+    go = o; gn = n; // the same label, moved
+  } else if (!go.length || !gn.length) return set("other");
+  const bo = union(go.map((i) => i.box)), bn = union(gn.map((i) => i.box));
+  const d0 = tLo(bn) - tLo(bo), d1 = tHi(bn) - tHi(bo), dl = d1 - d0, da0 = aLo(bn) - aLo(bo), da1 = aHi(bn) - aHi(bo);
+  if (Math.abs(dl) <= TOL) {
+    if (Math.abs(d0) > TOL) return set(d0 > 0 ? "later" : "earlier", `um ${fmm(d0)}`);
+    if (Math.abs(da0) > TOL || Math.abs(da1) > TOL) return set("across", `um ${fmm((da0 + da1) / 2)}`);
+    return set("other", "Form anders");
+  }
+  const ends = [Math.abs(d0) > TOL && `Anfang ${fmm(d0)} ${d0 > 0 ? "später" : "früher"}`, Math.abs(d1) > TOL && `Ende ${fmm(d1)} ${d1 > 0 ? "später" : "früher"}`].filter(Boolean).join(", ");
+  return set(dl > 0 ? "longer" : "shorter", ends);
+}
+
+// ---------- filter presets ("Vorlagen", as in simplepdfclipper) ----------
+
+const ALL = Object.fromEntries(CATS.map(([k]) => [k, true]));
+const only = (...ks) => Object.fromEntries(CATS.map(([k]) => [k, ks.includes(k)]));
+export const BUILTIN = [
+  { name: "Alle Änderungen", filter: ALL, builtin: true },
+  { name: "Nur Terminänderungen", filter: only("later", "earlier", "longer", "shorter"), builtin: true },
+  { name: "Ohne Text", filter: { ...ALL, text: false }, builtin: true },
+  { name: "Nur Text", filter: only("text"), builtin: true },
+];
+const PKEY = "compareview.presets";
+export function userPresets() { try { return JSON.parse(localStorage.getItem(PKEY) || "[]"); } catch { return []; } }
+export function savePresets(list) { try { localStorage.setItem(PKEY, JSON.stringify(list)); } catch {} emit("presets"); }
+export const fullFilter = () => Object.fromEntries(CATS.map(([k]) => [k, catOn(k)]));
+export const sameFilter = (f) => CATS.every(([k]) => (f[k] !== false) === catOn(k));
+export const setFilter = (f) => setCV({ filter: { ...f } });
 
 // ---------- German wording ----------
 
@@ -57,7 +171,7 @@ export function kindOf(g) {
   const o = g.items.some((i) => i.src === "old"), n = g.items.some((i) => i.src === "new");
   return o && n ? "both" : o ? "old" : "new";
 }
-export const placeLabel = (g) => ({ both: "geändert", old: "weggefallen", new: "dazugekommen" })[kindOf(g)];
+export const placeLabel = (g) => catLabel(g.cat);
 /** Where a place is, along the time axis of the Old Plan, in metres of Plan. */
 export const where = (g) => `bei ${fmt(tLo(placeBox(g)) / 1000, 2)} m`;
 export function dot(g, size = 10) {
@@ -82,7 +196,7 @@ export function paintCompare({ view, w, h: hh, gO, gN, only = null }) {
   const R = S.result, d = devicePixelRatio;
   const peek = CS.peek;
   const basePlan = only || CV.base;
-  const show = peek ? (only ? only : basePlan === "old" ? "new" : "old") : basePlan;
+  const show = peek ? only || peek : basePlan;
   const f = peek ? 1 : CV.marks ? CV.fade / 100 : 1;
   const img = new ImageData(w, hh), px = img.data;
   for (let i = 0; i < w * hh; i++) {
@@ -94,7 +208,8 @@ export function paintCompare({ view, w, h: hh, gO, gN, only = null }) {
 
   const s = view.s, out = CV.outline * d, mmPad = (out + 6 * d) / s;
   const vr = { x0: view.x0 - mmPad, y0: view.y0 - mmPad, x1: view.x0 + w / s + mmPad, y1: view.y0 + hh / s + mmPad };
-  const vis = R.items.filter((it) => it.box.x1 >= vr.x0 && it.box.x0 <= vr.x1 && it.box.y1 >= vr.y0 && it.box.y0 <= vr.y1);
+  allPlaces(); // sets it.place
+  const vis = R.items.filter((it) => (!it.place || catOn(it.place.cat)) && it.box.x1 >= vr.x0 && it.box.x0 <= vr.x1 && it.box.y1 >= vr.y0 && it.box.y0 <= vr.y1);
   if (!vis.length) return img;
   const xxx = CV.removed !== "halo";
 
@@ -161,7 +276,9 @@ export function paintCompare({ view, w, h: hh, gO, gN, only = null }) {
   const ring = new OffscreenCanvas(w, hh), rc = ring.getContext("2d");
   rc.setTransform(s, 0, 0, s, -view.x0 * s, -view.y0 * s);
   rc.lineCap = "butt"; rc.lineJoin = "round";
-  const D = Math.max(4 * d, out) / s, t = 1.7 * d / s, dash = 9 * d / s, gap = 9 * d / s, crosses = [];
+  // x–x–x size (slider, %): scales the ×, the dashes and gaps, and a little the line weight.
+  const z = (CV.xsize || 70) / 100, lwPx = (1 + 0.7 * z) * d;
+  const D = Math.max(4 * d, out) / s, t = lwPx / s, dash = 9 * z * d / s, gap = 9 * z * d / s, crosses = [];
   for (const it of vis) {
     if (it.src !== "old") continue;
     let path, lw = 0, closed;
@@ -175,8 +292,8 @@ export function paintCompare({ view, w, h: hh, gO, gN, only = null }) {
   }
   ctx.drawImage(ring, 0, 0);
   // × at the middle of each gap, on both sides of the object (outside a closed shape only).
-  ctx.strokeStyle = YELLOW_INK; ctx.lineWidth = 1.7 * d; ctx.lineCap = "round";
-  const k = 3.6 * d;
+  ctx.strokeStyle = YELLOW_INK; ctx.lineWidth = lwPx; ctx.lineCap = "round";
+  const k = 3.6 * z * d;
   ctx.beginPath();
   for (const cr of crosses) {
     for (const sp of cr.segs) {
@@ -340,13 +457,15 @@ export function compareViewer(host, { only = null, onChange, overlayExtra } = {}
       return paintCompare({ view, w, h: hh, gO, gN, only });
     },
     overlay: (ctx, V) => {
-      const plans = only ? [only] : CS.peek ? [CV.base === "old" ? "new" : "old"] : CV.base === "both" ? ["old", "new"] : [CV.base];
-      const peekName = only ? (only === "old" ? "alter Plan" : "neuer Plan") : CV.base === "old" ? "neuer Plan" : "alter Plan";
-      drawOverlay(ctx, V, { plans, only, label: `${peekName}, ohne Markierungen (Shift)` });
+      const plans = only ? [only] : CS.peek ? [CS.peek] : CV.base === "both" ? ["old", "new"] : [CV.base];
+      const label = (only || CS.peek) === "old" ? "nur alter Plan, ohne Markierungen (Shift + Leertaste)" : "nur neuer Plan, ohne Markierungen (Leertaste)";
+      drawOverlay(ctx, V, { plans, only, label });
       if (overlayExtra) overlayExtra(ctx, V);
     },
-    hover: () => "grab",
-    down: () => null, // left drag pans here: nothing to edit in the comparison
+    hover: () => "default",
+    // Nothing to edit in the comparison: a left click does nothing. Pan with the right or
+    // middle mouse button (or Space + drag, as in the setup steps).
+    down: () => ({}),
     onChange,
   });
   return viewer;
@@ -373,20 +492,26 @@ export function fitAcross(viewer, t) {
 // ---------- keyboard ----------
 
 /**
- * ← / → (and J / K): previous / next place. Hold Shift: the other Plan without marks.
- * M: marks on/off. Returns a cleanup function.
+ * ← / → (and J / K): previous / next place. Hold Space: only the New Plan, without marks;
+ * Shift + Space: only the Old Plan. M: marks on/off. Returns a cleanup function.
  */
 export function keys({ go, redraw }) {
+  let space = false;
+  const peek = (p) => { if (CS.peek !== p) { CS.peek = p; redraw(); } };
   const down = (e) => {
     if (e.target.closest("input, textarea, select")) return;
     if (e.ctrlKey && e.altKey) return; // the prototype switcher
-    if (e.key === "ArrowRight" || e.key === "j" || e.key === "J") { e.preventDefault(); go(+1); }
+    if (e.key === " ") { space = true; peek(e.shiftKey ? "old" : "new"); }
+    else if (e.key === "Shift") { if (space) peek("old"); }
+    else if (e.key === "ArrowRight" || e.key === "j" || e.key === "J") { e.preventDefault(); go(+1); }
     else if (e.key === "ArrowLeft" || e.key === "k" || e.key === "K") { e.preventDefault(); go(-1); }
     else if (e.key === "m" || e.key === "M") setCV({ marks: !CV.marks });
-    else if (e.key === "Shift" && !CS.peek) { CS.peek = true; redraw(); }
   };
-  const up = (e) => { if (e.key === "Shift" && CS.peek) { CS.peek = false; redraw(); } };
-  const blur = () => { if (CS.peek) { CS.peek = false; redraw(); } };
+  const up = (e) => {
+    if (e.key === " ") { space = false; peek(null); }
+    else if (e.key === "Shift" && space) peek("new");
+  };
+  const blur = () => { space = false; peek(null); };
   addEventListener("keydown", down); addEventListener("keyup", up); addEventListener("blur", blur);
   return () => { removeEventListener("keydown", down); removeEventListener("keyup", up); removeEventListener("blur", blur); };
 }
@@ -428,6 +553,29 @@ export function fadeSlider() {
   el.redraw = () => { if (document.activeElement !== inp) inp.value = CV.fade; };
   return el;
 }
+export function xSizeSlider() {
+  const val = h("span", { style: "min-width:42px;text-align:right;font-variant-numeric:tabular-nums" });
+  const inp = h("input", { type: "range", min: "40", max: "160", step: "5", style: "flex:1;min-width:80px" });
+  inp.oninput = () => { val.textContent = inp.value + " %"; setCV({ xsize: +inp.value }); };
+  const el = h("label", { title: "Größe und Abstand der x, Strichstärke", style: "display:flex;align-items:center;gap:8px;padding-left:12px" }, h("span", {}, "Größe der x"), inp, val);
+  el.redraw = () => { el.style.display = CV.removed === "xxx" ? "flex" : "none"; if (document.activeElement !== inp) { inp.value = CV.xsize; val.textContent = CV.xsize + " %"; } };
+  el.redraw();
+  return el;
+}
+
+/** A small picture of a place with its marks, into a canvas of css size w × h. */
+export function drawThumb(canvas, g, w, hh) {
+  const d = devicePixelRatio, W = Math.round(w * d), H = Math.round(hh * d), b = placeBox(g);
+  if (canvas.width !== W) { canvas.width = W; canvas.height = H; }
+  const mw = Math.max(b.x1 - b.x0, 30) * 1.3, mh = Math.max(b.y1 - b.y0, 30) * 1.3;
+  const s = Math.min(W / mw, H / mh);
+  const view = { x0: (b.x0 + b.x1) / 2 - W / 2 / s, y0: (b.y0 + b.y1) / 2 - H / 2 / s, s };
+  const gO = renderGray(S.plans.old, S.axis, view, W, H, 0), gN = renderGray(S.plans.new, S.axis, view, W, H, S.offset);
+  const peek = CS.peek; CS.peek = null;
+  canvas.getContext("2d").putImageData(paintCompare({ view, w: W, h: H, gO, gN }), 0, 0);
+  CS.peek = peek;
+}
+
 export const removedSwitch = () => wordSwitch([["halo", "Schleier", YELLOW_INK], ["xxx", "x–x–x", YELLOW_INK]], () => CV.removed, (v) => setCV({ removed: v }), { title: "Wie Weggefallenes umrandet wird" });
 export function check(label, key, title = "") {
   const inp = h("input", { type: "checkbox" });

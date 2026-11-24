@@ -269,7 +269,7 @@ export function textChanges(oldUnmatched, newUnmatched, oldPlaced, newPlaced) {
   for (const a of to) {
     let b = null;
     for (const c of cellsOf(a.box)) { b = (grid.get(c) || []).find((x) => !usedNew.has(x) && intersects(a.box, x.box, 0.3)); if (b) break; }
-    if (!b) { for (const w of wordsOfSpan(a.glyphs)) if (w.glyphs.some((g) => a.left.has(g))) out.push({ kind: "Removed", box: w.box, why: "deleted" }); continue; }
+    if (!b) { for (const w of wordsOfSpan(a.glyphs)) if (w.glyphs.some((g) => a.left.has(g))) out.push({ kind: "Removed", box: w.box, text: w.text, why: "gone" }); continue; }
     usedNew.add(b);
     const wo = wordsOfSpan(a.glyphs), wn = wordsOfSpan(b.glyphs);
     // LCS over word strings
@@ -282,10 +282,10 @@ export function textChanges(oldUnmatched, newUnmatched, oldPlaced, newPlaced) {
       for (let k = 0; k < Math.max(hunkO.length, hunkN.length); k++) {
         const o = hunkO[k], n = hunkN[k];
         if (o && n) {
-          if (isShortened(o.text, n.text)) out.push({ kind: "Removed", box: o.box, why: "shortened" });
-          else out.push({ kind: "Added", box: n.box, why: "replaced" });
-        } else if (o) out.push({ kind: "Removed", box: o.box, why: "deleted" });
-        else out.push({ kind: "Added", box: n.box, why: "inserted" });
+          if (isShortened(o.text, n.text)) out.push({ kind: "Removed", box: o.box, text: o.text, why: "shortened" });
+          else out.push({ kind: "Added", box: n.box, text: n.text, why: "replaced" });
+        } else if (o) out.push({ kind: "Removed", box: o.box, text: o.text, why: "deleted" });
+        else out.push({ kind: "Added", box: n.box, text: n.text, why: "inserted" });
       }
       hunkO.length = 0; hunkN.length = 0;
     };
@@ -296,7 +296,7 @@ export function textChanges(oldUnmatched, newUnmatched, oldPlaced, newPlaced) {
     }
     flush();
   }
-  for (const b of tn) if (!usedNew.has(b)) for (const w of wordsOfSpan(b.glyphs)) if (w.glyphs.some((g) => b.left.has(g))) out.push({ kind: "Added", box: w.box, why: "new" });
+  for (const b of tn) if (!usedNew.has(b)) for (const w of wordsOfSpan(b.glyphs)) if (w.glyphs.some((g) => b.left.has(g))) out.push({ kind: "Added", box: w.box, text: w.text, why: "new" });
   return out;
 }
 
