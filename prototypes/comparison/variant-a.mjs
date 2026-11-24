@@ -16,11 +16,12 @@ import { S, on, h, CV, CS, setCV, groups, allPlaces, describe, placeLabel, where
   hiddenCount, setHidden, isHidden, fmt, screen } from "./common.mjs";
 
 const SIDE_KEY = "compareview.side";
+const MIN_SIDE = 280; // round 7: the width at which the list shows its smallest pictures
 const sideWidth = () => { try { return +localStorage.getItem(SIDE_KEY) || 330; } catch { return 330; } };
 
 export default function mount(host, { back }) {
   const offs = [];
-  let W = Math.min(700, Math.max(240, sideWidth()));
+  let W = Math.min(700, Math.max(MIN_SIDE, sideWidth()));
 
   // ---------- sidebar ----------
   const count = h("div", { style: "font-size:20px;font-weight:650;line-height:1.2" });
@@ -59,7 +60,7 @@ export default function mount(host, { back }) {
   function drawSelRow() {
     if (!sel.size) { selRow.style.display = "none"; return; }
     selRow.style.display = "flex";
-    selRow.replaceChildren(h("b", {}, `${sel.size} ausgewählt`), h("span", { style: "flex:1" }),
+    selRow.replaceChildren(h("b", { style: "white-space:nowrap" }, `${sel.size} ausgewählt`), h("span", { style: "flex:1" }),
       h("button", { style: "padding:2px 8px;font-size:12px;display:flex;gap:5px;align-items:center", title: "Ausgewählte Stellen ausblenden (H)", onclick: () => hidePlaces([...sel]) }, EYE_OFF(), "ausblenden"),
       h("button", { style: "padding:2px 8px;font-size:12px", title: "Auswahl aufheben (Esc)", onclick: clearSel }, "aufheben"));
   }
@@ -245,7 +246,7 @@ export default function mount(host, { back }) {
     // Round 6: the pictures follow the edge while dragging (just stretched); they are drawn
     // anew, sharp, only after letting go.
     grip.onpointermove = (ev) => {
-      W = Math.round(Math.min(700, Math.max(240, ev.clientX - x0)));
+      W = Math.round(Math.min(700, Math.max(MIN_SIDE, ev.clientX - x0)));
       root.style.gridTemplateColumns = `${W}px minmax(0,1fr)`;
       const ts = thumbSize();
       for (const li of list.children) {
@@ -258,7 +259,8 @@ export default function mount(host, { back }) {
     grip.onpointerup = () => { grip.onpointermove = null; try { localStorage.setItem(SIDE_KEY, String(W)); } catch {} drawList(); };
   };
   /** Size of the small pictures for the sidebar's width; none when it is narrow. */
-  const thumbSize = () => (W < 280 ? null : { tw: Math.round(Math.min(220, W * 0.34)), th: Math.round(Math.min(220, W * 0.34) * 0.68) });
+  // Round 7: the sidebar is never narrower than the smallest pictures need (MIN_SIDE).
+  const thumbSize = () => ({ tw: Math.round(Math.min(220, W * 0.34)), th: Math.round(Math.min(220, W * 0.34) * 0.68) });
 
   // ---------- drawing the sidebar ----------
   function drawSide() {
@@ -388,7 +390,7 @@ export default function mount(host, { back }) {
     if (sel.size > 1) { navText.replaceChildren(h("b", {}, `${sel.size} ausgewählt`), h("span", { style: "opacity:.7" }, "· H blendet sie aus · Esc hebt auf")); return; }
     const g = sel.size ? [...sel][0] : null;
     if (!g) { navText.replaceChildren(h("span", { style: "opacity:.75" }, `Keine Auswahl · ${gs.length} Stellen`)); return; }
-    navText.replaceChildren(dot(g, 10), h("b", { style: "font-variant-numeric:tabular-nums" }, `${gs.indexOf(g) + 1} / ${gs.length}`), h("span", {}, "·"), h("b", {}, placeLabel(g)),
+    navText.replaceChildren(dot(g, 10), h("b", { style: "font-variant-numeric:tabular-nums" }, String(gs.indexOf(g) + 1)), h("span", {}, "·"), h("b", {}, placeLabel(g)),
       g.detail ? h("span", { style: "opacity:.8" }, g.detail) : null, h("span", { style: "opacity:.6" }, "· " + where(g)));
   }
 

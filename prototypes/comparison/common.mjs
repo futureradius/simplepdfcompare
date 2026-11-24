@@ -416,7 +416,7 @@ export function drawOverlay(ctx, V, { plans, selected = true, label = null, only
       ctx.strokeStyle = "#1d1d1f"; ctx.lineWidth = 1.5; ctx.setLineDash([6, 4]);
       ctx.beginPath(); ctx.roundRect(x, y, Math.max(w, 12), Math.max(hh, 12), 6); ctx.stroke(); ctx.setLineDash([]);
       const n = gs.indexOf(g) + 1;
-      pill(ctx, x, y - 24 < 2 ? y + hh + 4 : y - 24, sels.length === 1 ? `${n} / ${gs.length}` : String(n), { bg: "#1d1d1f" });
+      pill(ctx, x, y - 24 < 2 ? y + hh + 4 : y - 24, String(n), { bg: "#1d1d1f" }); // round 7: just the number, no "/ total"
     }
     if (CS.peek) pill(ctx, V.w / 2 - 90, 12, label || "Plan ohne Markierungen (Shift)", { bg: "#1d1d1f" });
   });
