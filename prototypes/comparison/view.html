@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vergleichsansicht · Prototyp</title>
+<!--
+  PROTOTYPE (throwaway) for the ticket "What does the comparison view look like?".
+  Three variants of the comparison view, switchable via ?view=A|B|C, shown after the four
+  setup steps (alignment prototype, variant A "Schritte", which won):
+    A  Plan + Liste       one map view with all marks, sidebar list of places, overview strip
+    B  Stelle für Stelle  always zoomed to one place, ◀ ▶ on top, filmstrip of places below
+    C  Alt | Neu          two synced views: Old with Removed, New with Added
+  Run: npm run proto:view   (?demo=down|right loads the synthetic pair; &go=1 skips the setup)
+-->
+<script type="importmap">{ "imports": { "mupdf": "/node_modules/mupdf/dist/mupdf.js" } }</script>
+<style>
+  :root { --bg: #f4f4f2; --panel: #fff; --ink: #1d1d1f; --muted: #6b6b70; --line: #dcdad5; --accent: #1d5fd6; --snap: #e8a100; --old: #1d74c9; --new: #d0215f; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; display: flex; flex-direction: column; }
+  header.app { display: flex; align-items: center; gap: 14px; padding: 8px 14px; background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header.app h1 { font-size: 15px; margin: 0 10px 0 0; font-weight: 650; letter-spacing: .01em; }
+  header.app h1 span { color: var(--muted); font-weight: 400; }
+  #stage { flex: 1; min-height: 0; position: relative; }
+  .muted { color: var(--muted); }
+  button, select, input { font: inherit; color: inherit; }
+  button { padding: 5px 12px; border-radius: 7px; border: 1px solid var(--line); background: var(--panel); cursor: pointer; }
+  button:hover { border-color: #b9b6ae; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.on { background: color-mix(in srgb, var(--accent) 14%, var(--panel)); border-color: var(--accent); color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  input[type=number] { width: 92px; padding: 3px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; border-right: 1px solid var(--line); }
+  .seg button:last-child { border-right: 0; }
+  .x { padding: 0 7px; line-height: 1.4; }
+  .bar { height: 5px; border-radius: 3px; background: var(--accent); opacity: .7; }
+  .view { background: #fff; }
+  .hint { font-size: 12px; color: var(--muted); }
+  kbd { font: 11px/1 ui-monospace, monospace; padding: 2px 4px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; background: var(--panel); }
+  .landing { height: 100%; overflow: auto; padding: 40px 16px 90px; }
+  .landing .inner { max-width: 760px; margin: 0 auto; }
+  .landing h2 { font-size: 30px; margin: 0 0 4px; letter-spacing: -.01em; }
+  .landing .lead { font-size: 17px; margin: 0 0 18px; }
+  .drops { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 10px; align-items: center; margin: 22px 0 12px; }
+  @media (max-width: 620px) { .drops { grid-template-columns: minmax(0, 1fr); } }
+  .drop .fname { font-weight: 600; color: var(--ink); overflow-wrap: anywhere; max-width: 100%; }
+  .swapbtn { width: 40px; height: 40px; border-radius: 50%; padding: 0; font-size: 18px; }
+  .drop { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-height: 130px; border: 2px dashed #c4c1b9; border-radius: 12px; background: var(--panel); cursor: pointer; text-align: center; padding: 14px; }
+  .drop:hover, .drop.over { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, var(--panel)); }
+  .drop.has { border-style: solid; border-color: var(--accent); }
+  .drop b { font-size: 16px; }
+  .note { padding: 10px 12px; border-radius: 10px; background: color-mix(in srgb, var(--accent) 8%, var(--panel)); font-size: 13px; }
+
+  /* prototype chrome: not part of the design being judged */
+  #switcher { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 50; display: flex; gap: 4px; align-items: center; padding: 5px; border-radius: 99px; background: #111; color: #fff; box-shadow: 0 6px 24px rgba(0,0,0,.35); font: 13px system-ui, sans-serif; }
+  #switcher button { background: transparent; color: #fff; border: 0; border-radius: 99px; padding: 4px 10px; }
+  #switcher button:hover { background: #333; }
+  #switcher .label { padding: 0 8px; min-width: 190px; text-align: center; font-weight: 600; }
+  #statepanel { position: fixed; right: 12px; bottom: 64px; z-index: 50; width: 380px; max-height: 60vh; overflow: auto; background: #111; color: #d7f5d7; font: 11px/1.4 ui-monospace, monospace; padding: 10px; border-radius: 10px; white-space: pre; box-shadow: 0 6px 24px rgba(0,0,0,.35); }
+</style>
+</head>
+<body>
+<header class="app">
+  <h1>simple pdf compare <span>· Prototyp Vergleichsansicht</span></h1>
+  <span class="muted">Synthetisches Paar:</span>
+  <button id="demo-down">Weg-Zeit ↓ (14 m)</button>
+  <button id="demo-right">Balken →</button>
+  <button id="skip" title="Die vier Schritte mit den erkannten Werten überspringen">⏭ direkt zum Vergleich</button>
+  <button id="home" title="Zur Startseite, anderes Planpaar wählen">⌂ Start</button>
+  <span id="loading" class="muted"></span>
+</header>
+<div id="stage"></div>
+<div id="switcher">
+  <button id="sw-prev" title="Vorige Variante (Strg+Alt+←)">◀</button>
+  <span class="label" id="sw-label"></span>
+  <button id="sw-next" title="Nächste Variante (Strg+Alt+→)">▶</button>
+  <button id="sw-state" title="Zustand anzeigen">state</button>
+</div>
+<div id="statepanel" hidden></div>
+
+<script type="module">
+import * as E from "../alignment/engine.mjs";
+import { S, on, setPair } from "../alignment/shared.mjs";
+import setup from "../alignment/variant-a.mjs";
+import viewA, { NAME as nA } from "./variant-a.mjs";
+import viewB, { NAME as nB } from "./variant-b.mjs";
+import viewC, { NAME as nC } from "./variant-c.mjs";
+import { CV, CS, groups, describe } from "./common.mjs";
+
+const VIEWS = { A: [nA, viewA], B: [nB, viewB], C: [nC, viewC] };
+const keys = Object.keys(VIEWS);
+const $ = (id) => document.getElementById(id);
+const q = new URLSearchParams(location.search);
+let current = keys.includes(q.get("view")) ? q.get("view") : "A";
+let unmountSetup = null, cv = null; // cv: { host, ctx, unmount } of the comparison view on screen
+
+// The setup's "Vergleichen" mounts the current comparison variant here.
+S.compareView = (host, ctx) => {
+  cv = { host, ctx, unmount: VIEWS[current][1](host, ctx) };
+  return () => { if (cv) cv.unmount(); cv = null; };
+};
+
+function mount() {
+  if (unmountSetup) unmountSetup();
+  cv = null;
+  $("stage").replaceChildren();
+  label();
+  if (!S.plans) { landing(); unmountSetup = null; return; }
+  unmountSetup = setup($("stage"));
+}
+function label() { $("sw-label").textContent = `Ansicht ${current} · ${VIEWS[current][0]}`; }
+function go(d) {
+  current = keys[(keys.indexOf(current) + d + keys.length) % keys.length];
+  const u = new URL(location); u.searchParams.set("view", current); history.replaceState(null, "", u);
+  label();
+  if (cv) { cv.unmount(); cv.host.replaceChildren(); cv.unmount = VIEWS[current][1](cv.host, cv.ctx); }
+}
+$("sw-prev").onclick = () => go(-1);
+$("sw-next").onclick = () => go(1);
+addEventListener("keydown", (e) => { if (e.ctrlKey && e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) { e.preventDefault(); go(e.key === "ArrowLeft" ? -1 : 1); } });
+$("sw-state").onclick = () => { $("statepanel").hidden = !$("statepanel").hidden; showState(); };
+
+function showState() {
+  if ($("statepanel").hidden) return;
+  const r1 = (v) => Math.round(v * 100) / 100, R = S.result;
+  const st = S.plans ? {
+    pair: S.pairName, view: current, settings: CV, selected: CS.sel, peek: CS.peek,
+    offset: S.offset, offsetFrom: S.offsetFrom,
+    bodyMm: { old: S.body.old.map(r1), new: S.body.new.map(r1) },
+    compared: R && { winMm: R.win.map(r1), ms: R.ms, places: R.groups.length, items: R.items.length, leftOver: { old: R.leftOld, new: R.leftNew } },
+    places: R && groups().slice(0, 40).map((g, i) => `${i + 1}: ${describe(g)}`),
+    busy: S.busy,
+  } : { note: "no pair loaded" };
+  $("statepanel").textContent = JSON.stringify(st, null, 1);
+}
+on(showState);
+setInterval(showState, 1000);
+
+let skip = q.get("go") === "1";
+async function loadBytes(oldBytes, newBytes, name, names) {
+  $("loading").textContent = "lese Pläne…";
+  await new Promise((r) => setTimeout(r, 20));
+  const t0 = performance.now();
+  const plans = { old: await E.loadPlan(oldBytes, "old"), new: await E.loadPlan(newBytes, "new") };
+  $("loading").textContent = `gelesen in ${((performance.now() - t0) / 1000).toFixed(1)} s`;
+  S.names = names || { old: "", new: "" };
+  setPair(plans, name);
+  CS.sel = 0;
+  if (skip) { S._aFor = S.plans; S._aConfirmed = 4; S._aNewInit = true; copyZones(); }
+  mount();
+}
+/** What step 3 does on entry: the New Plan gets the Old Plan's zones. */
+function copyZones() {
+  const L = (w) => S.plans[w].pageMm[S.axis === "y" ? 1 : 0];
+  S.body.new = [S.body.old[0], L("new") - (L("old") - S.body.old[1])];
+  S.ignores = S.ignores.filter((ig) => ig.plan !== "new").concat(S.ignores.filter((ig) => ig.plan === "old").map((ig) => ({ ...ig, id: Math.random(), plan: "new", rect: { ...ig.rect } })));
+}
+async function demo(name) {
+  const get = async (f) => new Uint8Array(await (await fetch(`/samples/${name}-${f}.pdf`)).arrayBuffer());
+  await loadBytes(await get("old"), await get("new"), "synthetic " + name, { old: `${name}-old.pdf (Beispiel)`, new: `${name}-new.pdf (Beispiel)` });
+  const u = new URL(location); u.searchParams.set("demo", name); history.replaceState(null, "", u);
+}
+$("demo-down").onclick = () => { skip = false; demo("down"); };
+$("demo-right").onclick = () => { skip = false; demo("right"); };
+$("skip").onclick = () => {
+  skip = true;
+  if (!S.plans) { demo("down"); return; }
+  S._aFor = S.plans; S._aConfirmed = 4;
+  if (!S._aNewInit) { copyZones(); S._aNewInit = true; }
+  mount();
+};
+
+// ---------- landing page (before a pair is loaded), shortened from the alignment prototype ----------
+const files = {};
+function landing() {
+  $("stage").innerHTML = `<div class="landing"><div class="inner">
+    <h2>simple pdf compare</h2>
+    <p class="lead">Vergleicht zwei Stände eines Bauablaufplans und zeigt, was <b style="color:#dc2a1e">dazugekommen</b> und was <b style="color:#b38600">weggefallen</b> ist.</p>
+    <div class="drops">
+      <label class="drop" id="drop-old"><b>Alter Plan</b><span class="muted" id="name-old"></span><input type="file" accept="application/pdf" hidden></label>
+      <button class="swapbtn" id="swap" title="Reihenfolge tauschen">⇄</button>
+      <label class="drop" id="drop-new"><b>Neuer Plan</b><span class="muted" id="name-new"></span><input type="file" accept="application/pdf" hidden></label>
+    </div>
+    <p style="display:flex;justify-content:flex-end;margin:0 0 12px"><button class="primary" id="go" disabled style="padding:8px 18px">Weiter →</button></p>
+    <p class="note">Läuft vollständig auf diesem Rechner: keine Anmeldung, kein Hochladen. Die Pläne verlassen den Browser nicht.</p>
+    <p style="margin-top:22px">Mit einem Beispiel ausprobieren:
+      <button id="l-down">Weg-Zeit-Diagramm ↓</button> <button id="l-right">Balkenplan →</button>
+      <button id="l-skip">Beispiel ↓, direkt zum Vergleich</button></p>
+  </div></div>`;
+  $("l-down").onclick = () => { skip = false; demo("down"); };
+  $("l-right").onclick = () => { skip = false; demo("right"); };
+  $("l-skip").onclick = () => { skip = true; demo("down"); };
+  const HINT = { old: "der frühere Stand · PDF hierher ziehen oder klicken", new: "der aktuelle Stand · PDF hierher ziehen oder klicken" };
+  const drawFiles = () => {
+    for (const w of ["old", "new"]) {
+      const f = files[w], el = $("name-" + w);
+      el.className = f ? "fname" : "muted";
+      el.textContent = f ? f.name : HINT[w];
+      $("drop-" + w).classList.toggle("has", !!f);
+    }
+    $("go").disabled = !(files.old && files.new);
+  };
+  drawFiles();
+  $("swap").onclick = () => { [files.old, files.new] = [files.new, files.old]; drawFiles(); };
+  $("go").onclick = async () => {
+    $("go").disabled = true; skip = false;
+    await loadBytes(new Uint8Array(await files.old.arrayBuffer()), new Uint8Array(await files.new.arrayBuffer()), "own files", { old: files.old.name, new: files.new.name });
+  };
+  for (const w of ["old", "new"]) {
+    const box = $("drop-" + w), inp = box.querySelector("input");
+    const take = (f) => { if (!f) return; files[w] = f; drawFiles(); };
+    inp.onchange = () => take(inp.files[0]);
+    box.ondragover = (e) => { e.preventDefault(); box.classList.add("over"); };
+    box.ondragleave = () => box.classList.remove("over");
+    box.ondrop = (e) => { e.preventDefault(); box.classList.remove("over"); take(e.dataTransfer.files[0]); };
+  }
+}
+$("home").onclick = () => {
+  S.plans = null;
+  const u = new URL(location); u.searchParams.delete("demo"); u.searchParams.delete("go"); history.replaceState(null, "", u);
+  $("loading").textContent = "";
+  mount();
+};
+mount();
+if (q.get("demo")) demo(q.get("demo"));
+</script>
+</body>
+</html>

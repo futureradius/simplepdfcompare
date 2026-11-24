@@ -29,7 +29,7 @@ export default function mount(stage) {
   // This variant keeps zones per Plan; "both" from variants B/C belongs to the Old Plan here.
   for (const ig of S.ignores) if (ig.plan === "both") ig.plan = "old";
 
-  let step = Math.min(S._aConfirmed, 3), done = false, guides = [];
+  let step = Math.min(S._aConfirmed, 3), done = S._aConfirmed >= 4, guides = [];
   const offs = [];
   const root = h("div", { style: "display:flex;flex-direction:column;height:100%" });
   const nav = h("nav", { style: "display:flex;align-items:center;gap:4px;padding:10px 14px;background:#fff;border-bottom:1px solid var(--line)" });
@@ -421,6 +421,13 @@ export default function mount(stage) {
 
   // ---------- after "Vergleichen" ----------
   function result() {
+    // The comparison-view prototype (../comparison) plugs its variants in here.
+    if (S.compareView) {
+      const host = h("div", { style: "grid-column:1/-1;min-height:0;position:relative" });
+      body.append(host);
+      offs.push(S.compareView(host, { back: () => { done = false; show(3); } }));
+      return;
+    }
     const box = h("div", { style: "grid-column:1/-1;display:grid;place-items:center" });
     const draw = () => {
       const r = S.result;

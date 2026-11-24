@@ -4,7 +4,7 @@
 // Reuses the detection prototype (../detection) for objects, Offset voting and matching.
 import * as mupdf from "mupdf";
 import { extractObjects, K } from "../detection/extract.mjs";
-import { refineOffset, inBand, placeObjects, matchObjects, groupItems, bboxOf } from "../detection/detect.mjs";
+import { refineOffset, inBand, placeObjects, matchObjects, groupItems, bboxOf, textChanges } from "../detection/detect.mjs";
 
 export { K };
 
@@ -136,9 +136,19 @@ export function quickCompare(O, N, axis, bodyO, bodyN, offset, ignores) {
   const nP = placeObjects(skipIgnored(N.objs, "new", ignores), { axis, shift: offset, win });
   const m1 = matchObjects(oP, nP, 0.05);
   const m = matchObjects(m1.oldUnmatched, m1.newUnmatched, 0.05, (o) => o.altKey);
-  const items = [...m.oldUnmatched.map((o) => ({ src: "old", o, box: o.bbox, kind: o.kind })), ...m.newUnmatched.map((o) => ({ src: "new", o, box: o.bbox, kind: o.kind }))];
+  // Comparison-view prototype: the full result, as the detection ticket decided it.
+  // Geometry is Removed (Old) / Added (New); text is marked per word; a recolour is Added.
+  const still = new Set(m.newUnmatched), recol = m1.newUnmatched.filter((o) => !still.has(o));
+  const text = textChanges(m.oldUnmatched, m.newUnmatched, oP, nP);
+  const geo = (src, o, extra = {}) => ({ src, o, box: o.bbox, kind: o.kind, segs: o.kind === "stroke" ? o.coords : null, ...extra });
+  const items = [
+    ...m.oldUnmatched.filter((o) => o.kind !== "glyph").map((o) => geo("old", o)),
+    ...m.newUnmatched.filter((o) => o.kind !== "glyph").map((o) => geo("new", o)),
+    ...text.map((x) => ({ src: x.kind === "Removed" ? "old" : "new", text: x, box: x.box, kind: "word" })),
+    ...recol.map((o) => (o.kind === "glyph" ? { src: "new", text: { kind: "Added", box: o.bbox, why: "recoloured" }, box: o.bbox, kind: "word", recol: true } : geo("new", o, { recol: true }))),
+  ];
   const groups = groupItems(items, { axis, cell: 5, maxLen: 300 });
-  return { win, groups, leftOld: m.oldUnmatched.length, leftNew: m.newUnmatched.length, inOld: oP.length, inNew: nP.length, ms: Math.round(performance.now() - t0) };
+  return { win, offset, items, groups, leftOld: m.oldUnmatched.length, leftNew: m.newUnmatched.length, inOld: oP.length, inNew: nP.length, ms: Math.round(performance.now() - t0) };
 }
 
 /**
