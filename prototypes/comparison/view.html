@@ -56,7 +56,7 @@
   .note { padding: 10px 12px; border-radius: 10px; background: color-mix(in srgb, var(--accent) 8%, var(--panel)); font-size: 13px; }
 
   /* prototype chrome: not part of the design being judged */
-  #switcher { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 50; display: flex; gap: 4px; align-items: center; padding: 5px; border-radius: 99px; background: #111; color: #fff; box-shadow: 0 6px 24px rgba(0,0,0,.35); font: 13px system-ui, sans-serif; }
+  #switcher { position: fixed; left: 50%; top: 58px; transform: translateX(-50%); z-index: 50; display: flex; gap: 4px; align-items: center; padding: 5px; border-radius: 99px; background: #111; color: #fff; box-shadow: 0 6px 24px rgba(0,0,0,.35); font: 13px system-ui, sans-serif; }
   #switcher button { background: transparent; color: #fff; border: 0; border-radius: 99px; padding: 4px 10px; }
   #switcher button:hover { background: #333; }
   #switcher .label { padding: 0 8px; min-width: 190px; text-align: center; font-weight: 600; }
@@ -91,6 +91,7 @@
   <button id="home" title="Zur Startseite, anderes Planpaar wählen">⌂ Start</button>
   <span id="loading" class="muted"></span>
   <span style="flex:1"></span>
+  <button id="names-open" title="Für echte Pläne: wie oft ein Name gefunden wurde. Nur Zahlen.">Namen: Zahlen</button>
   <button id="about-open">Über</button>
   <button id="state-open" class="hint" title="Prototyp: Zustand anzeigen">state</button>
 </header>
@@ -123,22 +124,28 @@
   </div>
   <div class="foot"><button id="about-close">Schließen</button></div>
 </dialog>
-<div id="switcher" hidden>
-  <button id="sw-prev" title="Vorige Variante (Strg+Alt+←)">◀</button>
+<div id="switcher">
+  <button id="sw-prev" title="Vorige Benennung (Strg+Alt+←)">◀</button>
   <span class="label" id="sw-label"></span>
-  <button id="sw-next" title="Nächste Variante (Strg+Alt+→)">▶</button>
+  <button id="sw-next" title="Nächste Benennung (Strg+Alt+→)">▶</button>
   <button id="sw-state" title="Zustand anzeigen">state</button>
 </div>
 <div id="statepanel" hidden></div>
+<div id="namespanel" hidden style="position:fixed;right:12px;top:64px;z-index:60;width:440px;max-height:80vh;overflow:auto;background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px 16px;box-shadow:0 12px 40px rgba(0,0,0,.2)">
+  <div style="display:flex;align-items:center;gap:8px"><b style="flex:1">Namen und Achsen · nur Zahlen</b><button id="names-copy">Kopieren</button><button id="names-close">×</button></div>
+  <p class="hint" style="margin:6px 0 8px">Enthält nur Anzahlen, Millisekunden, Abweichungen in mm und den Maßstab (mm pro Tag, mm pro km). Keine Texte, keine Namen, keine Koordinaten, keine Dateinamen. Zum Einfügen in den Chat.</p>
+  <pre id="names-out" style="margin:0;font:12px/1.45 ui-monospace,monospace;white-space:pre-wrap;background:#f6f5f2;padding:10px;border-radius:8px"></pre>
+</div>
 
 <script type="module">
 import * as E from "../alignment/engine.mjs";
 import { S, on, setPair } from "../alignment/shared.mjs";
 import setup from "../alignment/variant-a.mjs";
-import viewA, { NAME as nA } from "./variant-a.mjs";
+import viewA, { NAME as nA, NAMINGS } from "./variant-a.mjs";
 import viewB, { NAME as nB } from "./variant-b.mjs";
 import viewC, { NAME as nC } from "./variant-c.mjs";
-import { CV, CS, groups, allPlaces, describe } from "./common.mjs";
+import { CV, CS, groups, allPlaces, describe, title, lage, NAMING } from "./common.mjs";
+import * as NM from "./naming.mjs";
 
 const VIEWS = { A: [nA, viewA], B: [nB, viewB], C: [nC, viewC] };
 const keys = Object.keys(VIEWS);
@@ -161,10 +168,13 @@ function mount() {
   if (!S.plans) { landing(); unmountSetup = null; return; }
   unmountSetup = setup($("stage"));
 }
-function label() { $("sw-label").textContent = `Ansicht ${current} · ${VIEWS[current][0]}`; }
+// Naming ticket: the black bar (bottom right) switches how places are named (?name=1|2|3).
+// The losing views B and C stay reachable with ?view=B / ?view=C.
+const nameKey = () => { const v = new URLSearchParams(location.search).get("name"); return NAMINGS.some(([k]) => k === v) ? v : "1"; };
+function label() { const k = nameKey(); $("sw-label").textContent = `Benennung ${k} · ${NAMINGS.find((n) => n[0] === k)[1]}`; }
 function go(d) {
-  current = keys[(keys.indexOf(current) + d + keys.length) % keys.length];
-  const u = new URL(location); u.searchParams.set("view", current); history.replaceState(null, "", u);
+  const i = NAMINGS.findIndex((n) => n[0] === nameKey()), k = NAMINGS[(i + d + NAMINGS.length) % NAMINGS.length][0];
+  const u = new URL(location); u.searchParams.set("name", k); history.replaceState(null, "", u);
   label();
   if (cv) { cv.unmount(); cv.host.replaceChildren(); cv.unmount = VIEWS[current][1](cv.host, cv.ctx); }
 }
@@ -177,6 +187,54 @@ $("about-close").onclick = () => $("about").close();
 // Round 2: variant A won. The bottom switcher made room for ◀ ▶ of the places; the other
 // variants stay reachable with ?view=B or ?view=C (or Ctrl+Alt+← →).
 
+// ---------- naming ticket: counts only, for real Plans ----------
+function nameCounts() {
+  if (!S.plans || !S.result) return "Erst ein Planpaar vergleichen.";
+  const t0 = performance.now(), ps = allPlaces(), c = (f) => ps.filter(f).length, r1 = (v) => Math.round(v * 10) / 10;
+  const src = (k) => c((p) => p.nm && p.nm.src === k);
+  const geo = (p) => p.items.some((i) => i.o && !i.text);
+  const L = [];
+  L.push(`Stellen: ${ps.length} (davon mit Zeichnung: ${c(geo)}, nur Text: ${c((p) => !geo(p))})`);
+  L.push(`Name über Hinweislinie (gleiche Farbe): ${src("Linie")}`);
+  L.push(`  davon mehrdeutig (Linie erreicht mehrere Texte): ${c((p) => p.nm && p.nm.ambiguous)}`);
+  const ch = (a, b) => c((p) => p.nm && p.nm.src === "Linie" && p.nm.chain >= a && p.nm.chain <= b);
+  L.push(`  Linie aus 1 Stück: ${ch(1, 1)} · 2 Stücken: ${ch(2, 2)} · 3+ Stücken: ${ch(3, 99)}`);
+  L.push(`Name: Text daneben (bis 3 mm): ${src("daneben")}`);
+  L.push(`Name: geänderte Beschriftung selbst: ${src("Text")} (davon zurück zur Linie gefunden: ${c((p) => p.nm && p.nm.back)})`);
+  L.push(`Name: Zeile im Kopf (Balkenplan): ${src("Zeile")}`);
+  L.push(`Kein Name, nur Form und Lage: ${c((p) => !p.nm || !p.nm.name)}`);
+  L.push(`Beschriftung mit ihrer Stelle zusammengelegt: ${c((p) => p.joined)}`);
+  // what a leader in another colour would have found (only for places without a leader name)
+  let anyCol = 0, branched = 0;
+  for (const p of ps) {
+    if (!geo(p) || (p.nm && p.nm.src === "Linie")) continue;
+    for (const sd of ["new", "old"]) {
+      const g = p.items.filter((i) => i.src === sd && i.o && !i.text);
+      if (!g.length) continue;
+      const ix = NM.planIndex(sd), f = NM.followLine(ix, NM.splitSeeds(g.map((i) => ix.byPolys.get(i.o.polys) || i.o)), { anyColour: true });
+      if (f.branched) branched++; else if (f.hits.length) anyCol++;
+      break;
+    }
+  }
+  L.push(`Ohne Linien-Namen, aber Linie in anderer Farbe erreicht Text: ${anyCol} (zu verzweigt: ${branched})`);
+  L.push("");
+  for (const w of ["old", "new"]) {
+    const a = NM.axesOf(w), n = a.counts;
+    L.push(`${w === "old" ? "Alter" : "Neuer"} Plan:`);
+    L.push(`  km-Zahlen im Kopf: ${n.km}${a.km ? `, auf einer Geraden: ${a.km.inliers}, Abweichung (Median) ${r1(a.km.residual)} mm, ${r1(1 / Math.abs(a.km.c1))} mm pro km` : ", keine Gerade"}`);
+    L.push(`  Datumsangaben im Körper: TT.MM.JJ ${n.dmy}, KW ${n.kw}, Monat Jahr ${n.mon}${a.time ? `; passend: ${a.time.inliers} von ${a.time.of}, Abweichung (Median) ${r1(a.time.residual)} mm, ${r1(1 / Math.abs(a.time.c1))} mm pro Tag` : "; keine Zeitachse"}`);
+    L.push(`  Gitterlinien quer zur Zeit: ${a.grid ? `${a.grid.lines}, Beschriftungen eingerastet: ${a.grid.snapped}` : "keine"}`);
+    L.push(`  Index gebaut in ${NM.planIndex(w).ms} ms`);
+  }
+  L.push("");
+  L.push(`Stellen mit km-Bereich: ${c((p) => p.nm && p.nm.km)} · mit Datum: ${c((p) => p.nm && p.nm.dates)} · mit Zeile: ${c((p) => p.nm && p.nm.row)}`);
+  L.push(`Benennen beim Vergleich: ${NAMING.ms} ms · diese Zählung: ${Math.round(performance.now() - t0)} ms`);
+  return L.join(String.fromCharCode(10));
+}
+$("names-open").onclick = () => { $("namespanel").hidden = false; $("names-out").textContent = "zähle…"; setTimeout(() => ($("names-out").textContent = nameCounts()), 20); };
+$("names-close").onclick = () => ($("namespanel").hidden = true);
+$("names-copy").onclick = () => navigator.clipboard.writeText($("names-out").textContent);
+
 function showState() {
   if ($("statepanel").hidden) return;
   const r1 = (v) => Math.round(v * 100) / 100, R = S.result;
@@ -185,7 +243,8 @@ function showState() {
     offset: S.offset, offsetFrom: S.offsetFrom,
     bodyMm: { old: S.body.old.map(r1), new: S.body.new.map(r1) },
     compared: R && { winMm: R.win.map(r1), ms: R.ms, places: R.groups.length, items: R.items.length, leftOver: { old: R.leftOld, new: R.leftNew } },
-    places: R && allPlaces().slice(0, 40).map((g, i) => `${i + 1}: ${g.cat}${g.detail ? " (" + g.detail + ")" : ""} · ${describe(g)}`),
+    naming: R && { ms: NAMING.ms },
+    places: R && allPlaces().slice(0, 40).map((g, i) => `${i + 1}: ${g.cat}${g.detail ? " (" + g.detail + ")" : ""} · ${describe(g)} · »${title(g)}« [${g.nm && g.nm.src}${g.nm && g.nm.ambiguous ? ", mehrdeutig" : ""}${g.joined ? ", +" + g.joined + " Beschriftung" : ""}] · ${lage(g)}${g.nm && g.nm.old ? " · vorher »" + g.nm.old + "«" : ""}`),
     busy: S.busy,
   } : { note: "no pair loaded" };
   $("statepanel").textContent = JSON.stringify(st, null, 1);

@@ -276,6 +276,16 @@ function downPair() {
     },
   ];
 
+  // Leader lines (comparison-view prototype, ticket "How do we name what changed"): as on
+  // real Plans, most labels sit away from their Activity and a thin line in the Activity's
+  // colour runs to them. Own PRNG, so every other object stays where it was. Some leaders are
+  // drawn as two separate lines (an elbow), as some exporters do; the rest stay beside.
+  let lseed = 4711;
+  const lrand = () => (lseed = (lseed * 1664525 + 1013904223) >>> 0) / 2 ** 32;
+  const lead = () => (lrand() < 0.75 ? { dx: round(6 + lrand() * 18, 0.5), dy: round((lrand() - 0.5) * 30, 0.5), elbow: lrand() < 0.4 } : null);
+  for (const a of acts) a.lead = lead();
+  for (const c of planted) { const l = lead() || { dx: 12, dy: -8, elbow: false }; if (c.old) c.old.lead = l; if (c.new) c.new.lead = l; }
+
   function draw(plan, version) {
     const bodyLen = plan.days * DAY;
     const H = HEADER + bodyLen + FOOTER;
@@ -392,10 +402,23 @@ function downPair() {
         }
         feet = grow(union(box(fa[0], fa[1], fa[0] + footW, fa[1] + footH), box(fb[0], fb[1], fb[0] + footW, fb[1] + footH)), 0.15);
       }
+      let lx = Math.max(KX(a.ka), KX(a.kb)) + (a.kind === "line" ? 2 : KX(a.w + KM0) - KX(KM0) + 2);
+      let ly = (y0 + y1) / 2 + 1;
+      let leader = null;
+      if (a.lead) {
+        // from the middle of the Activity (its right edge for an area) to the label's left end
+        const ax = a.kind === "line" ? (KX(a.ka) + KX(a.kb)) / 2 : (KX(a.ka + a.w) + KX(a.kb + a.w)) / 2, ay = (y0 + y1) / 2;
+        lx += a.lead.dx; ly += a.lead.dy;
+        const ex = lx - 0.8, ey = ly - 0.9;
+        p.rgb(a.color, true);
+        p.lw(0.18);
+        if (a.lead.elbow) { const mx = ax + (ex - ax) * 0.4; p.line(ax, ay, mx, ey); p.line(mx, ey, ex, ey); }
+        else p.line(ax, ay, ex, ey);
+        leader = box(ax, ay, ex, ey);
+      }
       p.rgb(a.kind === "closure" ? RED : [0, 0, 0], false);
-      const lx = Math.max(KX(a.ka), KX(a.kb)) + (a.kind === "line" ? 2 : KX(a.w + KM0) - KX(KM0) + 2);
-      const label = p.text("F1", 7, lx, (y0 + y1) / 2 + 1, a.label);
-      return { shape: union(shape, feet), label };
+      const label = p.text("F1", 7, lx, ly, a.label);
+      return { shape: union(shape, feet, leader), label };
     };
     for (const a of acts) if (visible(a)) drawAct(a);
     const boxes = {};

@@ -13,7 +13,7 @@
 import { S, on, h, CV, CS, setCV, groups, allPlaces, describe, placeLabel, where, dot, totals, compareViewer, fitPlace, fitWhole, keys,
   baseSwitch, outlineSlider, fadeSlider, removedSwitch, xSizeSlider, check, legend, bindRedraw, placeBox, tLo, tHi, kindOf, drawThumb,
   CATS, catOn, BUILTIN, userPresets, savePresets, fullFilter, sameFilter, setFilter, RED, YELLOW, YELLOW_INK,
-  hiddenCount, setHidden, isHidden, fmt, screen } from "./common.mjs";
+  hiddenCount, setHidden, isHidden, fmt, screen, catLabel, nameOf, shapeName, lage, SRC } from "./common.mjs";
 
 const SIDE_KEY = "compareview.side";
 const MIN_SIDE = 280; // round 7: the width at which the list shows its smallest pictures
@@ -22,6 +22,9 @@ const sideWidth = () => { try { return +localStorage.getItem(SIDE_KEY) || 330; }
 export default function mount(host, { back }) {
   const offs = [];
   let W = Math.min(700, Math.max(MIN_SIDE, sideWidth()));
+  // Naming ticket: three ways to show what changed (?name=1|2|3, the black bar bottom right).
+  const NV = NAMINGS.some(([k]) => k === new URLSearchParams(location.search).get("name")) ? new URLSearchParams(location.search).get("name") : "1";
+  if (NV === "3") W = Math.max(W, 600);
 
   // ---------- sidebar ----------
   const count = h("div", { style: "font-size:20px;font-weight:650;line-height:1.2" });
@@ -169,7 +172,7 @@ export default function mount(host, { back }) {
   // ◀ current place ▶ (fixed width, so ◀ and ▶ stay under the pointer while stepping through).
   const navText = h("button", { title: "Zur ausgewählten Stelle", style: "flex:1;min-width:0;background:transparent;color:#fff;border:0;display:flex;align-items:center;justify-content:center;gap:8px;overflow:hidden;white-space:nowrap", onclick: () => { if (sel.size === 1) fitPlace(viewer, [...sel][0]); } });
   const navBtn = (t, d, tip) => h("button", { title: tip, style: "flex:none;background:transparent;color:#fff;border:0;border-radius:99px;padding:4px 12px;font-size:15px", onclick: () => go(d) }, t);
-  const nav = h("div", { style: "position:absolute;left:50%;bottom:22px;transform:translateX(-50%);z-index:6;display:flex;align-items:center;gap:2px;padding:5px;border-radius:99px;background:#1d1d1f;color:#fff;box-shadow:0 6px 24px rgba(0,0,0,.3);font-size:13px;width:min(460px, calc(100% - 80px))" },
+  const nav = h("div", { style: "position:absolute;left:50%;bottom:22px;transform:translateX(-50%);z-index:6;display:flex;align-items:center;gap:2px;padding:5px;border-radius:99px;background:#1d1d1f;color:#fff;box-shadow:0 6px 24px rgba(0,0,0,.3);font-size:13px;width:min(640px, calc(100% - 80px))" },
     navBtn("◀", -1, "Vorige Stelle (←)"), navText, navBtn("▶", 1, "Nächste Stelle (→)"));
   const main = h("div", { style: "position:relative;min-height:0;min-width:0" }, vwrap, strip, nav);
   const root = h("div", { style: `height:100%;display:grid;grid-template-columns:${W}px minmax(0,1fr)` }, aside, main);
@@ -260,7 +263,7 @@ export default function mount(host, { back }) {
   };
   /** Size of the small pictures for the sidebar's width; none when it is narrow. */
   // Round 7: the sidebar is never narrower than the smallest pictures need (MIN_SIDE).
-  const thumbSize = () => ({ tw: Math.round(Math.min(220, W * 0.34)), th: Math.round(Math.min(220, W * 0.34) * 0.68) });
+  const thumbSize = () => NV === "3" ? null : ({ tw: Math.round(Math.min(220, W * 0.34)), th: Math.round(Math.min(220, W * 0.34) * 0.68) });
 
   // ---------- drawing the sidebar ----------
   function drawSide() {
@@ -302,7 +305,9 @@ export default function mount(host, { back }) {
     const rows = showHidden ? allPlaces().filter((p) => catOn(p.cat)) : gs;
     io.disconnect(); queue = [];
     const scroll = list.scrollTop; // rebuilding must not move the list
-    list.replaceChildren(...rows.map((g) => {
+    const head = NV === "3" ? [h("li", { style: `position:sticky;top:0;z-index:1;background:#faf9f7;display:grid;grid-template-columns:${COLS};gap:0 8px;padding:6px;font-size:12px;font-weight:600;color:var(--muted);border-bottom:1px solid var(--line)` },
+      h("span", {}, "Nr"), h("span", {}), h("span", {}, "Was"), h("span", {}, "Änderung"), h("span", {}, "Wo · wann"), h("span", {}))] : [];
+    list.replaceChildren(...head, ...rows.map((g) => {
       const i = gs.indexOf(g), off = i < 0;
       const box = h("div", { style: `flex:none;width:${tw}px;height:${th}px;border-radius:6px;overflow:hidden;background:#f2f1ee;border:1px solid var(--line);${ts ? "" : "display:none"}` });
       // An older picture (other size or settings) stands in, stretched, until the new one is drawn.
@@ -326,11 +331,8 @@ export default function mount(host, { back }) {
           else if (ctrl) toggleSel(g, "toggle");
           else selectOnly(i);
         },
-      }, box, h("div", { style: "min-width:0;flex:1" },
-        h("div", { style: "display:flex;align-items:center;gap:6px" }, h("b", { style: "font-variant-numeric:tabular-nums" }, off ? "–" : String(i + 1)), dot(g), h("b", {}, placeLabel(g)), tog),
-        g.detail ? h("div", { style: "font-size:13px" }, g.detail) : null,
-        h("div", { class: "muted", style: "font-size:13px" }, where(g)),
-        h("div", { class: "hint" }, describe(g))));
+      }, box, ...rowBody(g, off ? "–" : String(i + 1), tog));
+      if (NV === "3") { li.style.display = "grid"; li.style.gridTemplateColumns = COLS; li.style.alignItems = "baseline"; li.style.padding = "5px 6px"; li.style.gap = "0 8px"; li.style.borderBottom = "1px solid #f0efec"; li.style.borderRadius = "0"; }
       Object.assign(li, { _g: g, _tw: tw, _th: th, _box: box, _off: off });
       if (ts) io.observe(li);
       return li;
@@ -390,8 +392,7 @@ export default function mount(host, { back }) {
     if (sel.size > 1) { navText.replaceChildren(h("b", {}, `${sel.size} ausgewählt`), h("span", { style: "opacity:.7" }, "· H blendet sie aus · Esc hebt auf")); return; }
     const g = sel.size ? [...sel][0] : null;
     if (!g) { navText.replaceChildren(h("span", { style: "opacity:.75" }, `Keine Auswahl · ${gs.length} Stellen`)); return; }
-    navText.replaceChildren(dot(g, 10), h("b", { style: "font-variant-numeric:tabular-nums" }, String(gs.indexOf(g) + 1)), h("span", {}, "·"), h("b", {}, placeLabel(g)),
-      g.detail ? h("span", { style: "opacity:.8" }, g.detail) : null, h("span", { style: "opacity:.6" }, "· " + where(g)));
+    navText.replaceChildren(dot(g, 10), h("b", { style: "font-variant-numeric:tabular-nums" }, String(gs.indexOf(g) + 1)), h("span", {}, "·"), ...navBody(g));
   }
 
   function drawStrip() {
@@ -428,9 +429,9 @@ export default function mount(host, { back }) {
   // as a CSV that Excel opens (semicolons, UTF-8 with BOM).
   S.exportChanges = () => {
     const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-    const head = ["Nr", "Art", "Detail", "Lage (m Plan)", "Neu / weg", "Objekte", "Alter Plan", "Neuer Plan", "Versatz (mm)"];
+    const head = ["Nr", "Name", "Name gefunden über", "Art", "Detail", "Lage", "Lage (m Plan)", "Neu / weg", "Objekte", "Alter Plan", "Neuer Plan", "Versatz (mm)"];
     const n = S.names || {}, kindWord = { new: "dazugekommen", old: "weggefallen", both: "beides" };
-    const rows = groups().map((g, i) => [i + 1, placeLabel(g), g.detail || "", fmt(tLo(placeBox(g)) / 1000, 2), kindWord[kindOf(g)], describe(g), n.old || "", n.new || "", fmt(S.offset, 2)]);
+    const rows = groups().map((g, i) => [i + 1, nameOf(g) || shapeName(g), g.nm && g.nm.src ? SRC[g.nm.src] : "Form", placeLabel(g), g.detail || "", lage(g), fmt(tLo(placeBox(g)) / 1000, 2), kindWord[kindOf(g)], describe(g), n.old || "", n.new || "", fmt(S.offset, 2)]);
     const csv = "﻿" + [head, ...rows].map((r) => r.map(q).join(";")).join("\r\n");
     const a = h("a", { href: URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" })), download: `Aenderungen ${new Date().toISOString().slice(0, 10)}.csv` });
     document.body.append(a); a.click(); a.remove();
@@ -518,3 +519,69 @@ const encloses = (g, r) => g.items.every((it) => inRect(it.box, r));
 const icon = (inner, title = "") => { const s = document.createElementNS("http://www.w3.org/2000/svg", "svg"); s.setAttribute("width", "15"); s.setAttribute("height", "15"); s.setAttribute("viewBox", "0 0 24 24"); s.setAttribute("fill", "none"); s.setAttribute("stroke", "#8a8a90"); s.setAttribute("stroke-width", "2"); s.setAttribute("stroke-linecap", "round"); s.setAttribute("stroke-linejoin", "round"); s.style.flex = "none"; s.innerHTML = inner; if (title) s.setAttribute("aria-label", title); return s; };
 const FUNNEL = () => icon('<path d="M3 4h18l-7 8.5V19l-4 2v-8.5z"/>', "Filter");
 const EYE_OFF = () => icon('<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/><path d="M3 3l18 18"/>', "ausblenden");
+
+// ---------- naming ticket: three ways to show what changed ----------
+
+/** [key, name]; ?name=… picks one, the black bar bottom right switches. */
+export const NAMINGS = [["1", "Name zuerst"], ["2", "Ein Satz"], ["3", "Tabelle"]];
+const COLS = "26px 10px minmax(0,1.25fr) minmax(0,1fr) minmax(0,1.15fr) 26px";
+const nv = () => { const v = new URLSearchParams(location.search).get("name"); return NAMINGS.some(([k]) => k === v) ? v : "1"; };
+
+/** The name, or the shape in grey when none was found. */
+function nameEl(g, style = "") {
+  const n = nameOf(g);
+  return n ? h("b", { style }, n) : h("span", { style: `color:var(--muted);font-weight:600;${style}`, title: "Kein Name gefunden: die Form" }, shapeName(g));
+}
+/** How the name was found, plus notes (a bar's own text, an ambiguous leader). */
+function srcNote(g) {
+  const nm = g.nm || {};
+  const bits = [nm.src ? SRC[nm.src] : "kein Name gefunden: Form und Lage"];
+  if (nm.ambiguous) bits.push("mehrdeutig: die Linie erreicht mehrere Texte");
+  if (nm.label && g.cat !== "text") bits.push(`am Balken: »${nm.label}«`);
+  if (g.joined) bits.push("Beschriftung mit dabei");
+  return bits.join(" · ");
+}
+/** "Später · um 3 Tage", for a changed label with old and new text. */
+function changeText(g) {
+  const nm = g.nm || {};
+  if (g.cat === "text") {
+    if (nm.label && nm.old) return `${catLabel(g.cat)}: »${nm.old}« → »${nm.label}«`;
+    if (nm.old) return `${catLabel(g.cat)} · vorher »${nm.old}«`;
+    return catLabel(g.cat);
+  }
+  return [catLabel(g.cat), g.detail].filter(Boolean).join(" · ");
+}
+/** One sentence: "Gleis 1 erneuern 3 Tage später". */
+function sentence(g) {
+  const nm = g.nm || {}, d = g.detail || "", amt = d.replace(/^um /, "");
+  const what = {
+    later: `${amt} später`, earlier: `${amt} früher`, longer: `länger: ${d}`, shorter: `kürzer: ${d}`, across: `quer verschoben ${d}`,
+    text: nm.label && nm.old ? `Text am Balken geändert: »${nm.old}« → »${nm.label}«` : nm.old ? `umbenannt, vorher »${nm.old}«` : "Beschriftung geändert",
+    added: "neu", removed: "entfallen", recolour: "umgefärbt", other: d ? `geändert (${d})` : "geändert",
+  }[g.cat] || catLabel(g.cat);
+  return nameOf(g) ? [h("b", {}, nameOf(g)), " ", what] : [h("span", { style: "color:var(--muted);font-weight:600" }, shapeName(g)), " ", lage(g), " ", what];
+}
+
+function rowBody(g, num, tog) {
+  const NV = nv(), numEl = h("b", { style: "font-variant-numeric:tabular-nums" }, num);
+  if (NV === "2") return [h("div", { style: "min-width:0;flex:1" },
+    h("div", { style: "display:flex;align-items:flex-start;gap:6px" }, numEl, h("span", { style: "margin-top:4px" }, dot(g)), h("span", { style: "flex:1;min-width:0" }, ...sentence(g)), tog),
+    nameOf(g) ? h("div", { class: "muted", style: "font-size:13px" }, lage(g)) : null,
+    h("div", { class: "hint" }, srcNote(g)))];
+  if (NV === "3") {
+    const nm = g.nm || {};
+    return [numEl, dot(g), h("span", { title: srcNote(g), style: "min-width:0;overflow-wrap:anywhere" }, nameEl(g)),
+      h("span", { style: "font-size:13px;min-width:0" }, changeText(g)),
+      h("span", { class: "muted", style: "font-size:12px;min-width:0;display:flex;flex-direction:column" }, nm.km || nm.dates ? [nm.km && h("span", {}, nm.km), nm.dates && h("span", {}, nm.dates), nm.row && nm.src !== "Zeile" && h("span", {}, `in »${nm.row}«`)].filter(Boolean) : lage(g)),
+      tog];
+  }
+  return [h("div", { style: "min-width:0;flex:1" },
+    h("div", { style: "display:flex;align-items:center;gap:6px" }, numEl, dot(g), nameEl(g, "min-width:0;flex:1"), tog),
+    h("div", { style: "font-size:13px" }, changeText(g)),
+    h("div", { class: "muted", style: "font-size:13px" }, lage(g)),
+    h("div", { class: "hint" }, srcNote(g)))];
+}
+function navBody(g) {
+  if (nv() === "2") return [h("span", { style: "overflow:hidden;text-overflow:ellipsis" }, ...sentence(g))];
+  return [nameEl(g, "color:inherit;overflow:hidden;text-overflow:ellipsis"), h("span", { style: "opacity:.8" }, "· " + changeText(g)), h("span", { style: "opacity:.6;overflow:hidden;text-overflow:ellipsis" }, "· " + lage(g))];
+}

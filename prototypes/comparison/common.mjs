@@ -7,6 +7,7 @@
 import { createViewer } from "../alignment/viewer.mjs";
 import { S, on, emit, h, L, A, fmt, rectTA, layerCache, COLORS } from "../alignment/shared.mjs";
 import { renderGray } from "../alignment/engine.mjs";
+import * as N from "./naming.mjs";
 
 export { S, on, emit, h, L, A, fmt, rectTA };
 
@@ -93,6 +94,9 @@ function itemSig(it) {
 }
 const union = (bs) => bs.reduce((a, b) => ({ x0: Math.min(a.x0, b.x0), y0: Math.min(a.y0, b.y0), x1: Math.max(a.x1, b.x1), y1: Math.max(a.y1, b.y1) }));
 const fmm = (v) => `${fmt(Math.abs(v), Math.abs(v) < 10 ? 1 : 0)} mm`;
+/** An amount along time in days, across in km, when the axes were read (else mm). */
+const along = (v) => { try { return N.daysText(N.axesOf("new"), v) || fmm(v); } catch { return fmm(v); } };
+const acrossAmt = (v) => { try { return N.kmLenText(N.axesOf("new"), v) || fmm(v); } catch { return fmm(v); } };
 
 function derive(R) {
   let places = R.groups.map((g) => ({ box: g.box, items: g.items }));
@@ -115,9 +119,121 @@ function derive(R) {
     merged.push({ box: union([p.box, q.box]), items: [...p.items, ...q.items], paired: true });
   }
   places = places.filter((p) => !gone.has(p)).concat(merged);
-  for (const p of places) { classify(p); for (const it of p.items) it.place = p; }
+  for (const p of places) classify(p);
+  places = nameAll(places);
+  for (const p of places) for (const it of p.items) it.place = p;
   return places.sort((a, b) => tLo(a.box) - tLo(b.box));
 }
+
+// ---------- naming (ticket "How do we name what changed") ----------
+
+const shiftOf = (side) => (side === "new" ? S.offset : 0);
+/** A frame box (Old page mm) in a Plan's own page mm, and back. */
+const toRaw = (b, side) => { const d = shiftOf(side); return S.axis === "y" ? { ...b, y0: b.y0 - d, y1: b.y1 - d } : { ...b, x0: b.x0 - d, x1: b.x1 - d }; };
+const toFrame = (b, side) => { const d = shiftOf(side); return S.axis === "y" ? { ...b, y0: b.y0 + d, y1: b.y1 + d } : { ...b, x0: b.x0 + d, x1: b.x1 + d }; };
+const axesSafe = (side) => { try { return N.axesOf(side); } catch (e) { console.warn(e); return { km: null, time: null, counts: {} }; } };
+const ubox = (bs) => bs.reduce((a, b) => ({ x0: Math.min(a.x0, b.x0), y0: Math.min(a.y0, b.y0), x1: Math.max(a.x1, b.x1), y1: Math.max(a.y1, b.y1) }));
+export const NAMING = { ms: 0 };
+
+/**
+ * Gives each place p.nm = { name, src, shape, km, dates, row, old, ambiguous, chain }, and
+ * merges a label-only place into the place whose leader line (or nearness) named it.
+ */
+function nameAll(places) {
+  const t0 = performance.now();
+  const spanOwner = new Map(); // "side|span" -> label-only place
+  for (const p of places) {
+    if (!p.items.every((i) => i.text)) continue;
+    for (const it of p.items) {
+      const s = N.spanAt(N.planIndex(it.src), toRaw(it.box, it.src));
+      if (s) spanOwner.set(`${it.src}|${s.id}`, p);
+    }
+  }
+  const eaten = new Set();
+  for (const p of places) {
+    if (eaten.has(p)) continue;
+    nameOne(p);
+    for (const k of p.nm.labelKeys) {
+      const q = spanOwner.get(k);
+      if (!q || q === p || eaten.has(q)) continue;
+      eaten.add(q); p.items.push(...q.items); p.box = ubox([p.box, q.box]); p.joined = (p.joined || 0) + 1;
+    }
+    if (p.joined) { const nm = p.nm; classify(p); p.nm = nm; }
+  }
+  NAMING.ms = Math.round(performance.now() - t0);
+  return places.filter((p) => !eaten.has(p));
+}
+
+function nameOne(p) {
+  const sides = p.items.some((i) => i.src === "new") ? ["new", "old"] : ["old"];
+  const nm = { name: null, src: null, shape: "Text", km: null, dates: null, row: null, old: null, ambiguous: false, chain: 0, labelKeys: [] };
+  let mainRaw = null, side = sides[0];
+  for (const sd of sides) {
+    const geo = p.items.filter((i) => i.src === sd && i.o && !i.text);
+    if (!geo.length) continue;
+    const ix = N.planIndex(sd), seeds = geo.map((i) => ix.byPolys.get(i.o.polys) || i.o);
+    const core = N.splitSeeds(seeds);
+    const f = N.followLine(ix, core);
+    const leaders = new Set(f.leaders.map((o) => o.polys));
+    const main = core.filter((o) => !leaders.has(o.polys));
+    const body = main.length ? main : core;
+    if (!mainRaw) { mainRaw = N.objsBox(body); side = sd; nm.shape = N.shapeOf(body); }
+    nm.chain = Math.max(nm.chain, f.chain);
+    if (f.hits.length) {
+      const line = N.wholeLine(ix, f.hits[0].span);
+      nm.name = line.text; nm.src = "Linie"; side = sd; mainRaw = N.objsBox(body); nm.shape = N.shapeOf(body);
+      nm.ambiguous = f.hits.some((h) => !line.spans.includes(h.span));
+      for (const s of line.spans) nm.labelKeys.push(`${sd}|${s.id}`);
+      break;
+    }
+    const b = N.besideText(ix, body);
+    if (b) { const line = N.wholeLine(ix, b); nm.name = line.text; nm.src = "daneben"; side = sd; for (const s of line.spans) nm.labelKeys.push(`${sd}|${s.id}`); break; }
+  }
+  if (!mainRaw) {
+    // a changed label: its own text line is the name (the New one; the Old one as "vorher")
+    for (const sd of ["new", "old"]) {
+      const words = p.items.filter((i) => i.src === sd && i.text);
+      if (!words.length) continue;
+      const ix = N.planIndex(sd), s = N.spanAt(ix, toRaw(words[0].box, sd));
+      const line = s ? N.wholeLine(ix, s) : null, text = line ? line.text : words.map((w) => w.text.text).join(" ");
+      if (!nm.name) {
+        nm.name = text; nm.src = "Text"; side = sd; mainRaw = toRaw(ubox(words.map((w) => w.box)), sd);
+        // where it lies: the Activity the label belongs to, found back along its leader
+        const back = line ? N.followBack(ix, line.spans) : [];
+        if (back.length) { mainRaw = N.objsBox(back); nm.shape = N.shapeOf(back); nm.back = true; }
+      } else if (text !== nm.name) nm.old = text;
+    }
+    // a replaced word leaves only the new word: read the old text line at the same place
+    if (nm.src === "Text" && !nm.old && side === "new") {
+      const w = p.items.find((i) => i.text), ixo = N.planIndex("old"), so = w && N.spanAt(ixo, toRaw(w.box, "old"));
+      const t = so && N.wholeLine(ixo, so).text;
+      if (t && t !== nm.name) nm.old = t;
+    }
+  }
+  if (mainRaw) {
+    const ax = axesSafe(side), t = S.axis === "y";
+    const a0 = t ? mainRaw.x0 : mainRaw.y0, a1 = t ? mainRaw.x1 : mainRaw.y1, t0 = t ? mainRaw.y0 : mainRaw.x0, t1 = t ? mainRaw.y1 : mainRaw.x1;
+    nm.km = N.kmText(ax, a0, a1);
+    nm.dates = N.dateText(ax, t0, t1);
+    if (!ax.km) nm.row = N.rowText(side, (a0 + a1) / 2);
+    // Bar chart: the row is the process; a text by the bar ("20 AT", "Nachtrag") is only a note.
+    if (nm.row && nm.src !== "Linie") { if (nm.name && nm.name !== nm.row) nm.label = nm.name; nm.name = nm.row; nm.src = "Zeile"; }
+  }
+  p.nm = nm;
+}
+
+/** The name of a place, or null when none was found. */
+export const nameOf = (g) => (g.nm && g.nm.name) || null;
+export const shapeName = (g) => (g.nm ? g.nm.shape : "");
+/** Where it lies, in the Plan's own terms: "km 12,4–15,6 · 03.06.–12.07.27" (or "in »Zeile«"). */
+export function lage(g) {
+  const nm = g.nm || {};
+  const parts = [nm.km, nm.dates, nm.row && nm.src !== "Zeile" ? `in »${nm.row}«` : null].filter(Boolean);
+  return parts.length ? parts.join(" · ") : where(g);
+}
+/** What a place is called in one line: the name, else the shape and where it lies. */
+export const title = (g) => nameOf(g) || `${shapeName(g)} ${lage(g)}`;
+export const SRC = { Linie: "Name über die Hinweislinie", daneben: "Name: Text daneben", Text: "Name: die geänderte Beschriftung", Zeile: "Name: Zeile im Kopf" };
 
 /** Sets p.cat and p.detail (German, short). */
 function classify(p) {
@@ -140,11 +256,11 @@ function classify(p) {
   const bo = union(go.map((i) => i.box)), bn = union(gn.map((i) => i.box));
   const d0 = tLo(bn) - tLo(bo), d1 = tHi(bn) - tHi(bo), dl = d1 - d0, da0 = aLo(bn) - aLo(bo), da1 = aHi(bn) - aHi(bo);
   if (Math.abs(dl) <= TOL) {
-    if (Math.abs(d0) > TOL) return set(d0 > 0 ? "later" : "earlier", `um ${fmm(d0)}`);
-    if (Math.abs(da0) > TOL || Math.abs(da1) > TOL) return set("across", `um ${fmm((da0 + da1) / 2)}`);
+    if (Math.abs(d0) > TOL) return set(d0 > 0 ? "later" : "earlier", `um ${along(d0)}`);
+    if (Math.abs(da0) > TOL || Math.abs(da1) > TOL) return set("across", `um ${acrossAmt((da0 + da1) / 2)}`);
     return set("other", "Form anders");
   }
-  const ends = [Math.abs(d0) > TOL && `Anfang ${fmm(d0)} ${d0 > 0 ? "später" : "früher"}`, Math.abs(d1) > TOL && `Ende ${fmm(d1)} ${d1 > 0 ? "später" : "früher"}`].filter(Boolean).join(", ");
+  const ends = [Math.abs(d0) > TOL && `Anfang ${along(d0)} ${d0 > 0 ? "später" : "früher"}`, Math.abs(d1) > TOL && `Ende ${along(d1)} ${d1 > 0 ? "später" : "früher"}`].filter(Boolean).join(", ");
   return set(dl > 0 ? "longer" : "shorter", ends);
 }
 
