@@ -103,6 +103,16 @@ export function activitiesOf(plan) {
       }
       if (hit) keep.add(r);
     }
+    // Naming round 5: no label near its shape, but one of its colour drawn in its run (a label
+    // set further off, without a leader): the first such one, within REACH mm of the shape.
+    if (![...keep].some((r) => (comps.get(r) || []).some((j) => objs[j].kind === "glyph")) && !cand.some((j, i) => u.f(i) === root && objs[j].kind === "glyph")) {
+      const sb = box(objs[s]), REACH = 30;
+      const far = [...comps].filter(([, list]) => list.some((j) => objs[j].kind === "glyph" && colourOf(objs[j]) === ac))
+        .map(([r, list]) => [r, Math.min(...list), list.map((j) => box(objs[j])).reduce((a, b) => ({ x0: Math.min(a.x0, b.x0), y0: Math.min(a.y0, b.y0), x1: Math.max(a.x1, b.x1), y1: Math.max(a.y1, b.y1) }))])
+        .filter(([, , b]) => Math.max(b.x0 - sb.x1, sb.x0 - b.x1, b.y0 - sb.y1, sb.y0 - b.y1) < REACH)
+        .sort((p, q) => p[1] - q[1]);
+      if (far.length) keep.add(far[0][0]);
+    }
     // Round 4 (user): a part of the Activity's colour inside its shape (a mark in a box) is its own,
     // even when it does not reach the outline.
     const shape = objs[s].polys[0] ? objs[s].polys[0].pts : [];

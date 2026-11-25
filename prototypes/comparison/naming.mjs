@@ -119,12 +119,44 @@ function wholeLine(ix, s) {
     const b = parts.reduce((a, p) => union(a, p.box), null);
     for (const [q] of spansNear(ix, (b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, Math.max(b.x1 - b.x0, b.y1 - b.y0) / 2 + h)) {
       if (parts.includes(q) || !q.text) continue;
-      const sameLine = Math.abs(q.box.y1 - s.box.y1) < h * 0.3 && (Math.abs(q.box.x0 - b.x1) < h * 1.2 || Math.abs(b.x0 - q.box.x1) < h * 1.2);
+      // Naming round 5: only pieces of the same text size (a stray hour or minute mark on the line is not part of the name)
+      const qh = Math.min(q.box.y1 - q.box.y0, q.box.x1 - q.box.x0) || 2;
+      const sameLine = Math.abs(qh - h) < h * 0.2 && Math.abs(q.box.y1 - s.box.y1) < h * 0.3 && (Math.abs(q.box.x0 - b.x1) < h * 1.2 || Math.abs(b.x0 - q.box.x1) < h * 1.2);
       if (sameLine) { parts.push(q); grow = true; }
     }
   }
   parts.sort((a, b) => a.box.x0 - b.box.x0);
   return { text: parts.map((p) => p.text).join(" "), spans: parts };
+}
+/**
+ * Naming round 5: the whole label a text line belongs to: the lines above and below it that
+ * overlap it across, touch it along (≤ 1 mm apart) and have the same text size, read top down.
+ */
+export function wholeBlock(ix, s) {
+  const first = wholeLine(ix, s), rows = [first];
+  const hOf = (b) => Math.min(b.y1 - b.y0, b.x1 - b.x0) || 2, h = hOf(s.box);
+  const bb = (r) => r.spans.reduce((a, p) => union(a, p.box), null);
+  for (let grow = true; grow && rows.length < 8;) {
+    grow = false;
+    const top = bb(rows[0]), bot = bb(rows[rows.length - 1]);
+    for (const [edge, y, above] of [[top, top.y0 - h / 2, true], [bot, bot.y1 + h / 2, false]]) {
+      for (const [q] of spansNear(ix, (edge.x0 + edge.x1) / 2, y, (edge.x1 - edge.x0) / 2 + h)) {
+        if (!q.text || rows.some((r) => r.spans.includes(q)) || Math.abs(hOf(q.box) - h) > h * 0.2 || q.col !== s.col) continue;
+        // one label is drawn in one go: its lines follow each other in the drawing order (a label
+        // of the next Activity stacked right below is drawn after that Activity's shape)
+        const seqs = rows.flatMap((r) => r.spans.flatMap((p) => p.glyphs.map((g) => g.seq)));
+        const lo = Math.min(...seqs), hi = Math.max(...seqs), q0 = q.glyphs[0].seq, q1 = q.glyphs.at(-1).seq;
+        if (q0 - hi > 4 || lo - q1 > 4) continue;
+        // the lines of one label line up: same left edge, or centred on each other
+        const ql = wholeLine(ix, q), qb = bb(ql);
+        const across = Math.abs(qb.x0 - edge.x0) < h || Math.abs((qb.x0 + qb.x1) - (edge.x0 + edge.x1)) < 2 * h;
+        const gap = above ? edge.y0 - q.box.y1 : q.box.y0 - edge.y1; // only on the side being searched
+        if (across && gap > -h * 0.3 && gap < 1) { const r = ql; if (above) rows.unshift(r); else rows.push(r); grow = true; break; }
+      }
+      if (grow) break;
+    }
+  }
+  return { text: rows.map((r) => r.text.trim()).join(" "), spans: rows.flatMap((r) => r.spans) };
 }
 
 // ---------- 1. follow the line ----------
@@ -241,7 +273,7 @@ export function followBack(ix, spans) {
 
 export function besideText(ix, seeds) {
   let best = null, bd = BESIDE;
-  for (const [x, y] of along(seeds.flatMap(edgesOf), 2)) for (const [s, d] of spansNear(ix, x, y, bd)) if (s.text && d < bd && !/^[\d.,:\s-]+$/.test(s.text)) { best = s; bd = d; }
+  for (const [x, y] of along(seeds.flatMap(edgesOf), 2)) for (const [s, d] of spansNear(ix, x, y, bd)) if (s.text && d < bd && !/^[\d.,:\s-]+$/.test(s.text) && s.text.trim().length > 2 && !/^(km\s*)?[\d.,]+\s*\+\s*\d+$|^km\s*[\d.,]+$|^\d+\s*m$/.test(s.text.trim())) { best = s; bd = d; }
   return best;
 }
 

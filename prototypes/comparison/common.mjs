@@ -232,10 +232,13 @@ function nameOne(p) {
   const nm = { name: null, src: null, shape: "Text", km: null, dates: null, row: null, old: null, ambiguous: false, chain: 0, labelKeys: [] };
   let mainRaw = null, side = sides[0];
   // Places ticket: a Place that is one Activity carries its own label; no leader to follow.
-  const ak = p.acts && (p.acts.find((k) => k.startsWith("new:")) || p.acts[0]);
-  const lab = ak && ACT.labelOf(S.plans[ak.split(":")[0]], +ak.split(":")[1]);
+  // Naming round 5: the New Activity first, but the name from whichever side has a label.
+  const aks = (p.acts || []).slice().sort((a, b) => b.startsWith("new:") - a.startsWith("new:"));
+  const labs = aks.map((k) => [k, ACT.labelOf(S.plans[k.split(":")[0]], +k.split(":")[1])]).filter(([, l]) => l);
+  const [ak, lab] = labs.find(([, l]) => l.name) || labs[0] || [];
   if (lab) { side = ak.split(":")[0]; mainRaw = N.objsBox(lab.shapeObjs); nm.shape = N.shapeOf(lab.shapeObjs); if (lab.name) { nm.name = lab.name; nm.src = "Vorgang"; } }
-  for (const sd of lab ? [] : sides) {
+  // an Activity without a label of its own may still have one at the end of a leader, or beside it
+  for (const sd of lab && lab.name ? [] : sides) {
     const geo = p.items.filter((i) => i.src === sd && i.o && !i.text);
     if (!geo.length) continue;
     const ix = N.planIndex(sd), seeds = geo.map((i) => ix.byPolys.get(i.o.polys) || i.o);
@@ -247,14 +250,14 @@ function nameOne(p) {
     if (!mainRaw) { mainRaw = N.objsBox(body); side = sd; nm.shape = N.shapeOf(body); }
     nm.chain = Math.max(nm.chain, f.chain);
     if (f.hits.length) {
-      const line = N.wholeLine(ix, f.hits[0].span);
-      nm.name = line.text; nm.src = "Linie"; side = sd; mainRaw = N.objsBox(body); nm.shape = N.shapeOf(body);
+      const line = N.wholeBlock(ix, f.hits[0].span);
+      nm.name = line.text; nm.src = "Linie"; side = sd; if (!lab) { mainRaw = N.objsBox(body); nm.shape = N.shapeOf(body); }
       nm.ambiguous = f.hits.some((h) => !line.spans.includes(h.span));
       for (const s of line.spans) nm.labelKeys.push(`${sd}|${s.id}`);
       break;
     }
     const b = timed("daneben", () => N.besideText(ix, body));
-    if (b) { const line = N.wholeLine(ix, b); nm.name = line.text; nm.src = "daneben"; side = sd; for (const s of line.spans) nm.labelKeys.push(`${sd}|${s.id}`); break; }
+    if (b) { const line = N.wholeBlock(ix, b); nm.name = line.text; nm.src = "daneben"; side = sd; for (const s of line.spans) nm.labelKeys.push(`${sd}|${s.id}`); break; }
   }
   if (!mainRaw) {
     // a changed label: its own text line is the name (the New one; the Old one as "vorher")
@@ -262,7 +265,7 @@ function nameOne(p) {
       const words = p.items.filter((i) => i.src === sd && i.text);
       if (!words.length) continue;
       const ix = N.planIndex(sd), s = N.spanAt(ix, toRaw(words[0].box, sd));
-      const line = s ? N.wholeLine(ix, s) : null, text = line ? line.text : words.map((w) => w.text.text).join(" ");
+      const line = s ? N.wholeBlock(ix, s) : null, text = line ? line.text : words.map((w) => w.text.text).join(" ");
       if (!nm.name) {
         nm.name = text; nm.src = "Text"; side = sd; mainRaw = toRaw(ubox(words.map((w) => w.box)), sd);
         // where it lies: the Activity the label belongs to, found back along its leader
@@ -273,7 +276,7 @@ function nameOne(p) {
     // a replaced word leaves only the new word: read the old text line at the same place
     if (nm.src === "Text" && !nm.old && side === "new") {
       const w = p.items.find((i) => i.text), ixo = N.planIndex("old"), so = w && N.spanAt(ixo, toRaw(w.box, "old"));
-      const t = so && N.wholeLine(ixo, so).text;
+      const t = so && N.wholeBlock(ixo, so).text;
       if (t && t !== nm.name) nm.old = t;
     }
   }
