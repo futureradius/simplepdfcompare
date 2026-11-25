@@ -49,6 +49,17 @@ A piece of work drawn in the Body, at a place over a span of time: a line, or a 
 stripe, sometimes with a **foot** at its start and end for the staging area.
 _Avoid_: bar (only one of its shapes), task
 
+**Label**
+The text that names an Activity, often over several lines, with a leader line to its
+shape or set beside it. It is the name of the Activity's Place.
+_Avoid_: caption, annotation
+
+**Axis zone**
+A part of the Plan the user marks in step 2 to say where the time axis (dates, hours),
+the location axis (km) or the row names (on a bar chart) are: Zeitachse, Wegachse,
+Vorgänge. Only read, never left out of the comparison. Optional: without it they are
+found by search.
+
 ## Alignment
 
 **Snap**
