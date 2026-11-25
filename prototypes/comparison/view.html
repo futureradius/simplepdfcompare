@@ -170,7 +170,7 @@ function mount() {
 }
 // Naming ticket: the black bar (bottom right) switches how places are named (?name=1|2|3).
 // The losing views B and C stay reachable with ?view=B / ?view=C.
-const nameKey = () => { const v = new URLSearchParams(location.search).get("name"); return NAMINGS.some(([k]) => k === v) ? v : "1"; };
+const nameKey = () => { const v = new URLSearchParams(location.search).get("name"); return NAMINGS.some(([k]) => k === v) ? v : "3"; };
 function label() { const k = nameKey(); $("sw-label").textContent = `Benennung ${k} · ${NAMINGS.find((n) => n[0] === k)[1]}`; }
 function go(d) {
   const i = NAMINGS.findIndex((n) => n[0] === nameKey()), k = NAMINGS[(i + d + NAMINGS.length) % NAMINGS.length][0];
@@ -221,14 +221,15 @@ function nameCounts() {
   for (const w of ["old", "new"]) {
     const a = NM.axesOf(w), n = a.counts;
     L.push(`${w === "old" ? "Alter" : "Neuer"} Plan:`);
-    L.push(`  km-Zahlen im Kopf: ${n.km}${a.km ? `, auf einer Geraden: ${a.km.inliers}, Abweichung (Median) ${r1(a.km.residual)} mm, ${r1(1 / Math.abs(a.km.c1))} mm pro km` : ", keine Gerade"}`);
-    L.push(`  Datumsangaben im Körper: TT.MM.JJ ${n.dmy}, KW ${n.kw}, Monat Jahr ${n.mon}${a.time ? `; passend: ${a.time.inliers} von ${a.time.of}, Abweichung (Median) ${r1(a.time.residual)} mm, ${r1(1 / Math.abs(a.time.c1))} mm pro Tag` : "; keine Zeitachse"}`);
+    L.push(`  km-Zahlen${a.zones.dist ? " in der Wegachse" : " im Kopf"}: ${n.km}${a.km ? `, auf einer Geraden: ${a.km.inliers}, Abweichung (Median) ${r1(a.km.residual)} mm, ${r1(1 / Math.abs(a.km.c1))} mm pro km` : ", keine Gerade"}`);
+    L.push(`  Achsen von Hand: Zeitachse ${a.zones.time}, Wegachse ${a.zones.dist}, Vorgänge ${a.zones.rows}`);
+    L.push(`  Datumsangaben${a.zones.time ? " in der Zeitachse" : " im Körper"}: TT.MM.JJ ${n.dmy}, KW ${n.kw}, Monat Jahr ${n.mon}${a.time ? `; passend: ${a.time.inliers} von ${a.time.of}, Abweichung (Median) ${r1(a.time.residual)} mm, ${r1(1 / Math.abs(a.time.c1))} mm pro Tag` : "; keine Zeitachse"}`);
     L.push(`  Gitterlinien quer zur Zeit: ${a.grid ? `${a.grid.lines}, Beschriftungen eingerastet: ${a.grid.snapped}` : "keine"}`);
     L.push(`  Index gebaut in ${NM.planIndex(w).ms} ms`);
   }
   L.push("");
   L.push(`Stellen mit km-Bereich: ${c((p) => p.nm && p.nm.km)} · mit Datum: ${c((p) => p.nm && p.nm.dates)} · mit Zeile: ${c((p) => p.nm && p.nm.row)}`);
-  L.push(`Benennen beim Vergleich: ${NAMING.ms} ms · diese Zählung: ${Math.round(performance.now() - t0)} ms`);
+  L.push(`Benennen beim Vergleich: ${NAMING.ms} ms (${Object.entries(NAMING.parts).map(([k, v]) => `${k} ${Math.round(v)}`).join(", ")}) · diese Zählung: ${Math.round(performance.now() - t0)} ms`);
   return L.join(String.fromCharCode(10));
 }
 $("names-open").onclick = () => { $("namespanel").hidden = false; $("names-out").textContent = "zähle…"; setTimeout(() => ($("names-out").textContent = nameCounts()), 20); };

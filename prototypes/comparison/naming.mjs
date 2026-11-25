@@ -305,27 +305,45 @@ function isoMonday(year, week) {
   return jan4.getTime() / DAY - wd + (week - 1) * 7;
 }
 
-/** Reads the km axis across and the date axis along time. Cached per Plan, axis and Body. */
+/** Axis zones the user drew on this Plan (round 2): { time: [rect], dist: [rect], rows: [rect] }. */
+export function axisZones(which) {
+  const z = { time: [], dist: [], rows: [] };
+  for (const ig of S.ignores || []) if (ig.plan === which && ig.role && z[ig.role]) z[ig.role].push(ig.rect);
+  return z;
+}
+const inRects = (rs, b) => { const x = (b.x0 + b.x1) / 2, y = (b.y0 + b.y1) / 2; return rs.some((r) => x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1); };
+
+/**
+ * Reads the km axis across and the date axis along time. Cached per Plan, axis, Body and
+ * axis zones. With a zone (round 2) only the texts inside it count, and any number there is
+ * a km ("12", "12,5", "km 12,5", "12+500"); without, km are decimal numbers in the Header
+ * and dates are read anywhere inside the Body.
+ */
 export function axesOf(which) {
-  const ix = planIndex(which), [b0, b1] = S.body[which], key = `${S.axis}|${b0.toFixed(1)}|${b1.toFixed(1)}`;
+  const zones = axisZones(which);
+  const ix = planIndex(which), [b0, b1] = S.body[which], key = `${S.axis}|${b0.toFixed(1)}|${b1.toFixed(1)}|${JSON.stringify(zones)}`;
   if (ix.axes.has(key)) return ix.axes.get(key);
   const t = tI(), lo = (b) => (t ? b.y0 : b.x0), hi = (b) => (t ? b.y1 : b.x1), aLo = (b) => (t ? b.x0 : b.y0), aHi = (b) => (t ? b.x1 : b.y1);
   const spans = [...ix.spans.values()].filter((s) => s.text);
 
-  // km across: decimal numbers in the Header ("12,0", "12.5", "12+500")
+  // km across: decimal numbers in the Header ("12,0", "12.5", "12+500"), or any in the zone
   const kmPts = [];
   for (const s of spans) {
+    let m;
+    if (zones.dist.length) {
+      if (!inRects(zones.dist, s.box) || !(m = /^(?:km\s*)?(\d{1,4})(?:([,.+])(\d{1,3}))?$/i.exec(s.text))) continue;
+      kmPts.push([(aLo(s.box) + aHi(s.box)) / 2, m[2] === "+" ? +m[1] + +m[3] / 1000 : +`${m[1]}.${m[3] || 0}`]);
+      continue;
+    }
     if ((lo(s.box) + hi(s.box)) / 2 >= b0) continue;
-    const m = /^(\d{1,3})[,.+](\d{1,3})$/.exec(s.text);
-    if (!m) continue;
-    const v = s.text.includes("+") ? +m[1] + +m[2] / 1000 : +`${m[1]}.${m[2]}`;
-    kmPts.push([(aLo(s.box) + aHi(s.box)) / 2, v]);
+    if (!(m = /^(\d{1,3})[,.+](\d{1,3})$/.exec(s.text))) continue;
+    kmPts.push([(aLo(s.box) + aHi(s.box)) / 2, s.text.includes("+") ? +m[1] + +m[2] / 1000 : +`${m[1]}.${m[2]}`]);
   }
   kmPts.sort((a, b) => a[0] - b[0]);
   const km = fitLine(kmPts, 3);
 
-  // dates along time, inside the Body band: "04.01.27", "Mo 04.01.2027", "KW 01", "Jan 2027"
-  const inBody = (s) => { const c = (lo(s.box) + hi(s.box)) / 2; return c >= b0 && c <= b1; };
+  // dates along time, inside the Body band (or the time zone): "04.01.27", "Mo 04.01.2027", "KW 01", "Jan 2027"
+  const inBody = zones.time.length ? (s) => inRects(zones.time, s.box) : (s) => { const c = (lo(s.box) + hi(s.box)) / 2; return c >= b0 && c <= b1; };
   const dmy = [], kw = [], mon = [];
   for (const s of spans) {
     if (!inBody(s)) continue;
@@ -370,7 +388,7 @@ export function axesOf(which) {
       time = { ...time, c0: a[Math.floor(a.length / 2)] };
     }
   }
-  const out = { km, time, grid, counts: { km: kmPts.length, dmy: dmy.length, kw: kw.length, mon: mon.length } };
+  const out = { km, time, grid, zones: { time: zones.time.length, dist: zones.dist.length, rows: zones.rows.length }, counts: { km: kmPts.length, dmy: dmy.length, kw: kw.length, mon: mon.length } };
   ix.axes.set(key, out);
   return out;
 }
@@ -389,23 +407,51 @@ export function kmText(ax, a0, a1) {
   if (k0 > k1) [k0, k1] = [k1, k0];
   return k1 - k0 < 0.05 ? `km ${de((k0 + k1) / 2, 1)}` : `km ${de(k0, 1)}–${de(k1, 1)}`;
 }
-/** "03.06.–12.07.27" for a time range (raw mm), or null. The end is the last day covered. */
-export function dateText(ax, t0, t1) {
+/**
+ * "03.06.–12.07.27" for a time range (raw mm), or null. The end is the last day covered.
+ * Round 2: when a start or end is not on a day boundary, with the time ("05.07. 08:00 –
+ * 06.07.27 14:00"). A boundary is anything within 0.6 mm of the Plan (line widths, outlines).
+ * point: a milestone, one date at its middle.
+ */
+export function dateText(ax, t0, t1, { point = false } = {}) {
   if (!ax.time) return null;
   let d0 = ax.time.c0 + ax.time.c1 * t0, d1 = ax.time.c0 + ax.time.c1 * t1;
   if (d0 > d1) [d0, d1] = [d1, d0];
-  if (d1 - d0 < 1.5) return `am ${fmtDate(Math.floor((d0 + d1) / 2))}`;
-  const a = Math.floor(d0 + 0.05), b = Math.max(a, Math.ceil(d1 - 0.05) - 1);
+  const mmPerDay = 1 / Math.abs(ax.time.c1);
+  const onDay = (d) => Math.abs(d - Math.round(d)) * mmPerDay < 0.6;
+  const hour = (d) => Math.round(d * 24); // hours since the epoch
+  const hm = (H) => `${dd(H % 24)}:00`;
+  if (point) { const m = (d0 + d1) / 2; return `am ${fmtDate(Math.floor(m))}`; }
+  if (!onDay(d0) || !onDay(d1)) {
+    let H0 = hour(d0), H1 = hour(d1);
+    if (onDay(d0)) H0 = Math.round(d0) * 24;
+    if (onDay(d1)) H1 = Math.round(d1) * 24;
+    if (H1 <= H0) return `am ${fmtDate(Math.floor(H0 / 24))}, ${hm(H0)}`;
+    const day0 = Math.floor(H0 / 24), day1 = Math.floor((H1 - 1) / 24), end = H1 % 24 === 0 ? "24:00" : hm(H1);
+    if (day0 === day1) return `${fmtDate(day0)}, ${hm(H0)}–${end}`;
+    const [da, ma] = dateParts(day0);
+    return `${dd(da)}.${dd(ma)}. ${hm(H0)} – ${fmtDate(day1)} ${end}`;
+  }
+  const a = Math.round(d0), b = Math.max(a, Math.round(d1) - 1);
   if (a === b) return `am ${fmtDate(a)}`;
   const [da, ma, ya] = dateParts(a), [db, mb, yb] = dateParts(b);
   return ya === yb ? `${dd(da)}.${dd(ma)}.–${dd(db)}.${dd(mb)}.${String(yb).slice(2)}` : `${fmtDate(a)}–${fmtDate(b)}`;
 }
-/** A length along time (mm) in days, or null without a time axis. */
+/** A length along time (mm) as days and hours, or null without a time axis. */
 export function daysText(ax, mm) {
   if (!ax.time) return null;
-  const v = Math.abs(mm * ax.time.c1), r = Math.round(v);
-  const s = Math.abs(v - r) < 0.15 ? String(r) : de(v, 1);
-  return `${s} ${s === "1" ? "Tag" : "Tage"}`;
+  // within 0.6 mm of whole days (line widths, outlines): whole days
+  const mmPerDay = 1 / Math.abs(ax.time.c1), v = Math.abs(mm) / mmPerDay;
+  return durText(Math.abs(v - Math.round(v)) * mmPerDay < 0.6 ? Math.round(v) : v);
+}
+/** Round 2: "8 Std.", "1 Tag 8 Std." (not "1,3 Tage"), "3 Tage", "40 Min.". */
+export function durText(days) {
+  const mins = Math.round(Math.abs(days) * 1440);
+  if (mins < 60) return `${mins} Min.`;
+  const hrs = Math.round(mins / 60), d = Math.floor(hrs / 24), r = hrs % 24;
+  if (!d) return `${r} Std.`;
+  const ds = `${d} ${d === 1 ? "Tag" : "Tage"}`;
+  return r ? `${ds} ${r} Std.` : ds;
 }
 /** A length across (mm) in km, or null without a km axis. */
 export function kmLenText(ax, mm) {
@@ -416,12 +462,12 @@ export function kmLenText(ax, mm) {
 
 /** Bar chart: the row's text in the Header across from `a` (raw mm). */
 export function rowText(which, a) {
-  const ix = planIndex(which), [b0] = S.body[which], t = tI();
+  const ix = planIndex(which), [b0] = S.body[which], t = tI(), rows = axisZones(which).rows;
   const hits = [];
   for (const s of ix.spans.values()) {
     if (!s.text || /^[\d.,:\s-]+$/.test(s.text)) continue;
     const c = t ? (s.box.y0 + s.box.y1) / 2 : (s.box.x0 + s.box.x1) / 2;
-    if (c >= b0) continue;
+    if (rows.length ? !inRects(rows, s.box) : c >= b0) continue; // round 2: the Vorgänge zone
     const lo = t ? s.box.x0 : s.box.y0, hi = t ? s.box.x1 : s.box.y1;
     if (a >= lo - 1.5 && a <= hi + 1.5) hits.push(s);
   }

@@ -13,7 +13,7 @@
 import { S, on, h, CV, CS, setCV, groups, allPlaces, describe, placeLabel, where, dot, totals, compareViewer, fitPlace, fitWhole, keys,
   baseSwitch, outlineSlider, fadeSlider, removedSwitch, xSizeSlider, check, legend, bindRedraw, placeBox, tLo, tHi, kindOf, drawThumb,
   CATS, catOn, BUILTIN, userPresets, savePresets, fullFilter, sameFilter, setFilter, RED, YELLOW, YELLOW_INK,
-  hiddenCount, setHidden, isHidden, fmt, screen, catLabel, nameOf, shapeName, lage, SRC } from "./common.mjs";
+  hiddenCount, setHidden, isHidden, fmt, screen, catLabel, nameOf, shapeName, lage, SRC, SORTS, sortBy, clearSort, amountText } from "./common.mjs";
 
 const SIDE_KEY = "compareview.side";
 const MIN_SIDE = 280; // round 7: the width at which the list shows its smallest pictures
@@ -23,7 +23,7 @@ export default function mount(host, { back }) {
   const offs = [];
   let W = Math.min(700, Math.max(MIN_SIDE, sideWidth()));
   // Naming ticket: three ways to show what changed (?name=1|2|3, the black bar bottom right).
-  const NV = NAMINGS.some(([k]) => k === new URLSearchParams(location.search).get("name")) ? new URLSearchParams(location.search).get("name") : "1";
+  const NV = NAMINGS.some(([k]) => k === new URLSearchParams(location.search).get("name")) ? new URLSearchParams(location.search).get("name") : "3";
   if (NV === "3") W = Math.max(W, 600);
 
   // ---------- sidebar ----------
@@ -170,9 +170,9 @@ export default function mount(host, { back }) {
   const vwrap = h("div", { class: "view", style: "position:absolute;inset:10px 40px 10px 10px;border:1px solid var(--line);border-radius:8px" });
   const strip = h("canvas", { title: "Übersicht: alle Stellen entlang der Zeit. Klicken springt dorthin.", style: "position:absolute;top:10px;height:calc(100% - 20px);right:8px;width:24px;cursor:pointer;border-radius:6px;background:#fff;border:1px solid var(--line)" });
   // ◀ current place ▶ (fixed width, so ◀ and ▶ stay under the pointer while stepping through).
-  const navText = h("button", { title: "Zur ausgewählten Stelle", style: "flex:1;min-width:0;background:transparent;color:#fff;border:0;display:flex;align-items:center;justify-content:center;gap:8px;overflow:hidden;white-space:nowrap", onclick: () => { if (sel.size === 1) fitPlace(viewer, [...sel][0]); } });
-  const navBtn = (t, d, tip) => h("button", { title: tip, style: "flex:none;background:transparent;color:#fff;border:0;border-radius:99px;padding:4px 12px;font-size:15px", onclick: () => go(d) }, t);
-  const nav = h("div", { style: "position:absolute;left:50%;bottom:22px;transform:translateX(-50%);z-index:6;display:flex;align-items:center;gap:2px;padding:5px;border-radius:99px;background:#1d1d1f;color:#fff;box-shadow:0 6px 24px rgba(0,0,0,.3);font-size:13px;width:min(640px, calc(100% - 80px))" },
+  const navText = h("button", { title: "Zur ausgewählten Stelle", style: "flex:1;min-width:0;background:transparent;color:inherit;border:0;display:flex;align-items:center;justify-content:center;gap:8px;overflow:hidden;white-space:nowrap", onclick: () => { if (sel.size === 1) fitPlace(viewer, [...sel][0]); } });
+  const navBtn = (t, d, tip) => h("button", { title: tip, style: "flex:none;background:transparent;color:inherit;border:0;border-radius:99px;padding:4px 12px;font-size:15px", onclick: () => go(d) }, t);
+  const nav = h("div", { style: "position:absolute;left:50%;bottom:22px;transform:translateX(-50%);z-index:6;display:flex;align-items:center;gap:2px;padding:5px;border-radius:99px;background:#fff;color:#1d1d1f;border:1px solid var(--line);box-shadow:0 4px 18px rgba(0,0,0,.14);font-size:13px;width:min(640px, calc(100% - 80px))" },
     navBtn("◀", -1, "Vorige Stelle (←)"), navText, navBtn("▶", 1, "Nächste Stelle (→)"));
   const main = h("div", { style: "position:relative;min-height:0;min-width:0" }, vwrap, strip, nav);
   const root = h("div", { style: `height:100%;display:grid;grid-template-columns:${W}px minmax(0,1fr)` }, aside, main);
@@ -305,8 +305,7 @@ export default function mount(host, { back }) {
     const rows = showHidden ? allPlaces().filter((p) => catOn(p.cat)) : gs;
     io.disconnect(); queue = [];
     const scroll = list.scrollTop; // rebuilding must not move the list
-    const head = NV === "3" ? [h("li", { style: `position:sticky;top:0;z-index:1;background:#faf9f7;display:grid;grid-template-columns:${COLS};gap:0 8px;padding:6px;font-size:12px;font-weight:600;color:var(--muted);border-bottom:1px solid var(--line)` },
-      h("span", {}, "Nr"), h("span", {}), h("span", {}, "Was"), h("span", {}, "Änderung"), h("span", {}, "Wo · wann"), h("span", {}))] : [];
+    const head = NV === "3" ? [sortHead()] : [];
     list.replaceChildren(...head, ...rows.map((g) => {
       const i = gs.indexOf(g), off = i < 0;
       const box = h("div", { style: `flex:none;width:${tw}px;height:${th}px;border-radius:6px;overflow:hidden;background:#f2f1ee;border:1px solid var(--line);${ts ? "" : "display:none"}` });
@@ -331,7 +330,7 @@ export default function mount(host, { back }) {
           else if (ctrl) toggleSel(g, "toggle");
           else selectOnly(i);
         },
-      }, box, ...rowBody(g, off ? "–" : String(i + 1), tog));
+      }, box, ...rowBody(g, String(g.no), tog));
       if (NV === "3") { li.style.display = "grid"; li.style.gridTemplateColumns = COLS; li.style.alignItems = "baseline"; li.style.padding = "5px 6px"; li.style.gap = "0 8px"; li.style.borderBottom = "1px solid #f0efec"; li.style.borderRadius = "0"; }
       Object.assign(li, { _g: g, _tw: tw, _th: th, _box: box, _off: off });
       if (ts) io.observe(li);
@@ -392,7 +391,7 @@ export default function mount(host, { back }) {
     if (sel.size > 1) { navText.replaceChildren(h("b", {}, `${sel.size} ausgewählt`), h("span", { style: "opacity:.7" }, "· H blendet sie aus · Esc hebt auf")); return; }
     const g = sel.size ? [...sel][0] : null;
     if (!g) { navText.replaceChildren(h("span", { style: "opacity:.75" }, `Keine Auswahl · ${gs.length} Stellen`)); return; }
-    navText.replaceChildren(dot(g, 10), h("b", { style: "font-variant-numeric:tabular-nums" }, String(gs.indexOf(g) + 1)), h("span", {}, "·"), ...navBody(g));
+    navText.replaceChildren(dot(g, 10), h("b", { style: "font-variant-numeric:tabular-nums" }, String(g.no)), h("span", {}, "·"), ...navBody(g));
   }
 
   function drawStrip() {
@@ -431,7 +430,7 @@ export default function mount(host, { back }) {
     const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
     const head = ["Nr", "Name", "Name gefunden über", "Art", "Detail", "Lage", "Lage (m Plan)", "Neu / weg", "Objekte", "Alter Plan", "Neuer Plan", "Versatz (mm)"];
     const n = S.names || {}, kindWord = { new: "dazugekommen", old: "weggefallen", both: "beides" };
-    const rows = groups().map((g, i) => [i + 1, nameOf(g) || shapeName(g), g.nm && g.nm.src ? SRC[g.nm.src] : "Form", placeLabel(g), g.detail || "", lage(g), fmt(tLo(placeBox(g)) / 1000, 2), kindWord[kindOf(g)], describe(g), n.old || "", n.new || "", fmt(S.offset, 2)]);
+    const rows = groups().map((g) => [g.no, nameOf(g) || shapeName(g), g.nm && g.nm.src ? SRC[g.nm.src] : "Form", placeLabel(g), g.detail || "", lage(g), fmt(tLo(placeBox(g)) / 1000, 2), kindWord[kindOf(g)], describe(g), n.old || "", n.new || "", fmt(S.offset, 2)]);
     const csv = "﻿" + [head, ...rows].map((r) => r.map(q).join(";")).join("\r\n");
     const a = h("a", { href: URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" })), download: `Aenderungen ${new Date().toISOString().slice(0, 10)}.csv` });
     document.body.append(a); a.click(); a.remove();
@@ -445,11 +444,14 @@ export default function mount(host, { back }) {
     if (sel.size === 1) setAnchor([...sel][0]);
     else anchor = Math.min(anchor, Math.max(0, gs.size - 1));
   }
-  let lastFilter = JSON.stringify(fullFilter()), cvTimer = 0;
+  let lastFilter = JSON.stringify(fullFilter()), lastSort = JSON.stringify(CV.sort || []), cvTimer = 0;
   offs.push(on((w) => {
     if (w === "cv") {
       const f = JSON.stringify(fullFilter());
       if (f !== lastFilter) { lastFilter = f; pruneSel(); drawSide(); if (!fpanel.hidden) drawFilter(); }
+      // Round 2 (naming): a new sort reorders list, ◀ ▶ and strip at once; the plan does not move.
+      const so = JSON.stringify(CV.sort || []);
+      if (so !== lastSort) { lastSort = so; pruneSel(); drawSide(); }
       viewer.update(20); drawStrip();
       clearTimeout(cvTimer); cvTimer = setTimeout(drawList, 300); // pictures follow the settings
     }
@@ -522,15 +524,19 @@ const EYE_OFF = () => icon('<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 
 
 // ---------- naming ticket: three ways to show what changed ----------
 
-/** [key, name]; ?name=… picks one, the black bar bottom right switches. */
-export const NAMINGS = [["1", "Name zuerst"], ["2", "Ein Satz"], ["3", "Tabelle"]];
-const COLS = "26px 10px minmax(0,1.25fr) minmax(0,1fr) minmax(0,1.15fr) 26px";
-const nv = () => { const v = new URLSearchParams(location.search).get("name"); return NAMINGS.some(([k]) => k === v) ? v : "1"; };
+/** [key, name]; ?name=… picks one, the black bar at the top switches. Round 2: the table won. */
+export const NAMINGS = [["3", "Tabelle"], ["1", "Name zuerst"], ["2", "Ein Satz"]];
+const COLS = "34px 10px minmax(0,1.45fr) minmax(0,.85fr) minmax(0,.95fr) minmax(0,1.15fr) 24px";
+const nv = () => { const v = new URLSearchParams(location.search).get("name"); return NAMINGS.some(([k]) => k === v) ? v : "3"; };
 
-/** The name, or the shape in grey when none was found. */
-function nameEl(g, style = "") {
+/** Round 2: names longer than this are cut with "…"; the full name shows on hover. */
+const MAX_NAME = 40;
+const cut = (s, n = MAX_NAME) => (s && s.length > n ? s.slice(0, n - 1).trimEnd() + "…" : s);
+
+/** The name (cut, full on hover), or the shape in grey when none was found. */
+function nameEl(g, style = "", max = MAX_NAME) {
   const n = nameOf(g);
-  return n ? h("b", { style }, n) : h("span", { style: `color:var(--muted);font-weight:600;${style}`, title: "Kein Name gefunden: die Form" }, shapeName(g));
+  return n ? h("b", { style, title: n.length > max ? n : null }, cut(n, max)) : h("span", { style: `color:var(--muted);font-weight:600;${style}`, title: "Kein Name gefunden: die Form" }, shapeName(g));
 }
 /** How the name was found, plus notes (a bar's own text, an ambiguous leader). */
 function srcNote(g) {
@@ -569,10 +575,14 @@ function rowBody(g, num, tog) {
     nameOf(g) ? h("div", { class: "muted", style: "font-size:13px" }, lage(g)) : null,
     h("div", { class: "hint" }, srcNote(g)))];
   if (NV === "3") {
-    const nm = g.nm || {};
-    return [numEl, dot(g), h("span", { title: srcNote(g), style: "min-width:0;overflow-wrap:anywhere" }, nameEl(g)),
-      h("span", { style: "font-size:13px;min-width:0" }, changeText(g)),
-      h("span", { class: "muted", style: "font-size:12px;min-width:0;display:flex;flex-direction:column" }, nm.km || nm.dates ? [nm.km && h("span", {}, nm.km), nm.dates && h("span", {}, nm.dates), nm.row && nm.src !== "Zeile" && h("span", {}, `in »${nm.row}«`)].filter(Boolean) : lage(g)),
+    const nm = g.nm || {}, n = nameOf(g) || "";
+    const small = (t, title = null) => (t ? h("span", { class: "hint", style: "display:block", title }, t) : null);
+    const um = amountText(g), sub = g.cat === "text" && nm.old ? `vorher »${cut(nm.old, 28)}«` : g.cat === "longer" || g.cat === "shorter" ? g.detail : null;
+    return [numEl, dot(g),
+      h("span", { title: [n.length > MAX_NAME ? n : null, srcNote(g)].filter(Boolean).join(" · "), style: "min-width:0;overflow-wrap:anywhere" }, nameEl(g)),
+      h("span", { style: "font-size:13px;min-width:0" }, catLabel(g.cat)),
+      h("span", { style: "font-size:13px;min-width:0;font-variant-numeric:tabular-nums" }, um || (sub ? null : h("span", { class: "muted" }, "–")), small(sub, nm.old)),
+      h("span", { style: "font-size:12.5px;min-width:0" }, nm.dates || h("span", { class: "muted" }, "–"), small(nm.km || (nm.row && nm.src !== "Zeile" ? `in »${cut(nm.row, 30)}«` : null))),
       tog];
   }
   return [h("div", { style: "min-width:0;flex:1" },
@@ -583,5 +593,23 @@ function rowBody(g, num, tog) {
 }
 function navBody(g) {
   if (nv() === "2") return [h("span", { style: "overflow:hidden;text-overflow:ellipsis" }, ...sentence(g))];
-  return [nameEl(g, "color:inherit;overflow:hidden;text-overflow:ellipsis"), h("span", { style: "opacity:.8" }, "· " + changeText(g)), h("span", { style: "opacity:.6;overflow:hidden;text-overflow:ellipsis" }, "· " + lage(g))];
+  return [nameEl(g, "color:inherit", 32), h("span", { style: "opacity:.8" }, "· " + changeText(g)), h("span", { style: "opacity:.6;overflow:hidden;text-overflow:ellipsis" }, "· " + lage(g))];
+}
+
+/**
+ * The table's header: click a column to sort by it (again: the other way round). The earlier
+ * sort stays inside it, as in Excel; the small number says which key comes first.
+ */
+function sortHead() {
+  const keys = CV.sort || [];
+  const col = (key, label, title) => {
+    const i = keys.findIndex((k) => k.key === key), k = keys[i];
+    const mark = k ? h("span", { style: "color:var(--accent)" }, k.dir > 0 ? " ▲" : " ▼", keys.length > 1 ? h("sup", { style: "font-size:9px" }, String(i + 1)) : null) : null;
+    return h("button", { title, style: `all:unset;cursor:pointer;white-space:nowrap;${i === 0 ? "color:#1d1d1f" : ""}`, onclick: (e) => { e.stopPropagation(); sortBy(key); } }, label, mark);
+  };
+  return h("li", { style: `position:sticky;top:0;z-index:2;background:#faf9f7;display:grid;grid-template-columns:${COLS};gap:0 8px;padding:6px;font-size:12px;font-weight:600;color:var(--muted);border-bottom:1px solid var(--line)` },
+    col("no", "Nr", "Nach Nummer (Lage entlang der Zeit)"), h("span", {}),
+    col("name", "Was", "Nach Name, A–Z"), col("cat", "Art", "Nach Art der Änderung"),
+    col("amt", "Um", "Nach Größe der Änderung, die größte zuerst"), col("when", "Wann · wo", "Nach Beginn"),
+    keys.length ? h("button", { title: "Sortierung aufheben: wieder nach Nummer", style: "all:unset;cursor:pointer;text-align:center", onclick: (e) => { e.stopPropagation(); clearSort(); } }, "×") : h("span", {}));
 }

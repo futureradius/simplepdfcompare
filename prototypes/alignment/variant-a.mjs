@@ -22,6 +22,13 @@ import {
 
 const STEPS = ["Zeitrichtung", "Alter Plan", "Neuer Plan", "Versatz"];
 const BLUE = COLORS.line, ZONE_FILL = "rgba(29,95,214,.10)";
+// Naming ticket, round 2: optional axis zones, light red. They tell the comparison where the
+// dates, the km and the names of the rows are, instead of guessing. They are only read: the
+// comparison is the same with or without them. The New Plan gets them from the Old Plan.
+export const AXES = { time: ["Zeitachse", "Datum, KW, Monat"], dist: ["Wegachse", "km"], rows: ["Vorgänge", "Namen der Zeilen (Balkenplan)"] };
+const AX_RED = "#c8372d", AX_FILL = "rgba(220,42,30,.10)";
+const ROLES = [null, "time", "dist", "rows"];
+const zoneName = (ig) => (ig.role ? AXES[ig.role][0] : ig.kind === "band" ? "Randstreifen" : "Bereich");
 
 export default function mount(stage) {
   // Per pair: how many steps are confirmed, and whether the New Plan got the Old Plan's zones.
@@ -146,6 +153,7 @@ export default function mount(stage) {
         h("li", {}, h("b", {}, "⇕"), " am Bereich: über die ganze Länge (Randspalte)"),
         h("li", {}, "Blaue Linie oben oder unten ziehen: Kopf bzw. Fuß; rastet an durchgehenden Linien ein (", h("kbd", {}, "Alt"), ": frei)"),
         h("li", {}, h("b", {}, "×"), " am Bereich: löschen")),
+      axisPicker(),
       navHint(),
       h("div", { style: "display:flex;gap:6px;flex-wrap:wrap" },
         h("button", { onclick: () => fitWhole(viewer, which) }, "Ganzer Plan"),
@@ -189,17 +197,19 @@ export default function mount(stage) {
         }
         for (const ig of boxes()) {
           const r = zoneRect(ig, which), [a0, a1] = acrossOf(r), [t0, t1] = alongOf(r);
-          fillRect(ctx, r, ZONE_FILL);
-          strokeRect(ctx, V, r, BLUE, 1.5);
+          const col = ig.role ? AX_RED : BLUE;
+          fillRect(ctx, r, ig.role ? AX_FILL : ZONE_FILL);
+          strokeRect(ctx, V, r, col, 1.5);
           handles(ctx, V, r, ig.kind === "band");
           const band = ig.kind === "band";
           tags.push({ rect: r, parts: [
-            { text: band ? `Randstreifen · ${fmt(a1 - a0, 0)} mm breit` : `Bereich · ${fmt(a1 - a0, 0)} × ${fmt(t1 - t0, 0)} mm`, bg: BLUE },
-            { text: band ? "⇕ ganze Länge ✓" : "⇕", bg: "#fff", fg: BLUE, title: band ? "Wieder nur ein Ausschnitt" : "Über die ganze Länge (Randspalte)", fn: () => toggleBand(ig, V) },
-            { text: "×", bg: "#fff", fg: BLUE, title: "Bereich löschen", fn: () => removeIgnore(ig.id) },
+            { text: band ? `${zoneName(ig)} · ${fmt(a1 - a0, 0)} mm breit` : `${zoneName(ig)} · ${fmt(a1 - a0, 0)} × ${fmt(t1 - t0, 0)} mm`, bg: col },
+            { text: ig.role ? "Art ⟳" : "als Achse ⟳", bg: "#fff", fg: col, title: "Art wechseln: Bereich → Zeitachse → Wegachse → Vorgänge → Bereich", fn: () => cycleRole(ig) },
+            { text: band ? "⇕ ganze Länge ✓" : "⇕", bg: "#fff", fg: col, title: band ? "Wieder nur ein Ausschnitt" : "Über die ganze Länge (Randspalte)", fn: () => toggleBand(ig, V) },
+            { text: "×", bg: "#fff", fg: col, title: ig.role ? "Achse löschen" : "Bereich löschen", fn: () => removeIgnore(ig.id) },
           ] });
         }
-        if (temp) { fillRect(ctx, temp, "rgba(29,95,214,.18)"); strokeRect(ctx, V, temp, BLUE, 1.5, [5, 4]); }
+        if (temp) { const c = arm ? AX_RED : BLUE; fillRect(ctx, temp, arm ? "rgba(220,42,30,.18)" : "rgba(29,95,214,.18)"); strokeRect(ctx, V, temp, c, 1.5, [5, 4]); }
         for (const g of guides) { // snap guides, amber like in simplepdfclipper
           ctx.save(); ctx.strokeStyle = COLORS.snap; ctx.lineWidth = 2 / V.s; ctx.beginPath();
           if (g.dir === "x") { ctx.moveTo(g.pos, g.lo); ctx.lineTo(g.pos, g.hi); } else { ctx.moveTo(g.lo, g.pos); ctx.lineTo(g.hi, g.pos); }
@@ -228,6 +238,7 @@ export default function mount(stage) {
       },
       hover: (pt, e, V) => {
         if (hits.some((b) => inBox(b, pt))) return "pointer";
+        if (arm) return "crosshair";
         if (hitLine(which, pt, V, 0) >= 0) return S.axis === "y" ? "ns-resize" : "ew-resize";
         for (const ig of [...boxes()].reverse()) { const c = hitBox(ig, zoneRect(ig, which), pt, 7 / V.s); if (c) return CURSOR[c]; }
         return "crosshair";
@@ -237,22 +248,23 @@ export default function mount(stage) {
         if (b) { if (b.drag) return b.drag(); b.fn(); return {}; }
         const li = hitLine(which, pt, V, 0);
         if (li >= 0) return lineDrag(which, li, 0);
-        for (const ig of [...boxes()].reverse()) { const c = hitBox(ig, zoneRect(ig, which), pt, 7 / V.s); if (c) return reshape(ig, c, pt); }
-        // A new free zone; all four edges snap.
+        if (!arm) for (const ig of [...boxes()].reverse()) { const c = hitBox(ig, zoneRect(ig, which), pt, 7 / V.s); if (c) return reshape(ig, c, pt); }
+        // A new free zone (or the armed axis); all four edges snap.
         const p0 = pt;
         temp = rectFrom(p0, p0);
         return {
           move: (p, ev, VV) => { temp = snapRect(rectFrom(p0, p), ["x0", "x1", "y0", "y1"], which, VV, ev.altKey); },
           up: (p, ev, VV) => {
             const r = temp; temp = null; guides = [];
-            if ((r.x1 - r.x0) * VV.s > 4 && (r.y1 - r.y0) * VV.s > 4) addIgnore({ plan: which, kind: "box", rect: r });
+            const role = arm; arm = null; drawArm();
+            if ((r.x1 - r.x0) * VV.s > 4 && (r.y1 - r.y0) * VV.s > 4) addIgnore(role ? { plan: which, kind: "box", rect: r, role } : { plan: which, kind: "box", rect: r });
             else viewer.redrawOverlay();
           },
         };
       },
     });
     requestAnimationFrame(() => fitWhole(viewer, which));
-    offs.push(on(() => { sync(); viewer.redrawOverlay(); }));
+    offs.push(on((w) => { sync(); viewer.redrawOverlay(); if (w === "ignores") drawArm(); }));
   }
 
   /**
@@ -301,8 +313,36 @@ export default function mount(stage) {
     const out = [], [hd, ft] = S.body.old, tail = L("old") - ft;
     if (hd > 0.5) out.push({ rect: rectTA(0, hd, 0, A("new")), label: "Kopf" });
     if (tail > 0.5) out.push({ rect: rectTA(L("new") - tail, L("new"), 0, A("new")), label: "Fuß" });
-    for (const ig of S.ignores.filter((x) => x.plan === "old")) out.push({ rect: zoneRect(ig, "new"), label: ig.kind === "band" ? "Randstreifen" : "Bereich" });
+    for (const ig of S.ignores.filter((x) => x.plan === "old")) out.push({ rect: zoneRect(ig, "new"), label: zoneName(ig) });
     return out;
+  }
+  // ---------- axis zones (naming ticket, round 2) ----------
+  let arm = null, armEl = null;
+  /** Sidebar: three buttons; pick one, then drag it on the Plan. */
+  function axisPicker() {
+    armEl = h("div", { style: "display:flex;gap:6px;flex-wrap:wrap" });
+    drawArm();
+    return h("div", { style: "display:flex;flex-direction:column;gap:6px;padding:10px;border-radius:10px;background:rgba(220,42,30,.05);border:1px solid rgba(220,42,30,.25)" },
+      h("b", {}, "Achsen ", h("span", { class: "hint", style: "font-weight:400" }, "(freiwillig)")),
+      h("p", { class: "hint", style: "margin:0" }, "Wo stehen Datum, km und die Namen der Vorgänge? Einen Knopf wählen, dann im Plan aufziehen. Dann wird dort gelesen statt geraten. Am Vergleich ändern sie nichts."),
+      armEl);
+  }
+  function drawArm() {
+    if (!armEl) return;
+    armEl.replaceChildren(...Object.entries(AXES).map(([k, [label, what]]) => {
+      const have = S.ignores.filter((ig) => ig.role === k && ig.plan === "old").length;
+      return h("button", {
+        title: `${label}: ${what}. Klicken, dann im Plan aufziehen${arm === k ? " (Esc: abbrechen)" : ""}`,
+        style: `padding:4px 10px;border-radius:99px;${arm === k ? `background:${AX_RED};color:#fff;border-color:${AX_RED}` : `color:${AX_RED};border-color:rgba(220,42,30,.45)`}`,
+        onclick: () => { arm = arm === k ? null : k; drawArm(); },
+      }, label, have ? " ✓" : "");
+    }));
+  }
+  addEventListener("keydown", (e) => { if (e.key === "Escape" && arm) { arm = null; drawArm(); } });
+  function cycleRole(ig) {
+    const next = ROLES[(ROLES.indexOf(ig.role || null) + 1) % ROLES.length];
+    if (next) ig.role = next; else delete ig.role;
+    drawArm(); emit("ignores"); recalc(true);
   }
   function toggleBand(ig, V) {
     const [a0, a1] = acrossOf(ig.rect);

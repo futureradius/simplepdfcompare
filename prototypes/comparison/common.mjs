@@ -15,7 +15,7 @@ export { S, on, emit, h, L, A, fmt, rectTA };
 
 // Round 2: x–x–x is the default for Removed, with a size slider; a filter by kind of change.
 const KEY = "compareview.settings.v2";
-const DEFAULTS = { base: "new", marks: true, outline: 6, removed: "xxx", xsize: 70, fade: 35, rings: true, filter: {} };
+const DEFAULTS = { base: "new", marks: true, outline: 6, removed: "xxx", xsize: 70, fade: 35, rings: true, filter: {}, sort: [] };
 export const CV = (() => { try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(KEY) || "{}") }; } catch { return { ...DEFAULTS }; } })();
 export function setCV(patch) {
   Object.assign(CV, patch);
@@ -81,7 +81,40 @@ export const hiddenCount = () => allPlaces().filter(isHidden).length;
 export const shownPlace = (p) => catOn(p.cat) && !isHidden(p);
 
 /** The places the filter lets through and the user did not hide (list, marks, ◀ ▶). */
-export const groups = () => allPlaces().filter(shownPlace);
+export const groups = () => sortPlaces(allPlaces().filter(shownPlace));
+
+// ---------- sorting (naming ticket, round 2): like Excel, and it sticks ----------
+// CV.sort = [{ key, dir }], the first is the main key. Clicking a column makes it the main
+// key and keeps the earlier ones as tie-breakers inside it (Excel: sort by surname, then by
+// company, and the surnames stay in order within each company). Kept per browser.
+export const SORTS = {
+  no: ["Nr", (p) => p.no, 1],
+  name: ["Was", (p) => (nameOf(p) || shapeName(p) || "").toLocaleLowerCase("de"), 1],
+  cat: ["Art", (p) => CATS.findIndex((c) => c[0] === p.cat), 1],
+  amt: ["Um", (p) => (p.amtT != null ? Math.abs(p.amtT) : p.amtA != null ? Math.abs(p.amtA) / 1e6 : null), -1],
+  when: ["Wann", (p) => tLo((p.nm && p.nm.box) || p.box), 1],
+};
+const cmpVal = (a, b) => (typeof a === "string" ? a.localeCompare(b, "de", { numeric: true }) : a - b);
+function sortPlaces(list) {
+  const keys = (CV.sort || []).filter((k) => SORTS[k.key]);
+  if (!keys.length) return list;
+  return list.slice().sort((p, q) => {
+    for (const { key, dir } of keys) {
+      const f = SORTS[key][1], a = f(p), b = f(q);
+      if (a == null || b == null) { if (a == null && b == null) continue; return a == null ? 1 : -1; } // empty always last
+      const c = cmpVal(a, b);
+      if (c) return c * dir;
+    }
+    return p.no - q.no;
+  });
+}
+/** Click on a column: it becomes the main key; clicking the main key again turns it round. */
+export function sortBy(key) {
+  const cur = CV.sort || [];
+  if (cur[0] && cur[0].key === key) setCV({ sort: [{ key, dir: -cur[0].dir }, ...cur.slice(1)] });
+  else setCV({ sort: [{ key, dir: SORTS[key][2] }, ...cur.filter((k) => k.key !== key)].slice(0, 4) });
+}
+export const clearSort = () => setCV({ sort: [] });
 
 const TOL = 0.3; // mm
 const r1 = (v) => Math.round(v * 10) / 10;
@@ -122,7 +155,9 @@ function derive(R) {
   for (const p of places) classify(p);
   places = nameAll(places);
   for (const p of places) for (const it of p.items) it.place = p;
-  return places.sort((a, b) => tLo(a.box) - tLo(b.box));
+  places.sort((a, b) => tLo(a.box) - tLo(b.box));
+  places.forEach((p, i) => (p.no = i + 1)); // a place keeps its number when sorted or filtered
+  return places;
 }
 
 // ---------- naming (ticket "How do we name what changed") ----------
@@ -133,7 +168,9 @@ const toRaw = (b, side) => { const d = shiftOf(side); return S.axis === "y" ? { 
 const toFrame = (b, side) => { const d = shiftOf(side); return S.axis === "y" ? { ...b, y0: b.y0 + d, y1: b.y1 + d } : { ...b, x0: b.x0 + d, x1: b.x1 + d }; };
 const axesSafe = (side) => { try { return N.axesOf(side); } catch (e) { console.warn(e); return { km: null, time: null, counts: {} }; } };
 const ubox = (bs) => bs.reduce((a, b) => ({ x0: Math.min(a.x0, b.x0), y0: Math.min(a.y0, b.y0), x1: Math.max(a.x1, b.x1), y1: Math.max(a.y1, b.y1) }));
-export const NAMING = { ms: 0 };
+export const NAMING = { ms: 0, parts: {} };
+/** Times a step of naming into NAMING.parts (ms), for the counts panel. */
+const timed = (k, f) => { const t = performance.now(), r = f(); NAMING.parts[k] = (NAMING.parts[k] || 0) + performance.now() - t; return r; };
 
 /**
  * Gives each place p.nm = { name, src, shape, km, dates, row, old, ambiguous, chain }, and
@@ -141,6 +178,8 @@ export const NAMING = { ms: 0 };
  */
 function nameAll(places) {
   const t0 = performance.now();
+  NAMING.parts = {};
+  timed("Index", () => { N.planIndex("old"); N.planIndex("new"); });
   const spanOwner = new Map(); // "side|span" -> label-only place
   for (const p of places) {
     if (!p.items.every((i) => i.text)) continue;
@@ -173,7 +212,7 @@ function nameOne(p) {
     if (!geo.length) continue;
     const ix = N.planIndex(sd), seeds = geo.map((i) => ix.byPolys.get(i.o.polys) || i.o);
     const core = N.splitSeeds(seeds);
-    const f = N.followLine(ix, core);
+    const f = timed("Linie", () => N.followLine(ix, core));
     const leaders = new Set(f.leaders.map((o) => o.polys));
     const main = core.filter((o) => !leaders.has(o.polys));
     const body = main.length ? main : core;
@@ -186,7 +225,7 @@ function nameOne(p) {
       for (const s of line.spans) nm.labelKeys.push(`${sd}|${s.id}`);
       break;
     }
-    const b = N.besideText(ix, body);
+    const b = timed("daneben", () => N.besideText(ix, body));
     if (b) { const line = N.wholeLine(ix, b); nm.name = line.text; nm.src = "daneben"; side = sd; for (const s of line.spans) nm.labelKeys.push(`${sd}|${s.id}`); break; }
   }
   if (!mainRaw) {
@@ -199,7 +238,7 @@ function nameOne(p) {
       if (!nm.name) {
         nm.name = text; nm.src = "Text"; side = sd; mainRaw = toRaw(ubox(words.map((w) => w.box)), sd);
         // where it lies: the Activity the label belongs to, found back along its leader
-        const back = line ? N.followBack(ix, line.spans) : [];
+        const back = line ? timed("zurück", () => N.followBack(ix, line.spans)) : [];
         if (back.length) { mainRaw = N.objsBox(back); nm.shape = N.shapeOf(back); nm.back = true; }
       } else if (text !== nm.name) nm.old = text;
     }
@@ -211,11 +250,11 @@ function nameOne(p) {
     }
   }
   if (mainRaw) {
-    const ax = axesSafe(side), t = S.axis === "y";
+    const ax = timed("Achsen", () => axesSafe(side)), t = S.axis === "y";
     const a0 = t ? mainRaw.x0 : mainRaw.y0, a1 = t ? mainRaw.x1 : mainRaw.y1, t0 = t ? mainRaw.y0 : mainRaw.x0, t1 = t ? mainRaw.y1 : mainRaw.x1;
     nm.km = N.kmText(ax, a0, a1);
-    nm.dates = N.dateText(ax, t0, t1);
-    if (!ax.km) nm.row = N.rowText(side, (a0 + a1) / 2);
+    nm.dates = N.dateText(ax, t0, t1, { point: nm.shape === "Raute" });
+    if (!ax.km) nm.row = timed("Zeile", () => N.rowText(side, (a0 + a1) / 2));
     // Bar chart: the row is the process; a text by the bar ("20 AT", "Nachtrag") is only a note.
     if (nm.row && nm.src !== "Linie") { if (nm.name && nm.name !== nm.row) nm.label = nm.name; nm.name = nm.row; nm.src = "Zeile"; }
   }
@@ -233,13 +272,19 @@ export function lage(g) {
 }
 /** What a place is called in one line: the name, else the shape and where it lies. */
 export const title = (g) => nameOf(g) || `${shapeName(g)} ${lage(g)}`;
+/** The size of the change: "3 Tage", "1 Tag 8 Std.", "500 m"; null when it has none. */
+export function amountText(g) {
+  if (g.amtT != null) return along(g.amtT);
+  if (g.amtA != null) return acrossAmt(g.amtA);
+  return null;
+}
 export const SRC = { Linie: "Name über die Hinweislinie", daneben: "Name: Text daneben", Text: "Name: die geänderte Beschriftung", Zeile: "Name: Zeile im Kopf" };
 
 /** Sets p.cat and p.detail (German, short). */
 function classify(p) {
   const o = p.items.filter((i) => i.src === "old"), n = p.items.filter((i) => i.src === "new");
   const words = (l) => l.length && l.every((i) => i.text && !i.recol);
-  const set = (cat, detail = "") => { p.cat = cat; p.detail = detail; };
+  const set = (cat, detail = "", amtT = null, amtA = null) => { p.cat = cat; p.detail = detail; p.amtT = amtT; p.amtA = amtA; };
   if (p.items.every((i) => i.recol)) return set("recolour");
   // A whole label that appears ("new") or disappears ("gone") belongs with a new or removed
   // Activity: Neu / Entfallen. "Text geändert" is an edit to a label that is in both Plans.
@@ -256,12 +301,12 @@ function classify(p) {
   const bo = union(go.map((i) => i.box)), bn = union(gn.map((i) => i.box));
   const d0 = tLo(bn) - tLo(bo), d1 = tHi(bn) - tHi(bo), dl = d1 - d0, da0 = aLo(bn) - aLo(bo), da1 = aHi(bn) - aHi(bo);
   if (Math.abs(dl) <= TOL) {
-    if (Math.abs(d0) > TOL) return set(d0 > 0 ? "later" : "earlier", `um ${along(d0)}`);
-    if (Math.abs(da0) > TOL || Math.abs(da1) > TOL) return set("across", `um ${acrossAmt((da0 + da1) / 2)}`);
+    if (Math.abs(d0) > TOL) return set(d0 > 0 ? "later" : "earlier", `um ${along(d0)}`, d0);
+    if (Math.abs(da0) > TOL || Math.abs(da1) > TOL) return set("across", `um ${acrossAmt((da0 + da1) / 2)}`, null, (da0 + da1) / 2);
     return set("other", "Form anders");
   }
   const ends = [Math.abs(d0) > TOL && `Anfang ${along(d0)} ${d0 > 0 ? "später" : "früher"}`, Math.abs(d1) > TOL && `Ende ${along(d1)} ${d1 > 0 ? "später" : "früher"}`].filter(Boolean).join(", ");
-  return set(dl > 0 ? "longer" : "shorter", ends);
+  return set(dl > 0 ? "longer" : "shorter", ends, dl);
 }
 
 // ---------- filter presets ("Vorlagen", as in simplepdfclipper) ----------
@@ -531,7 +576,7 @@ export function drawOverlay(ctx, V, { plans, selected = true, label = null, only
       if (x > V.w + 40 || y > V.h + 40 || x + w < -40 || y + hh < -40) continue;
       ctx.strokeStyle = "#1d1d1f"; ctx.lineWidth = 1.5; ctx.setLineDash([6, 4]);
       ctx.beginPath(); ctx.roundRect(x, y, Math.max(w, 12), Math.max(hh, 12), 6); ctx.stroke(); ctx.setLineDash([]);
-      const n = gs.indexOf(g) + 1;
+      const n = g.no;
       pill(ctx, x, y - 24 < 2 ? y + hh + 4 : y - 24, String(n), { bg: "#1d1d1f" }); // round 7: just the number, no "/ total"
     }
     if (CS.peek) pill(ctx, V.w / 2 - 90, 12, label || "Plan ohne Markierungen (Shift)", { bg: "#1d1d1f" });

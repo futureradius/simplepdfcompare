@@ -73,7 +73,7 @@ export function saveSetup() {
     axis: S.axis, head: o[0], footFromEnd: L("old") - o[1],
     ignores: S.ignores.filter((ig) => ig.plan !== "new").map((ig) => {
       const r = ig.rect, t = S.axis === "y" ? [r.y0, r.y1] : [r.x0, r.x1], a = S.axis === "y" ? [r.x0, r.x1] : [r.y0, r.y1];
-      return { plan: ig.plan, kind: ig.kind, a0: a[0], a1: a[1], t0: t[0] - o[0], t1: t[1] - o[0] };
+      return { plan: ig.plan, kind: ig.kind, role: ig.role, a0: a[0], a1: a[1], t0: t[0] - o[0], t1: t[1] - o[0] };
     }),
   });
 }
@@ -138,7 +138,9 @@ export function recalc(cands) {
   if (cands) staleCands = true;
   if (!S.live) return;
   cands = cands || staleCands;
-  const ig = () => [...ignoresFor("old"), ...ignoresFor("new")];
+  // Axis zones (naming ticket) are only read, never left out of the comparison: a zone in the
+  // Header would otherwise drop Activities clipped at the Body's edge (their middle lies there).
+  const ig = () => [...ignoresFor("old"), ...ignoresFor("new")].filter((z) => !z.role);
   const compare = () => {
     tCmp = setTimeout(() => {
       S.busy = "vergleiche…"; emit("busy");
@@ -233,7 +235,7 @@ export function drawBody(ctx, V, which, { color = COLORS.line, labels = true, ve
 /** Ignored areas of one Plan, hatched, in the frame. */
 export function drawIgnores(ctx, V, which, { shift = shiftOf(which) } = {}) {
   const sh = shift, len = L(which), a = A(which);
-  for (const ig of ignoresFor(which)) {
+  for (const ig of ignoresFor(which).filter((z) => !z.role)) {
     let r = ig.rect;
     if (ig.kind === "band") r = S.axis === "y" ? { ...r, y0: 0, y1: len } : { ...r, x0: 0, x1: len };
     r = S.axis === "y" ? { ...r, y0: r.y0 + sh, y1: r.y1 + sh } : { ...r, x0: r.x0 + sh, x1: r.x1 + sh };
