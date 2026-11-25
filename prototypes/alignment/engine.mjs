@@ -139,6 +139,12 @@ export function quickCompare(O, N, axis, bodyO, bodyN, offset, ignores) {
   // Comparison-view prototype: the full result, as the detection ticket decided it.
   // Geometry is Removed (Old) / Added (New); text is marked per word; a recolour is Added.
   const still = new Set(m.newUnmatched), recol = m1.newUnmatched.filter((o) => !still.has(o));
+  // Naming ticket, round 5 (found on a real pair): exports cut the same line into different
+  // pieces (one long grid line in one Plan, several short ones in the other). A line whose
+  // every piece lies on lines of the same style in the other Plan has the same ink: no change.
+  const inkO = sameInk(m.oldUnmatched, nP), inkN = sameInk(m.newUnmatched, oP);
+  m.oldUnmatched = m.oldUnmatched.filter((o) => !inkO.has(o));
+  m.newUnmatched = m.newUnmatched.filter((o) => !inkN.has(o));
   const text = textChanges(m.oldUnmatched, m.newUnmatched, oP, nP);
   const geo = (src, o, extra = {}) => ({ src, o, box: o.bbox, kind: o.kind, segs: o.kind === "stroke" ? o.coords : null, ...extra });
   const items = [
@@ -150,7 +156,76 @@ export function quickCompare(O, N, axis, bodyO, bodyN, offset, ignores) {
   // Round 4: no 300 mm tiles. They cut a long Activity from its own foot (the place's centre
   // decided the tile), so touching parts showed as two places.
   const groups = groupItems(items, { axis, cell: 5, maxLen: Infinity });
-  return { win, offset, items, groups, leftOld: m.oldUnmatched.length, leftNew: m.newUnmatched.length, inOld: oP.length, inNew: nP.length, ms: Math.round(performance.now() - t0) };
+  return { win, offset, items, groups, leftOld: m.oldUnmatched.length, leftNew: m.newUnmatched.length, sameInk: inkO.size + inkN.size, inOld: oP.length, inNew: nP.length, ms: Math.round(performance.now() - t0) };
+}
+
+/**
+ * The unmatched objects that have the same ink as `other` (all its placed objects), only cut
+ * into other pieces: a line whose every piece lies on lines of the same style (colour, dash,
+ * cap, width), an area whose inside is covered by areas of the same colour. White lines and
+ * areas count as no ink (white on white paper). Naming ticket, round 5.
+ */
+function sameInk(unmatched, other) {
+  const out = new Set(), C = 5, key = (x, y) => Math.floor(x / C) * 1e6 + Math.floor(y / C);
+  const st = (o) => `${o.style}|${o.nums ? o.nums[0].toFixed(3) : ""}`;
+  const white = (o) => (o.kind === "stroke" || o.kind === "fill") && o.style.split("|")[1] === "1.000,1.000,1.000";
+  const todo = unmatched.filter((o) => { if (white(o)) { out.add(o); return false; } return o.kind === "stroke" || o.kind === "fill"; });
+  const want = new Set(todo.map(st));
+  if (!want.size) return out;
+  // the other Plan's lines and areas of those styles, on a grid per style
+  const G = new Map();
+  const put = (s, c, v) => { let g = G.get(s); if (!g) G.set(s, (g = new Map())); (g.get(c) || g.set(c, []).get(c)).push(v); };
+  for (const o of other) {
+    if ((o.kind !== "stroke" && o.kind !== "fill") || !want.has(st(o))) continue;
+    const s = st(o), k = o.coords;
+    if (o.kind === "stroke") {
+      for (let i = 0; i + 3 < k.length; i += 4) {
+        const seg = [k[i], k[i + 1], k[i + 2], k[i + 3]], n = Math.max(1, Math.ceil(Math.hypot(seg[2] - seg[0], seg[3] - seg[1]) / (C / 2))), seen = new Set();
+        for (let j = 0; j <= n; j++) { const c = key(seg[0] + (seg[2] - seg[0]) * j / n, seg[1] + (seg[3] - seg[1]) * j / n); if (!seen.has(c)) { seen.add(c); put(s, c, seg); } }
+      }
+    } else {
+      const b = o.bbox;
+      for (let x = Math.floor(b.x0 / C); x <= Math.floor(b.x1 / C); x++) for (let y = Math.floor(b.y0 / C); y <= Math.floor(b.y1 / C); y++) put(s, x * 1e6 + y, o);
+    }
+  }
+  const onSeg = (px, py, q) => {
+    const dx = q[2] - q[0], dy = q[3] - q[1], l2 = dx * dx + dy * dy;
+    if (!l2) return Math.hypot(px - q[0], py - q[1]) < 0.06;
+    const u = ((px - q[0]) * dx + (py - q[1]) * dy) / l2;
+    return u > -0.001 && u < 1.001 && Math.hypot(px - q[0] - u * dx, py - q[1] - u * dy) < 0.06;
+  };
+  const inPoly = (px, py, k) => { // even-odd over the polygons (NaN pairs separate them)
+    let inside = false, start = 0;
+    for (let i = 0; i <= k.length; i += 2) {
+      if (i === k.length || Number.isNaN(k[i])) {
+        for (let a = start, b = i - 2; a < i; b = a, a += 2) { const ya = k[a + 1], yb = k[b + 1]; if ((ya > py) !== (yb > py) && px < ((k[b] - k[a]) * (py - ya)) / (yb - ya) + k[a]) inside = !inside; }
+        start = i + 2;
+      }
+    }
+    return inside;
+  };
+  for (const o of todo) {
+    const g = G.get(st(o));
+    if (!g) continue;
+    const k = o.coords;
+    let all = true;
+    if (o.kind === "stroke") {
+      for (let i = 0; all && i + 3 < k.length; i += 4) {
+        const n = Math.max(2, Math.ceil(Math.hypot(k[i + 2] - k[i], k[i + 3] - k[i + 1]) / 2)); // every 2 mm and both ends
+        for (let j = 0; j <= n && all; j++) { const x = k[i] + (k[i + 2] - k[i]) * j / n, y = k[i + 1] + (k[i + 3] - k[i + 1]) * j / n; all = (g.get(key(x, y)) || []).some((q) => onSeg(x, y, q)); }
+      }
+    } else {
+      // points on a grid inside the area (every 2 mm, at least 5 × 5), each inside a same-colour area
+      const b = o.bbox, nx = Math.max(5, Math.ceil((b.x1 - b.x0) / 2)), ny = Math.max(5, Math.ceil((b.y1 - b.y0) / 2));
+      for (let i = 0; i < nx && all; i++) for (let j = 0; j < ny && all; j++) {
+        const x = b.x0 + ((i + 0.5) * (b.x1 - b.x0)) / nx, y = b.y0 + ((j + 0.5) * (b.y1 - b.y0)) / ny;
+        if (!inPoly(x, y, k)) continue;
+        all = (g.get(key(x, y)) || []).some((q) => inPoly(x, y, q.coords));
+      }
+    }
+    if (all) out.add(o);
+  }
+  return out;
 }
 
 /**
