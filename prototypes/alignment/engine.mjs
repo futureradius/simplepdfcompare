@@ -6,7 +6,13 @@ import * as mupdf from "mupdf";
 import { extractObjects, K } from "../detection/extract.mjs";
 import { refineOffset, inBand, placeObjects, matchObjects, groupItems, bboxOf, textChanges } from "../detection/detect.mjs";
 
+import { groupByActivity, activitiesOf } from "../comparison/activities.mjs";
+
 export { K };
+
+/** How Differences form Places: "vorgang" one per Activity (drawing order), "naehe" everything near each other (5 mm cells, chained). Ticket "What is one Place on a real Plan…". */
+export let grouping = "vorgang";
+export function setGrouping(m) { grouping = m; }
 
 /** axis "y": time runs down (t = y, across = x); axis "x": time runs right. */
 export const T = (axis) => (axis === "y" ? 1 : 0);
@@ -17,6 +23,7 @@ export async function loadPlan(bytes, name) {
   const b = page.getBounds();
   const dl = page.toDisplayList();
   const objs = extractObjects(page);
+  objs.forEach((o, i) => { o.seq = i; }); // drawing order: one Activity is drawn in one go (activities.mjs)
   return { name, doc, page, dl, objs, pageMm: [(b[2] - b[0]) * K, (b[3] - b[1]) * K], pages: doc.countPages(), snaps: {} };
 }
 
@@ -151,12 +158,24 @@ export function quickCompare(O, N, axis, bodyO, bodyN, offset, ignores) {
     ...m.oldUnmatched.filter((o) => o.kind !== "glyph").map((o) => geo("old", o)),
     ...m.newUnmatched.filter((o) => o.kind !== "glyph").map((o) => geo("new", o)),
     ...text.map((x) => ({ src: x.kind === "Removed" ? "old" : "new", text: x, box: x.box, kind: "word" })),
-    ...recol.map((o) => (o.kind === "glyph" ? { src: "new", text: { kind: "Added", box: o.bbox, why: "recoloured" }, box: o.bbox, kind: "word", recol: true } : geo("new", o, { recol: true }))),
+    ...recol.map((o) => (o.kind === "glyph" ? { src: "new", o, text: { kind: "Added", box: o.bbox, why: "recoloured", glyphs: [o] }, box: o.bbox, kind: "word", recol: true } : geo("new", o, { recol: true }))),
   ];
   // Round 4: no 300 mm tiles. They cut a long Activity from its own foot (the place's centre
   // decided the tile), so touching parts showed as two places.
-  const groups = groupItems(items, { axis, cell: 5, maxLen: Infinity });
-  return { win, offset, items, groups, leftOld: m.oldUnmatched.length, leftNew: m.newUnmatched.length, sameInk: inkO.size + inkN.size, inOld: oP.length, inNew: nP.length, ms: Math.round(performance.now() - t0) };
+  // Places ticket: the places are formed only when something reads them (the comparison view),
+  // not while the Offset is being set: finding the Activities takes a second or two per Plan.
+  const pairs = [...m1.pairs, ...m.pairs], mode = grouping;
+  const r = { win, offset, items, pairs, leftOld: m.oldUnmatched.length, leftNew: m.newUnmatched.length, sameInk: inkO.size + inkN.size, inOld: oP.length, inNew: nP.length, ms: Math.round(performance.now() - t0), grouping: mode };
+  let groups = null;
+  Object.defineProperty(r, "groups", { enumerable: true, get() {
+    if (groups) return groups;
+    const tg = performance.now();
+    // A pair drawn without Activities in this style (the synthetic pair) keeps grouping by nearness.
+    groups = mode === "vorgang" && activitiesOf(O).acts.length + activitiesOf(N).acts.length ? groupByActivity(items, pairs, O, N) : groupItems(items, { axis, cell: 5, maxLen: Infinity });
+    r.msGroup = Math.round(performance.now() - tg);
+    return groups;
+  } });
+  return r;
 }
 
 /**

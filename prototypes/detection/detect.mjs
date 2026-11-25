@@ -133,7 +133,7 @@ export function matchObjects(oldP, newP, tol = 0.05, keyOf = (o) => o.key) {
     const [cx, cy] = cellOf(o.bbox), k = `${keyOf(o)}#${cx},${cy}`;
     (idx.get(k) || idx.set(k, []).get(k)).push(i);
   });
-  const used = new Uint8Array(newP.length), oldUnmatched = [];
+  const used = new Uint8Array(newP.length), oldUnmatched = [], pairs = [];
   const same = (a, b) => {
     if (a.length !== b.length) return false;
     for (let i = 0; i < a.length; i++) {
@@ -151,9 +151,9 @@ export function matchObjects(oldP, newP, tol = 0.05, keyOf = (o) => o.key) {
       const list = idx.get(`${keyOf(o)}#${cx + dx},${cy + dy}`);
       if (list) for (const i of list) if (!used[i] && sameNums(o.nums, newP[i].nums) && same(o.coords, newP[i].coords)) { hit = i; break; }
     }
-    if (hit >= 0) used[hit] = 1; else oldUnmatched.push(o);
+    if (hit >= 0) { used[hit] = 1; pairs.push([o, newP[hit]]); } else oldUnmatched.push(o);
   }
-  return { oldUnmatched, newUnmatched: newP.filter((_, i) => !used[i]) };
+  return { oldUnmatched, newUnmatched: newP.filter((_, i) => !used[i]), pairs };
 }
 
 /**
@@ -269,7 +269,7 @@ export function textChanges(oldUnmatched, newUnmatched, oldPlaced, newPlaced) {
   for (const a of to) {
     let b = null;
     for (const c of cellsOf(a.box)) { b = (grid.get(c) || []).find((x) => !usedNew.has(x) && intersects(a.box, x.box, 0.3)); if (b) break; }
-    if (!b) { for (const w of wordsOfSpan(a.glyphs)) if (w.glyphs.some((g) => a.left.has(g))) out.push({ kind: "Removed", box: w.box, text: w.text, why: "gone" }); continue; }
+    if (!b) { for (const w of wordsOfSpan(a.glyphs)) if (w.glyphs.some((g) => a.left.has(g))) out.push({ kind: "Removed", box: w.box, text: w.text, why: "gone", glyphs: w.glyphs }); continue; }
     usedNew.add(b);
     const wo = wordsOfSpan(a.glyphs), wn = wordsOfSpan(b.glyphs);
     // LCS over word strings
@@ -282,10 +282,10 @@ export function textChanges(oldUnmatched, newUnmatched, oldPlaced, newPlaced) {
       for (let k = 0; k < Math.max(hunkO.length, hunkN.length); k++) {
         const o = hunkO[k], n = hunkN[k];
         if (o && n) {
-          if (isShortened(o.text, n.text)) out.push({ kind: "Removed", box: o.box, text: o.text, why: "shortened" });
-          else out.push({ kind: "Added", box: n.box, text: n.text, why: "replaced" });
-        } else if (o) out.push({ kind: "Removed", box: o.box, text: o.text, why: "deleted" });
-        else out.push({ kind: "Added", box: n.box, text: n.text, why: "inserted" });
+          if (isShortened(o.text, n.text)) out.push({ kind: "Removed", box: o.box, text: o.text, why: "shortened", glyphs: o.glyphs });
+          else out.push({ kind: "Added", box: n.box, text: n.text, why: "replaced", glyphs: n.glyphs });
+        } else if (o) out.push({ kind: "Removed", box: o.box, text: o.text, why: "deleted", glyphs: o.glyphs });
+        else out.push({ kind: "Added", box: n.box, text: n.text, why: "inserted", glyphs: n.glyphs });
       }
       hunkO.length = 0; hunkN.length = 0;
     };
@@ -296,7 +296,7 @@ export function textChanges(oldUnmatched, newUnmatched, oldPlaced, newPlaced) {
     }
     flush();
   }
-  for (const b of tn) if (!usedNew.has(b)) for (const w of wordsOfSpan(b.glyphs)) if (w.glyphs.some((g) => b.left.has(g))) out.push({ kind: "Added", box: w.box, text: w.text, why: "new" });
+  for (const b of tn) if (!usedNew.has(b)) for (const w of wordsOfSpan(b.glyphs)) if (w.glyphs.some((g) => b.left.has(g))) out.push({ kind: "Added", box: w.box, text: w.text, why: "new", glyphs: w.glyphs });
   return out;
 }
 

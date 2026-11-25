@@ -91,6 +91,7 @@
   <button id="home" title="Zur Startseite, anderes Planpaar wählen">⌂ Start</button>
   <span id="loading" class="muted"></span>
   <span style="flex:1"></span>
+  <button id="grouping" title="Prototyp (Ticket Stellen): wie Unterschiede zu Stellen werden. Vorgang: ein Vorgang je Stelle, aus der Zeichenreihenfolge. Nähe: alles, was sich bis etwa 10 mm nahekommt."></button>
   <button id="names-open" title="Für echte Pläne: wie oft ein Name gefunden wurde. Nur Zahlen.">Namen: Zahlen</button>
   <button id="about-open">Über</button>
   <button id="state-open" class="hint" title="Prototyp: Zustand anzeigen">state</button>
@@ -139,7 +140,7 @@
 
 <script type="module">
 import * as E from "../alignment/engine.mjs";
-import { S, on, setPair } from "../alignment/shared.mjs";
+import { S, on, setPair, recalc } from "../alignment/shared.mjs";
 import setup from "../alignment/variant-a.mjs";
 import viewA, { NAME as nA, NAMINGS } from "./variant-a.mjs";
 import viewB, { NAME as nB } from "./variant-b.mjs";
@@ -234,6 +235,16 @@ function nameCounts() {
   return L.join(String.fromCharCode(10));
 }
 $("names-open").onclick = () => { $("namespanel").hidden = false; $("names-out").textContent = "zähle…"; setTimeout(() => ($("names-out").textContent = nameCounts()), 20); };
+// Places ticket: switch how Differences form Places (remembered for this browser).
+try { const g = localStorage.getItem("spc.grouping"); if (g) E.setGrouping(g); } catch {}
+const showGrouping = () => ($("grouping").textContent = `Stellen: ${E.grouping === "vorgang" ? "je Vorgang" : "nach Nähe"}`);
+showGrouping();
+$("grouping").onclick = () => {
+  E.setGrouping(E.grouping === "vorgang" ? "naehe" : "vorgang");
+  try { localStorage.setItem("spc.grouping", E.grouping); } catch {}
+  showGrouping();
+  if (S.result) recalc(false);
+};
 $("names-close").onclick = () => ($("namespanel").hidden = true);
 $("names-copy").onclick = () => navigator.clipboard.writeText($("names-out").textContent);
 

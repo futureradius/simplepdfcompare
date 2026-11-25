@@ -8,6 +8,7 @@ import { createViewer } from "../alignment/viewer.mjs";
 import { S, on, emit, h, L, A, fmt, rectTA, layerCache, COLORS } from "../alignment/shared.mjs";
 import { renderGray } from "../alignment/engine.mjs";
 import * as N from "./naming.mjs";
+import * as ACT from "./activities.mjs";
 
 export { S, on, emit, h, L, A, fmt, rectTA };
 
@@ -133,7 +134,7 @@ const along = (v) => { try { return N.daysText(N.axesOf("new"), v) || fmm(v); } 
 const acrossAmt = (v, at = 0) => { try { return N.kmLenText(N.axesOf("new"), v, at) || fmm(v); } catch { return fmm(v); } };
 
 function derive(R) {
-  let places = R.groups.map((g) => ({ box: g.box, items: g.items }));
+  let places = R.groups.map((g) => ({ box: g.box, items: g.items, acts: g.acts, loose: g.loose }));
   // Pair a place that only lost things with one that only gained the same things elsewhere:
   // that is one change (moved), not two.
   const only = (p, src) => p.items.every((it) => it.src === src && !it.recol);
@@ -208,7 +209,11 @@ function nameOne(p) {
   const sides = p.items.some((i) => i.src === "new") ? ["new", "old"] : ["old"];
   const nm = { name: null, src: null, shape: "Text", km: null, dates: null, row: null, old: null, ambiguous: false, chain: 0, labelKeys: [] };
   let mainRaw = null, side = sides[0];
-  for (const sd of sides) {
+  // Places ticket: a Place that is one Activity carries its own label; no leader to follow.
+  const ak = p.acts && (p.acts.find((k) => k.startsWith("new:")) || p.acts[0]);
+  const lab = ak && ACT.labelOf(S.plans[ak.split(":")[0]], +ak.split(":")[1]);
+  if (lab) { side = ak.split(":")[0]; mainRaw = N.objsBox(lab.shapeObjs); nm.shape = N.shapeOf(lab.shapeObjs); if (lab.name) { nm.name = lab.name; nm.src = "Vorgang"; } }
+  for (const sd of lab ? [] : sides) {
     const geo = p.items.filter((i) => i.src === sd && i.o && !i.text);
     if (!geo.length) continue;
     const ix = N.planIndex(sd), seeds = geo.map((i) => ix.byPolys.get(i.o.polys) || i.o);
