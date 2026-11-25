@@ -56,7 +56,8 @@ export const CATS = [
   ["text", "Text geändert", "nur Beschriftung: neu, entfallen oder anders"],
   ["added", "Neu", "nur im neuen Plan"],
   ["removed", "Entfallen", "nur im alten Plan"],
-  ["recolour", "Umgefärbt", "gleiche Form, andere Farbe"],
+  ["recolour", "Umgefärbt", "gleiche Form, andere Farbe (vielleicht auch andere Strichstärke)"],
+  ["restyle", "Strichstärke", "gleiche Form und Farbe, dickere oder dünnere Linien"],
   ["textmove", "Beschriftung verschoben", "nur ein Text an anderer Stelle, gleicher Wortlaut"],
   ["other", "Sonstiges", "Form geändert oder mehreres zugleich"],
 ];
@@ -316,7 +317,12 @@ function classify(p) {
   const o = p.items.filter((i) => i.src === "old"), n = p.items.filter((i) => i.src === "new");
   const words = (l) => l.length && l.every((i) => i.text && !i.recol);
   const set = (cat, detail = "", amtT = null, amtA = null) => { p.cat = cat; p.detail = detail; p.amtT = amtT; p.amtA = amtA; };
-  if (p.items.every((i) => i.recol)) return set("recolour");
+  if (p.items.every((i) => i.recol)) {
+    // Round 3 (places): the same line drawn thicker or thinner is a change of style too, not a move.
+    const w = p.items.map((i) => i.how && i.how.width).find((x) => x && Math.abs(x[0] - x[1]) > 0.005);
+    const wd = w ? `${w[1] > w[0] ? "dicker" : "dünner"} ${fmt(w[0], 2)} → ${fmt(w[1], 2)} mm` : "";
+    return set(p.items.some((i) => !i.how || i.how.colour) ? "recolour" : "restyle", wd);
+  }
   // A whole label that appears ("new") or disappears ("gone") belongs with a new or removed
   // Activity: Neu / Entfallen. "Text geändert" is an edit to a label that is in both Plans.
   const whys = new Set(p.items.filter((i) => i.text).map((i) => i.text.why));

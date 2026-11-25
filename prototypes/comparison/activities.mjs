@@ -143,20 +143,47 @@ export function groupByActivity(items, pairs, O, N) {
   const groups = new Map();
   keys.forEach((k, i) => { const r = u.f(i), g = groups.get(r) || groups.set(r, { items: [], acts: [] }).get(r); g.items.push(...byKey.get(k)); g.acts.push(k); });
   const out = [...groups.values(), ...looseGroups(loose)];
-  for (const g of out) g.box = g.items.map((x) => x.box).reduce(unionBox);
+  const kept = attachMarks(out);
+  for (const g of kept) g.box = g.items.map((x) => x.box).reduce(unionBox);
+  return kept;
+}
+
+/** Grid cells (c mm) of a Difference: its line pieces, a large area's box edges, else its box. */
+function itemCells(it, c) {
+  const b = it.box, big = b.x1 - b.x0 > 20 || b.y1 - b.y0 > 20;
+  const segs = it.segs || (big ? [b.x0, b.y0, b.x1, b.y0, b.x1, b.y0, b.x1, b.y1, b.x1, b.y1, b.x0, b.y1, b.x0, b.y1, b.x0, b.y0] : null);
+  return segs ? cellsOf(null, c, segs) : cellsOf({ kind: "glyph", box: b }, c);
+}
+
+/**
+ * Round 3 (user: "yes"): km markers and dimensions ("km 12,4 + 70", "100 m"), drawn in black
+ * in a separate pass, belong to the Activity they mark. A loose black group with text joins the
+ * Activity Place of the same Plan whose Differences lie within MARK mm (the one it touches most).
+ */
+const BLACK = "0.000,0.000,0.000", MARK = 3;
+function attachMarks(groups) {
+  const acts = groups.filter((g) => !g.loose), C = MARK / 2, side = (it) => (it.src === "old" ? 0 : 1e11), grid = new Map();
+  acts.forEach((g, gi) => { for (const it of g.items) for (const c of itemCells(it, C)) { const k = side(it) + c; (grid.get(k) || grid.set(k, new Set()).get(k)).add(gi); } });
+  const out = [];
+  for (const g of groups) {
+    const mark = g.loose && g.items.some((it) => it.text) && g.items.every((it) => colourOf(it.o || it.text.glyphs[0]) === BLACK);
+    if (!mark) { out.push(g); continue; }
+    const votes = new Map();
+    for (const it of g.items) for (const c of itemCells(it, C)) {
+      const x = Math.floor(c / 1e6), y = c - x * 1e6;
+      for (let dx = -2; dx <= 2; dx++) for (let dy = -2; dy <= 2; dy++) { const s = grid.get(side(it) + (x + dx) * 1e6 + y + dy); if (s) for (const gi of s) votes.set(gi, (votes.get(gi) || 0) + 1); }
+    }
+    if (!votes.size) { out.push(g); continue; }
+    const best = acts[[...votes].reduce((a, b) => (b[1] > a[1] ? b : a))[0]];
+    best.items.push(...g.items); best.marks = (best.marks || 0) + 1;
+  }
   return out;
 }
 
 /** Differences outside any Activity: one Plan, one colour, touching (1 mm cells). */
 function looseGroups(items) {
   const u = uf(items.length), layers = new Map(), layerOf = (it) => { const k = it.src + colourOf(it.o || it.text.glyphs[0]); if (!layers.has(k)) layers.set(k, layers.size); return layers.get(k); };
-  touchUnion(items.length, (i) => {
-    const it = items[i];
-    const b = it.box, big = b.x1 - b.x0 > 20 || b.y1 - b.y0 > 20; // a large area: its box's edges
-    const segs = it.segs || (big ? [b.x0, b.y0, b.x1, b.y0, b.x1, b.y0, b.x1, b.y1, b.x1, b.y1, b.x0, b.y1, b.x0, b.y1, b.x0, b.y0] : null);
-    const cs = segs ? cellsOf(null, 1, segs) : cellsOf({ kind: "glyph", box: b }, 1);
-    return cs;
-  }, u, (i) => layerOf(items[i]));
+  touchUnion(items.length, (i) => itemCells(items[i], 1), u, (i) => layerOf(items[i]));
   const by = new Map();
   items.forEach((it, i) => { const r = u.f(i); (by.get(r) || by.set(r, []).get(r)).push(it); });
   return [...by.values()].map((l) => ({ items: l, acts: [], loose: true }));

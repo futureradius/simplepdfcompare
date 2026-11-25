@@ -332,7 +332,7 @@ export default function mount(host, { back }) {
           else selectOnly(i);
         },
       }, box, ...rowBody(g, String(g.no), tog));
-      if (NV === "3") { li.style.display = "grid"; li.style.gridTemplateColumns = COLS; li.style.alignItems = "baseline"; li.style.padding = "5px 6px"; li.style.gap = "0 8px"; li.style.borderBottom = "1px solid #f0efec"; li.style.borderRadius = "0"; }
+      if (NV === "3") { li.style.display = "grid"; li.style.gridTemplateColumns = colsTemplate(); li.style.minWidth = tableMin() + "px"; li.style.alignItems = "baseline"; li.style.padding = "5px 6px"; li.style.gap = "0 8px"; li.style.borderBottom = "1px solid #f0efec"; li.style.borderRadius = "0"; }
       Object.assign(li, { _g: g, _tw: tw, _th: th, _box: box, _off: off });
       if (ts) io.observe(li);
       return li;
@@ -356,9 +356,9 @@ export default function mount(host, { back }) {
     const on = CATS.filter(([k]) => catOn(k)).length;
     // round 2 (places): a Wann / Wo range shows here too, so a hidden region is never a surprise
     const ranges = [["day", "Wann"], ["km", "Wo"]].filter(([k]) => rangeOf(k)).map(([k, w]) => `${w} ${rangeText(k)}`);
-    fbtn.replaceChildren(FUNNEL(), h("span", { style: "flex:1" }, "Filter"),
+    fbtn.replaceChildren(...[FUNNEL(), h("span", { style: "flex:1" }, "Filter"),
       ranges.length ? h("span", { style: "color:var(--accent);font-weight:600;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0" }, ranges.join(" · ")) : null,
-      h("span", { class: on === CATS.length ? "muted" : "", style: on === CATS.length ? "" : "color:var(--accent);font-weight:600" }, `${on === CATS.length ? "alle" : `${on} von ${CATS.length}`} ▾`));
+      h("span", { class: on === CATS.length ? "muted" : "", style: on === CATS.length ? "" : "color:var(--accent);font-weight:600" }, `${on === CATS.length ? "alle" : `${on} von ${CATS.length}`} ▾`)].filter(Boolean));
   }
   function drawFilter() {
     const counts = {};
@@ -449,7 +449,7 @@ export default function mount(host, { back }) {
     if (sel.size === 1) setAnchor([...sel][0]);
     else anchor = Math.min(anchor, Math.max(0, gs.size - 1));
   }
-  let lastFilter = JSON.stringify(fullFilter()), lastSort = JSON.stringify(CV.sort || []), cvTimer = 0;
+  let lastFilter = JSON.stringify(fullFilter()), lastSort = JSON.stringify(CV.sort || []), lastCols = JSON.stringify(CV.tcols || null), cvTimer = 0;
   offs.push(on((w) => {
     if (w === "cv") {
       const f = JSON.stringify(fullFilter());
@@ -457,6 +457,8 @@ export default function mount(host, { back }) {
       // Round 2 (naming): a new sort reorders list, ◀ ▶ and strip at once; the plan does not move.
       const so = JSON.stringify(CV.sort || []);
       if (so !== lastSort) { lastSort = so; pruneSel(); drawSide(); }
+      const co = JSON.stringify(CV.tcols || null); // round 3 (places): a column moved: redraw now
+      if (co !== lastCols) { lastCols = co; drawList(); }
       viewer.update(20); drawStrip();
       clearTimeout(cvTimer); cvTimer = setTimeout(drawList, 300); // pictures follow the settings
     }
@@ -531,8 +533,6 @@ const EYE_OFF = () => icon('<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 
 
 /** [key, name]; ?name=… picks one, the black bar at the top switches. Round 2: the table won. */
 export const NAMINGS = [["3", "Tabelle"], ["1", "Name zuerst"], ["2", "Ein Satz"]];
-// Round 2 (places ticket): "Wann · wo" split into Wann and Wo, each sortable and filterable.
-const COLS = "34px 10px minmax(0,1.35fr) minmax(0,.8fr) minmax(0,.85fr) minmax(0,1fr) minmax(0,.8fr) 24px";
 const nv = () => { const v = new URLSearchParams(location.search).get("name"); return NAMINGS.some(([k]) => k === v) ? v : "3"; };
 
 /** Round 2: names longer than this are cut with "…"; the full name shows on hover. */
@@ -580,18 +580,7 @@ function rowBody(g, num, tog) {
     h("div", { style: "display:flex;align-items:flex-start;gap:6px" }, numEl, h("span", { style: "margin-top:4px" }, dot(g)), h("span", { style: "flex:1;min-width:0" }, ...sentence(g)), tog),
     nameOf(g) ? h("div", { class: "muted", style: "font-size:13px" }, lage(g)) : null,
     h("div", { class: "hint" }, srcNote(g)))];
-  if (NV === "3") {
-    const nm = g.nm || {}, n = nameOf(g) || "";
-    const small = (t, title = null) => (t ? h("span", { class: "hint", style: "display:block", title }, t) : null);
-    const um = amountText(g), sub = g.cat === "text" && nm.old ? `vorher »${cut(nm.old, 28)}«` : g.cat === "longer" || g.cat === "shorter" ? g.detail : null;
-    return [numEl, dot(g),
-      h("span", { title: [n.length > MAX_NAME ? n : null, srcNote(g)].filter(Boolean).join(" · "), style: "min-width:0;overflow-wrap:anywhere" }, nameEl(g)),
-      h("span", { style: "font-size:13px;min-width:0" }, catLabel(g.cat)),
-      h("span", { style: "font-size:13px;min-width:0;font-variant-numeric:tabular-nums" }, um || (sub ? null : h("span", { class: "muted" }, "–")), small(sub, nm.old)),
-      h("span", { style: "font-size:12.5px;min-width:0" }, nm.dates || h("span", { class: "muted" }, "–")),
-      h("span", { style: "font-size:12.5px;min-width:0" }, nm.km || (nm.row && nm.src !== "Zeile" ? `in »${cut(nm.row, 30)}«` : h("span", { class: "muted" }, "–"))),
-      tog];
-  }
+  if (NV === "3") return [...colOrder().map((k) => TCOLS[k].cell(g, numEl)), tog];
   return [h("div", { style: "min-width:0;flex:1" },
     h("div", { style: "display:flex;align-items:center;gap:6px" }, numEl, dot(g), nameEl(g, "min-width:0;flex:1"), tog),
     h("div", { style: "font-size:13px" }, changeText(g)),
@@ -615,14 +604,73 @@ function sortHead() {
     const mark = i === 0 ? h("span", { style: "color:var(--accent)" }, k.dir > 0 ? " ▲" : " ▼") : null;
     return h("button", { title, style: `all:unset;cursor:pointer;white-space:nowrap;${i === 0 ? "color:#1d1d1f" : ""}`, onclick: (e) => { e.stopPropagation(); sortBy(key); } }, label, mark);
   };
-  return h("li", { style: `position:sticky;top:0;z-index:2;background:#faf9f7;display:grid;grid-template-columns:${COLS};gap:0 8px;padding:6px;font-size:12px;font-weight:600;color:var(--muted);border-bottom:1px solid var(--line)` },
-    col("no", "Nr", "Nach Nummer (Lage entlang der Zeit)"), h("span", {}),
-    col("name", "Was", "Nach Name, A–Z"), col("cat", "Art", "Nach Art der Änderung"),
-    col("amt", "Um", "Nach Größe der Änderung, die größte zuerst"),
-    h("span", { style: "display:flex;gap:4px;align-items:center" }, col("when", "Wann", "Nach Beginn"), rangeBtn("day")),
-    h("span", { style: "display:flex;gap:4px;align-items:center" }, col("where", "Wo", "Nach km, der kleinste zuerst"), rangeBtn("km")),
-    keys.length ? h("button", { title: "Sortierung aufheben: wieder nach Nummer", style: "all:unset;cursor:pointer;text-align:center", onclick: (e) => { e.stopPropagation(); clearSort(); } }, "×") : h("span", {}));
+  // Round 3 (places ticket, user): drag a column title to another place to reorder the table.
+  const order = colOrder(), cells = [];
+  let dragKey = null;
+  const mark = (el, side) => { el.style.boxShadow = side ? `inset ${side === "before" ? 3 : -3}px 0 0 var(--accent)` : ""; };
+  for (const key of order) {
+    const c = TCOLS[key];
+    const cell = h("span", { draggable: "true", title: "Ziehen, um die Spalte zu verschieben", style: "display:flex;gap:4px;align-items:center;min-width:0;cursor:grab;border-radius:3px;padding:0 2px" },
+      col(c.sort, c.label, c.title), c.range ? rangeBtn(c.range) : null);
+    cell.ondragstart = (e) => { dragKey = key; e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", key); cell.style.opacity = ".4"; };
+    cell.ondragend = () => { cell.style.opacity = ""; for (const x of cells) mark(x, null); };
+    cell.ondragover = (e) => {
+      e.preventDefault();
+      const r = cell.getBoundingClientRect(), side = e.clientX < r.left + r.width / 2 ? "before" : "after";
+      for (const x of cells) mark(x, x === cell ? side : null);
+      cell._side = side;
+    };
+    cell.ondragleave = () => mark(cell, null);
+    cell.ondrop = (e) => {
+      e.preventDefault();
+      const from = dragKey || e.dataTransfer.getData("text/plain");
+      if (!from || from === key) return;
+      const rest = order.filter((k) => k !== from), at = rest.indexOf(key) + (cell._side === "after" ? 1 : 0);
+      rest.splice(at, 0, from);
+      setCV({ tcols: rest });
+    };
+    cells.push(cell);
+  }
+  const reset = JSON.stringify(order) !== JSON.stringify(DEFAULT_ORDER)
+    ? h("button", { title: "Spalten wieder in der ursprünglichen Reihenfolge", style: "all:unset;cursor:pointer;font-size:11px;color:var(--accent)", onclick: (e) => { e.stopPropagation(); setCV({ tcols: null }); } }, "↺") : null;
+  return h("li", { style: `position:sticky;top:0;z-index:2;background:#faf9f7;display:grid;grid-template-columns:${colsTemplate()};min-width:${tableMin()}px;gap:0 8px;padding:6px;font-size:12px;font-weight:600;color:var(--muted);border-bottom:1px solid var(--line)` },
+    ...cells,
+    h("span", { style: "display:flex;gap:4px;justify-content:center" }, reset,
+      keys.length ? h("button", { title: "Sortierung aufheben: wieder nach Nummer", style: "all:unset;cursor:pointer;text-align:center", onclick: (e) => { e.stopPropagation(); clearSort(); } }, "×") : null));
 }
+
+// ---------- round 3 (places ticket): the table's columns, in an order the user can change ----------
+
+const small = (t, title = null) => (t ? h("span", { class: "hint", style: "display:block", title }, t) : null);
+const dash = () => h("span", { class: "muted" }, "–");
+/** Each column: title, sort key, range filter, width (minimum px, share of the rest), and its cell. */
+const TCOLS = {
+  no: { label: "Nr", sort: "no", title: "Nach Nummer (Lage entlang der Zeit)", min: 34, fr: 0, cell: (g, numEl) => numEl },
+  name: { label: "Was", sort: "name", title: "Nach Name, A–Z", min: 120, fr: 1.4, cell: (g) => {
+    const n = nameOf(g) || "";
+    return h("span", { title: [n.length > MAX_NAME ? n : null, srcNote(g)].filter(Boolean).join(" · "), style: "min-width:0;overflow-wrap:anywhere;display:flex;gap:6px;align-items:baseline" }, dot(g), h("span", { style: "min-width:0" }, nameEl(g)));
+  } },
+  cat: { label: "Art", sort: "cat", title: "Nach Art der Änderung", min: 70, fr: 0.8, cell: (g) => h("span", { style: "font-size:13px;min-width:0" }, catLabel(g.cat)) },
+  amt: { label: "Um", sort: "amt", title: "Nach Größe der Änderung, die größte zuerst", min: 72, fr: 0.85, cell: (g) => {
+    const nm = g.nm || {}, um = amountText(g);
+    const sub = g.cat === "text" && nm.old ? `vorher »${cut(nm.old, 28)}«` : g.cat === "longer" || g.cat === "shorter" || ((g.cat === "recolour" || g.cat === "restyle") && g.detail) ? g.detail : null;
+    return h("span", { style: "font-size:13px;min-width:0;font-variant-numeric:tabular-nums" }, um || (sub ? null : dash()), small(sub, nm.old));
+  } },
+  when: { label: "Wann", sort: "when", range: "day", title: "Nach Beginn", min: 100, fr: 1, cell: (g) => h("span", { style: "font-size:12.5px;min-width:0" }, (g.nm && g.nm.dates) || dash()) },
+  where: { label: "Wo", sort: "where", range: "km", title: "Nach km, der kleinste zuerst", min: 84, fr: 0.8, cell: (g) => {
+    const nm = g.nm || {};
+    return h("span", { style: "font-size:12.5px;min-width:0" }, nm.km || (nm.row && nm.src !== "Zeile" ? `in »${cut(nm.row, 30)}«` : dash()));
+  } },
+};
+const DEFAULT_ORDER = ["no", "name", "cat", "amt", "when", "where"];
+/** The user's column order (kept in this browser), with any unknown or missing column fixed. */
+function colOrder() {
+  const saved = Array.isArray(CV.tcols) ? CV.tcols.filter((k) => TCOLS[k]) : [];
+  return [...new Set([...saved, ...DEFAULT_ORDER])];
+}
+const colsTemplate = () => colOrder().map((k) => (TCOLS[k].fr ? `minmax(${TCOLS[k].min}px,${TCOLS[k].fr}fr)` : `${TCOLS[k].min}px`)).join(" ") + " 30px";
+/** Below this width the list scrolls sideways instead of squeezing the columns (user, round 3). */
+const tableMin = () => colOrder().reduce((s, k) => s + TCOLS[k].min, 30) + 8 * colOrder().length + 12;
 
 // ---------- round 2 (places ticket): Wann / Wo range filter, like Excel's "between" ----------
 

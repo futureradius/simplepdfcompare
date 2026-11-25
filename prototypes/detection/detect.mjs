@@ -124,8 +124,9 @@ const noColour = (style) => style.replace(/\d+\.\d{3}(?:,\d+\.\d{3})*/g, "c");
 /**
  * One-to-one match of placed Old and New objects: same key, all coordinates within tol mm.
  * keyOf: o => o.key (exact style), or o => o.altKey to match regardless of colour.
+ * numsToo: false to match regardless of line width and dashes too (places ticket, round 3).
  */
-export function matchObjects(oldP, newP, tol = 0.05, keyOf = (o) => o.key) {
+export function matchObjects(oldP, newP, tol = 0.05, keyOf = (o) => o.key, numsToo = true) {
   const CELL = 2;
   const idx = new Map();
   const cellOf = (b) => [Math.floor((b.x0 + b.x1) / 2 / CELL), Math.floor((b.y0 + b.y1) / 2 / CELL)];
@@ -149,7 +150,7 @@ export function matchObjects(oldP, newP, tol = 0.05, keyOf = (o) => o.key) {
     let hit = -1;
     for (let dx = -1; dx <= 1 && hit < 0; dx++) for (let dy = -1; dy <= 1 && hit < 0; dy++) {
       const list = idx.get(`${keyOf(o)}#${cx + dx},${cy + dy}`);
-      if (list) for (const i of list) if (!used[i] && sameNums(o.nums, newP[i].nums) && same(o.coords, newP[i].coords)) { hit = i; break; }
+      if (list) for (const i of list) if (!used[i] && (!numsToo || sameNums(o.nums, newP[i].nums)) && same(o.coords, newP[i].coords)) { hit = i; break; }
     }
     if (hit >= 0) { used[hit] = 1; pairs.push([o, newP[hit]]); } else oldUnmatched.push(o);
   }

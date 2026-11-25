@@ -143,6 +143,15 @@ export function quickCompare(O, N, axis, bodyO, bodyN, offset, ignores) {
   const nP = placeObjects(skipIgnored(N.objs, "new", ignores), { axis, shift: offset, win });
   const m1 = matchObjects(oP, nP, 0.05);
   const m = matchObjects(m1.oldUnmatched, m1.newUnmatched, 0.05, (o) => o.altKey);
+  // Places ticket, round 3 (real pair): the same line drawn thicker (often recoloured too) has
+  // not moved. Lines are matched by position alone; the New line is a change of style.
+  let u = 0;
+  const posKey = (o) => (o.kind === "stroke" ? `s|${o.coords.length}` : `x|${(o.uid ??= ++u)}`);
+  const m3 = matchObjects(m.oldUnmatched, m.newUnmatched, 0.05, posKey, false);
+  m.oldUnmatched = m3.oldUnmatched; m.newUnmatched = m3.newUnmatched;
+  const how = new Map(); // New object → what changed: { colour, width: [old, new] }
+  for (const [, b] of m.pairs) how.set(b, { colour: true });
+  for (const [a, b] of m3.pairs) how.set(b, { colour: a.style.split("|")[1] !== b.style.split("|")[1], width: [a.nums[0], b.nums[0]] });
   // Comparison-view prototype: the full result, as the detection ticket decided it.
   // Geometry is Removed (Old) / Added (New); text is marked per word; a recolour is Added.
   const still = new Set(m.newUnmatched), recol = m1.newUnmatched.filter((o) => !still.has(o));
@@ -158,13 +167,13 @@ export function quickCompare(O, N, axis, bodyO, bodyN, offset, ignores) {
     ...m.oldUnmatched.filter((o) => o.kind !== "glyph").map((o) => geo("old", o)),
     ...m.newUnmatched.filter((o) => o.kind !== "glyph").map((o) => geo("new", o)),
     ...text.map((x) => ({ src: x.kind === "Removed" ? "old" : "new", text: x, box: x.box, kind: "word" })),
-    ...recol.map((o) => (o.kind === "glyph" ? { src: "new", o, text: { kind: "Added", box: o.bbox, why: "recoloured", glyphs: [o] }, box: o.bbox, kind: "word", recol: true } : geo("new", o, { recol: true }))),
+    ...recol.map((o) => (o.kind === "glyph" ? { src: "new", o, text: { kind: "Added", box: o.bbox, why: "recoloured", glyphs: [o] }, box: o.bbox, kind: "word", recol: true, how: how.get(o) } : geo("new", o, { recol: true, how: how.get(o) }))),
   ];
   // Round 4: no 300 mm tiles. They cut a long Activity from its own foot (the place's centre
   // decided the tile), so touching parts showed as two places.
   // Places ticket: the places are formed only when something reads them (the comparison view),
   // not while the Offset is being set: finding the Activities takes a second or two per Plan.
-  const pairs = [...m1.pairs, ...m.pairs], mode = grouping;
+  const pairs = [...m1.pairs, ...m.pairs, ...m3.pairs], mode = grouping;
   const r = { win, offset, items, pairs, leftOld: m.oldUnmatched.length, leftNew: m.newUnmatched.length, sameInk: inkO.size + inkN.size, inOld: oP.length, inNew: nP.length, ms: Math.round(performance.now() - t0), grouping: mode };
   let groups = null;
   Object.defineProperty(r, "groups", { enumerable: true, get() {
