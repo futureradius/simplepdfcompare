@@ -323,7 +323,7 @@ export default function mount(stage) {
     armEl = h("div", { style: "display:flex;gap:6px;flex-wrap:wrap" });
     drawArm();
     return h("div", { style: "display:flex;flex-direction:column;gap:6px;padding:10px;border-radius:10px;background:rgba(220,42,30,.05);border:1px solid rgba(220,42,30,.25)" },
-      h("b", {}, "Achsen ", h("span", { class: "hint", style: "font-weight:400" }, "(freiwillig)")),
+      h("b", {}, "Achsen ", h("span", { class: "hint", style: "font-weight:400" }, "(optional)")),
       h("p", { class: "hint", style: "margin:0" }, "Wo stehen Datum, km und die Namen der Vorgänge? Einen Knopf wählen, dann im Plan aufziehen. Dann wird dort gelesen statt geraten. Am Vergleich ändern sie nichts."),
       armEl);
   }

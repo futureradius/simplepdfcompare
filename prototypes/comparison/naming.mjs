@@ -344,10 +344,15 @@ export function axesOf(which) {
 
   // dates along time, inside the Body band (or the time zone): "04.01.27", "Mo 04.01.2027", "KW 01", "Jan 2027"
   const inBody = zones.time.length ? (s) => inRects(zones.time, s.box) : (s) => { const c = (lo(s.box) + hi(s.box)) / 2; return c >= b0 && c <= b1; };
-  const dmy = [], kw = [], mon = [];
+  const dmy = [], kw = [], mon = [], hrs = [];
   for (const s of spans) {
     if (!inBody(s)) continue;
     let m;
+    // Round 3: hour labels ("08:00", "14 Uhr"; a bare "02" only inside a Zeitachse zone)
+    if ((m = /^(d{1,2})(?::(d{2}))?(?:s*Uhr)?$/i.exec(s.text)) && (m[2] || /Uhr/i.test(s.text) || zones.time.length) && +m[1] <= 24 && (!m[2] || +m[2] < 60)) {
+      hrs.push({ lo: lo(s.box), hi: hi(s.box), h: +m[1] + (m[2] ? +m[2] / 60 : 0) });
+      continue;
+    }
     if ((m = /^(?:[A-Za-z]{2}\.?\s+)?(\d{1,2})\.(\d{1,2})\.(\d{2}|\d{4})$/.exec(s.text))) dmy.push([lo(s.box), dayNo(year4(+m[3]), +m[2] - 1, +m[1])]);
     else if ((m = /^KW\s*(\d{1,2})(?:\s*[/.]\s*(\d{2}|\d{4}))?$/i.exec(s.text))) kw.push([lo(s.box), +m[1], m[2] ? year4(+m[2]) : null]);
     else if ((m = /^([A-Za-zä]{3})[a-zä]*\.?\s+(\d{4})$/i.exec(s.text))) { const i = MONTHS.indexOf(m[1].toLowerCase().replace("mrz", "mär")); if (i >= 0) mon.push([lo(s.box), dayNo(+m[2], i, 1)]); }
@@ -368,7 +373,7 @@ export function axesOf(which) {
   for (const [p, v] of [...dmy, ...kwDays]) if (!first.has(v) || first.get(v) > p) first.set(v, p);
   const datePts = [...first].map(([v, p]) => [p, v]).sort(byPos);
   let time = fitLine(datePts, 6);
-  let grid = null;
+  let grid = null, hours = hrs.length ? { labels: hrs.length, agree: null, shift: null } : null;
   if (time) {
     // grid lines across time in the Body; each label snaps to the one at or before it
     const per = 1 / Math.abs(time.c1), pos = [];
@@ -387,8 +392,34 @@ export function axesOf(which) {
       grid = { lines: pos.length, snapped: snapped.filter(([p], i) => p !== time.pts[i][0]).length };
       time = { ...time, c0: a[Math.floor(a.length / 2)] };
     }
+    // Round 3: hour labels set the time of day; the dates only say which day it is. Each
+    // label stands for a grid line: one running through the label (a centred label), else the
+    // one at or before its start (a label after its tick), else its middle.
+    if (hrs.length >= 3) {
+      const near = (x) => { let l = 0, r = pos.length - 1; while (l < r) { const m = (l + r) >> 1; if (pos[m] < x) l = m + 1; else r = m; } return l; };
+      const hourMm = per / 24, c1 = time.c1;
+      const anchor = (hl) => {
+        if (pos.length) {
+          const i = near(hl.lo);
+          if (pos[i] !== undefined && pos[i] >= hl.lo - 0.05 && pos[i] <= hl.hi + 0.05) return pos[i];
+          const j = pos[i] !== undefined && pos[i] <= hl.lo + 0.05 ? i : i - 1;
+          if (j >= 0 && hl.lo - pos[j] < hourMm) return pos[j];
+        }
+        return (hl.lo + hl.hi) / 2;
+      };
+      // where the day starts, as a fraction of a day: the same for all labels if they are hours
+      let sx = 0, sy = 0;
+      for (const hl of hrs) { const f = hl.h / 24 - c1 * anchor(hl); sx += Math.cos(2 * Math.PI * f); sy += Math.sin(2 * Math.PI * f); }
+      const R = Math.hypot(sx, sy) / hrs.length, frac = ((Math.atan2(sy, sx) / (2 * Math.PI)) % 1 + 1) % 1;
+      if (R > 0.95) {
+        // the date labels sit at or after the start of their day, so their c0 is at most a day early
+        const n = Math.ceil(time.c0 - frac - 0.1);
+        hours = { labels: hrs.length, agree: R, shift: (n + frac - time.c0) * 24 };
+        time = { ...time, c0: n + frac };
+      } else hours = { labels: hrs.length, agree: R, shift: null };
+    }
   }
-  const out = { km, time, grid, zones: { time: zones.time.length, dist: zones.dist.length, rows: zones.rows.length }, counts: { km: kmPts.length, dmy: dmy.length, kw: kw.length, mon: mon.length } };
+  const out = { km, time, grid, hours, zones: { time: zones.time.length, dist: zones.dist.length, rows: zones.rows.length }, counts: { km: kmPts.length, dmy: dmy.length, kw: kw.length, mon: mon.length } };
   ix.axes.set(key, out);
   return out;
 }
