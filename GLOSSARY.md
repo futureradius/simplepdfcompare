@@ -94,15 +94,18 @@ _Avoid_: overlap, kept
 ## Comparison
 
 **Place**
-Differences that lie together (touching or a few mm apart) and are looked at as one;
-"Stelle" in the user interface. A Place that only lost drawing and one that only gained
-the same drawing elsewhere are one Place: something moved.
+The Differences of one Activity, looked at as one: its shape, leader and label (and the
+km markers on it), in both Plans; "Stelle" in the user interface. Outside any Activity, a
+note or a line drawn in one colour is a Place of its own. A Place that only lost drawing
+and one that only gained the same drawing elsewhere are one Place: something moved.
 _Avoid_: issue, item, hit
 
 **Kind of change**
 What happened at a Place, read from its drawing: later, earlier, longer, shorter, moved
-across, text changed, new, gone, recoloured, or other (Später, Früher, Verlängert,
-Verkürzt, Quer verschoben, Text geändert, Neu, Entfallen, Umgefärbt, Sonstiges).
+across, text changed, label moved, new, gone, recoloured, thicker or thinner lines, or
+other (Später, Früher, Verlängert, Verkürzt, Quer verschoben, Text geändert, Beschriftung
+verschoben, Neu, Entfallen, Umgefärbt, Strichstärke, Sonstiges). Timing is read from the
+Activity's shape, never from its label or leader.
 _Avoid_: category, type
 
 **Hidden Place**
