@@ -103,12 +103,39 @@ export function activitiesOf(plan) {
       }
       if (hit) keep.add(r);
     }
-    const a = { id: acts.length, start: s, seqs: [], colour: ac };
-    cand.forEach((j, i) => { if (keep.has(u.f(i))) { act[j] = a.id; a.seqs.push(j); } });
+    // Round 4 (user): a part of the Activity's colour inside its shape (a mark in a box) is its own,
+    // even when it does not reach the outline.
+    const shape = objs[s].polys[0] ? objs[s].polys[0].pts : [];
+    const inside = (o) => { if (colourOf(o) !== ac) return false; const b = box(o); return inPoly((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, shape); };
+    const a = { id: acts.length, start: s, seqs: [], colour: ac, labelFrom: Infinity };
+    cand.forEach((j, i) => { if (keep.has(u.f(i)) || inside(objs[j])) { act[j] = a.id; a.seqs.push(j); } });
+    // Round 4: where its label begins in the drawing order: the first white label background
+    // followed by text. The shape comes before (underlay, hatch, outline, symbols, links); the
+    // label, its leader and the tags after it come after.
+    for (const j of a.seqs) if (objs[j].kind === "fill" && colourOf(objs[j]) === W && j > s && [1, 2].some((d) => objs[j + d] && objs[j + d].kind === "glyph")) { a.labelFrom = j; break; }
     acts.push(a);
   });
   plan.acts = { act, acts, ms: Math.round(performance.now() - t0) };
   return plan.acts;
+}
+
+/** Even-odd test of a point against a closed polygon (flat x, y list). */
+function inPoly(px, py, k) {
+  let inside = false;
+  for (let a = 0, b = k.length - 2; a < k.length; b = a, a += 2) {
+    const ya = k[a + 1], yb = k[b + 1];
+    if ((ya > py) !== (yb > py) && px < ((k[b] - k[a]) * (py - ya)) / (yb - ya) + k[a]) inside = !inside;
+  }
+  return inside;
+}
+
+/** Round 4: is an object (by drawing order) part of an Activity's "shape", its "label" (text, background, leader, tags), or of no Activity (null)? */
+export function partOf(plan, seq) {
+  const A = plan.acts;
+  if (!A || seq == null) return null;
+  const id = A.act[seq];
+  if (id < 0) return null;
+  return seq >= A.acts[id].labelFrom ? "label" : "shape";
 }
 
 const seqOf = (it) => (it.o ? it.o.seq : it.text?.glyphs?.[0]?.seq);

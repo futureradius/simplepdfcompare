@@ -82,6 +82,8 @@ export const isHidden = (p) => hiddenKeys().has(placeKey(p));
 export function setHidden(p, on) { const k = hiddenKeys(); for (const x of [].concat(p)) { if (on) k.add(placeKey(x)); else k.delete(placeKey(x)); } emit("hidden"); }
 export const hiddenCount = () => allPlaces().filter(isHidden).length;
 /** Is a place on the plan and in the list: let through by the filter and not hidden. */
+/** Round 4 (places): a recoloured or thicker part shows only while its kind is on in the filter, also inside a Place of another kind. */
+export const styleShown = (it) => !it.recol || catOn(it.how && it.how.colour === false ? "restyle" : "recolour");
 export const shownPlace = (p) => catOn(p.cat) && !isHidden(p) && inRange(p);
 /**
  * Wann / Wo ranges (user, 2026-11-25: "filter for a region of interest"): part of the filter,
@@ -314,7 +316,11 @@ export const SRC = { Linie: "Name über die Hinweislinie", daneben: "Name: Text 
 
 /** Sets p.cat and p.detail (German, short). */
 function classify(p) {
-  const o = p.items.filter((i) => i.src === "old"), n = p.items.filter((i) => i.src === "new");
+  // Round 4 (places): a change of style (recoloured, thicker) does not decide the kind when
+  // something else changed too; its marks follow their own filter (Umgefärbt, Strichstärke).
+  const core = p.items.filter((i) => !i.recol);
+  p.styled = p.items.length - core.length;
+  const o = core.filter((i) => i.src === "old"), n = core.filter((i) => i.src === "new");
   const words = (l) => l.length && l.every((i) => i.text && !i.recol);
   const set = (cat, detail = "", amtT = null, amtA = null) => { p.cat = cat; p.detail = detail; p.amtT = amtT; p.amtA = amtA; };
   if (p.items.every((i) => i.recol)) {
@@ -325,13 +331,18 @@ function classify(p) {
   }
   // A whole label that appears ("new") or disappears ("gone") belongs with a new or removed
   // Activity: Neu / Entfallen. "Text geändert" is an edit to a label that is in both Plans.
-  const whys = new Set(p.items.filter((i) => i.text).map((i) => i.text.why));
-  const textDetail = () => (whys.has("replaced") ? "Text anders" : whys.has("shortened") ? "Text gekürzt" : whys.has("inserted") ? "Wort dazu" : "Wort weg");
-  if (!o.length) return words(n) && !n.every((i) => i.text.why === "new") ? set("text", textDetail()) : set("added", words(n) ? "Beschriftung" : "");
-  if (!n.length) return words(o) && !o.every((i) => i.text.why === "gone") ? set("text", textDetail()) : set("removed", words(o) ? "Beschriftung" : "");
-  let go = o.filter((i) => !i.text), gn = n.filter((i) => !i.text), labelOnly = false;
+  const whys = new Set(core.filter((i) => i.text).map((i) => i.text.why));
+  const textDetail = () => (whys.has("replaced") ? "Text anders" : whys.has("shortened") ? "Text gekürzt" : whys.has("inserted") ? "Wort dazu" : whys.has("new") ? "Text dazu" : whys.has("gone") ? "Text weg" : "Wort weg");
+  // Round 4 (places): with restyled parts around it, the Activity is in both Plans: its new or
+  // vanished words are a text change, not a new or removed Activity.
+  if (!o.length) return words(n) && (p.styled || !n.every((i) => i.text.why === "new")) ? set("text", textDetail()) : set("added", words(n) ? "Beschriftung" : "");
+  if (!n.length) return words(o) && (p.styled || !o.every((i) => i.text.why === "gone")) ? set("text", textDetail()) : set("removed", words(o) ? "Beschriftung" : "");
+  // Round 4 (places): an Activity's label parts (text, its background, leader, tags) are not its
+  // shape: a shorter label with a shorter leader is "Text geändert", not "Verkürzt".
+  const isLabel = (i) => !!i.text || (i.o && ACT.partOf(S.plans[i.src], i.o.seq) === "label");
+  let go = o.filter((i) => !isLabel(i)), gn = n.filter((i) => !isLabel(i)), labelOnly = false;
   if (!go.length && !gn.length) {
-    const texts = (l) => l.map((i) => i.text.text).sort().join(" ");
+    const texts = (l) => l.filter((i) => i.text).map((i) => i.text.text).sort().join(" ");
     if (texts(o) !== texts(n)) return set("text", textDetail());
     go = o; gn = n; labelOnly = true; // the same label, moved: its own kind (round 4), so it can be filtered out
   } else if (!go.length || !gn.length) return set("other");
@@ -429,7 +440,7 @@ export function paintCompare({ view, w, h: hh, gO, gN, only = null }) {
   const s = view.s, out = CV.outline * d, mmPad = (out + 6 * d) / s;
   const vr = { x0: view.x0 - mmPad, y0: view.y0 - mmPad, x1: view.x0 + w / s + mmPad, y1: view.y0 + hh / s + mmPad };
   allPlaces(); // sets it.place
-  const vis = R.items.filter((it) => (!it.place || shownPlace(it.place)) && it.box.x1 >= vr.x0 && it.box.x0 <= vr.x1 && it.box.y1 >= vr.y0 && it.box.y0 <= vr.y1);
+  const vis = R.items.filter((it) => (!it.place || shownPlace(it.place)) && styleShown(it) && it.box.x1 >= vr.x0 && it.box.x0 <= vr.x1 && it.box.y1 >= vr.y0 && it.box.y0 <= vr.y1);
   if (!vis.length) return img;
   const xxx = CV.removed !== "halo";
 

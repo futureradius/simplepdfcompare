@@ -161,6 +161,16 @@ export function quickCompare(O, N, axis, bodyO, bodyN, offset, ignores) {
   const inkO = sameInk(m.oldUnmatched, nP), inkN = sameInk(m.newUnmatched, oP);
   m.oldUnmatched = m.oldUnmatched.filter((o) => !inkO.has(o));
   m.newUnmatched = m.newUnmatched.filter((o) => !inkN.has(o));
+  // Places ticket, round 4 (real pair): a recoloured shape cut off at the edge of the compared
+  // Body is cut differently in each Plan (each has its own clip there). Same lines in another
+  // colour: a recolour, not removed and added. Only at the edge: elsewhere a moved Activity
+  // can land on lines of another colour, which says nothing.
+  const T0 = axis === "y" ? "y0" : "x0", T1 = axis === "y" ? "y1" : "x1";
+  const atEdge = (o) => o.bbox[T0] <= win[0] + 1 || o.bbox[T1] >= win[1] - 1;
+  const inkO2 = sameInk(m.oldUnmatched.filter(atEdge), nP, true), inkN2 = sameInk(m.newUnmatched.filter(atEdge), oP, true);
+  m.oldUnmatched = m.oldUnmatched.filter((o) => !inkO2.has(o));
+  for (const o of m.newUnmatched) if (inkN2.has(o)) { recol.push(o); how.set(o, { colour: true }); }
+  m.newUnmatched = m.newUnmatched.filter((o) => !inkN2.has(o));
   const text = textChanges(m.oldUnmatched, m.newUnmatched, oP, nP);
   const geo = (src, o, extra = {}) => ({ src, o, box: o.bbox, kind: o.kind, segs: o.kind === "stroke" ? o.coords : null, ...extra });
   const items = [
@@ -193,9 +203,10 @@ export function quickCompare(O, N, axis, bodyO, bodyN, offset, ignores) {
  * cap, width), an area whose inside is covered by areas of the same colour. White lines and
  * areas count as no ink (white on white paper). Naming ticket, round 5.
  */
-function sameInk(unmatched, other) {
+function sameInk(unmatched, other, anyColour = false) {
   const out = new Set(), C = 5, key = (x, y) => Math.floor(x / C) * 1e6 + Math.floor(y / C);
-  const st = (o) => `${o.style}|${o.nums ? o.nums[0].toFixed(3) : ""}`;
+  // anyColour (places ticket, round 4): the same line in another colour, cut into other pieces
+  const st = (o) => `${anyColour ? o.style.replace(/\d\.\d{3},\d\.\d{3},\d\.\d{3}/g, "c") : o.style}|${o.nums ? o.nums[0].toFixed(3) : ""}`;
   const white = (o) => (o.kind === "stroke" || o.kind === "fill") && o.style.split("|")[1] === "1.000,1.000,1.000";
   const todo = unmatched.filter((o) => { if (white(o)) { out.add(o); return false; } return o.kind === "stroke" || o.kind === "fill"; });
   const want = new Set(todo.map(st));
@@ -232,6 +243,7 @@ function sameInk(unmatched, other) {
     }
     return inside;
   };
+  const near = (g, x, y) => { const cx = Math.floor(x / C), cy = Math.floor(y / C), out = []; for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) { const l = g.get((cx + dx) * 1e6 + cy + dy); if (l) out.push(...l); } return out; };
   for (const o of todo) {
     const g = G.get(st(o));
     if (!g) continue;
@@ -240,7 +252,8 @@ function sameInk(unmatched, other) {
     if (o.kind === "stroke") {
       for (let i = 0; all && i + 3 < k.length; i += 4) {
         const n = Math.max(2, Math.ceil(Math.hypot(k[i + 2] - k[i], k[i + 3] - k[i + 1]) / 2)); // every 2 mm and both ends
-        for (let j = 0; j <= n && all; j++) { const x = k[i] + (k[i + 2] - k[i]) * j / n, y = k[i + 1] + (k[i + 3] - k[i + 1]) * j / n; all = (g.get(key(x, y)) || []).some((q) => onSeg(x, y, q)); }
+        // Round 4 (places): the cell and its neighbours: a line crossing a cell's corner may have no sample in it
+        for (let j = 0; j <= n && all; j++) { const x = k[i] + (k[i + 2] - k[i]) * j / n, y = k[i + 1] + (k[i + 3] - k[i + 1]) * j / n; all = near(g, x, y).some((q) => onSeg(x, y, q)); }
       }
     } else {
       // points on a grid inside the area (every 2 mm, at least 5 × 5), each inside a same-colour area
