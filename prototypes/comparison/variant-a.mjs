@@ -13,7 +13,8 @@
 import { S, on, h, CV, CS, setCV, groups, allPlaces, describe, placeLabel, where, dot, totals, compareViewer, fitPlace, fitWhole, keys,
   baseSwitch, outlineSlider, fadeSlider, removedSwitch, xSizeSlider, check, legend, bindRedraw, placeBox, tLo, tHi, kindOf, drawThumb,
   CATS, catOn, BUILTIN, userPresets, savePresets, fullFilter, sameFilter, setFilter, RED, YELLOW, YELLOW_INK,
-  hiddenCount, setHidden, isHidden, fmt, screen, catLabel, nameOf, shapeName, lage, SRC, SORTS, sortBy, clearSort, amountText } from "./common.mjs";
+  hiddenCount, setHidden, isHidden, fmt, screen, catLabel, nameOf, shapeName, lage, SRC, SORTS, sortBy, clearSort, amountText, rangeOf, setRange } from "./common.mjs";
+import { fmtDate } from "./naming.mjs";
 
 const SIDE_KEY = "compareview.side";
 const MIN_SIDE = 280; // round 7: the width at which the list shows its smallest pictures
@@ -159,7 +160,7 @@ export default function mount(host, { back }) {
       h("div", { style: "display:flex;flex-direction:column;gap:8px;margin-top:8px" },
         h("div", { style: "display:flex;align-items:center;gap:8px" }, h("span", {}, "Unter den Markierungen"), ctrls[0]),
         ctrls[1], ctrls[2], h("div", { style: "display:flex;align-items:center;gap:8px" }, h("span", {}, "Weggefallenes"), ctrls[3]), ctrls[4], ctrls[5], ctrls[6],
-        h("p", { class: "hint", style: "margin:0" }, h("kbd", {}, "Leertaste"), " halten: nur neuer Plan · ", h("kbd", {}, "Shift"), " + ", h("kbd", {}, "Leertaste"), ": nur alter Plan · ", h("kbd", {}, "M"), " Markierungen aus/an"),
+        h("p", { class: "hint", style: "margin:0" }, h("kbd", {}, "Leertaste"), " halten: nur neuer Plan · ", h("kbd", {}, "Strg"), " + ", h("kbd", {}, "Leertaste"), ": nur alter Plan · ", h("kbd", {}, "M"), " Markierungen aus/an"),
         legend())),
     h("div", { style: "display:flex;gap:6px" }, h("button", { onclick: back }, "← Ausrichten"), h("button", { onclick: () => fitWhole(viewer) }, "Ganzer Plan")));
   // Drag the sidebar's right edge to make it wider or narrower.
@@ -353,7 +354,11 @@ export default function mount(host, { back }) {
 
   function drawFilterButton() {
     const on = CATS.filter(([k]) => catOn(k)).length;
-    fbtn.replaceChildren(FUNNEL(), h("span", { style: "flex:1" }, "Filter"), h("span", { class: on === CATS.length ? "muted" : "", style: on === CATS.length ? "" : "color:var(--accent);font-weight:600" }, `${on === CATS.length ? "alle" : `${on} von ${CATS.length}`} ▾`));
+    // round 2 (places): a Wann / Wo range shows here too, so a hidden region is never a surprise
+    const ranges = [["day", "Wann"], ["km", "Wo"]].filter(([k]) => rangeOf(k)).map(([k, w]) => `${w} ${rangeText(k)}`);
+    fbtn.replaceChildren(FUNNEL(), h("span", { style: "flex:1" }, "Filter"),
+      ranges.length ? h("span", { style: "color:var(--accent);font-weight:600;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0" }, ranges.join(" · ")) : null,
+      h("span", { class: on === CATS.length ? "muted" : "", style: on === CATS.length ? "" : "color:var(--accent);font-weight:600" }, `${on === CATS.length ? "alle" : `${on} von ${CATS.length}`} ▾`));
   }
   function drawFilter() {
     const counts = {};
@@ -428,9 +433,9 @@ export default function mount(host, { back }) {
   // as a CSV that Excel opens (semicolons, UTF-8 with BOM).
   S.exportChanges = () => {
     const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-    const head = ["Nr", "Name", "Name gefunden über", "Art", "Detail", "Lage", "Lage (m Plan)", "Neu / weg", "Objekte", "Alter Plan", "Neuer Plan", "Versatz (mm)"];
+    const head = ["Nr", "Name", "Name gefunden über", "Art", "Detail", "Wann", "Wo", "Lage (m Plan)", "Neu / weg", "Objekte", "Alter Plan", "Neuer Plan", "Versatz (mm)"];
     const n = S.names || {}, kindWord = { new: "dazugekommen", old: "weggefallen", both: "beides" };
-    const rows = groups().map((g) => [g.no, nameOf(g) || shapeName(g), g.nm && g.nm.src ? SRC[g.nm.src] : "Form", placeLabel(g), g.detail || "", lage(g), fmt(tLo(placeBox(g)) / 1000, 2), kindWord[kindOf(g)], describe(g), n.old || "", n.new || "", fmt(S.offset, 2)]);
+    const rows = groups().map((g) => [g.no, nameOf(g) || shapeName(g), g.nm && g.nm.src ? SRC[g.nm.src] : "Form", placeLabel(g), g.detail || "", (g.nm && g.nm.dates) || "", (g.nm && (g.nm.km || g.nm.row)) || "", fmt(tLo(placeBox(g)) / 1000, 2), kindWord[kindOf(g)], describe(g), n.old || "", n.new || "", fmt(S.offset, 2)]);
     const csv = "﻿" + [head, ...rows].map((r) => r.map(q).join(";")).join("\r\n");
     const a = h("a", { href: URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" })), download: `Aenderungen ${new Date().toISOString().slice(0, 10)}.csv` });
     document.body.append(a); a.click(); a.remove();
@@ -526,7 +531,8 @@ const EYE_OFF = () => icon('<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 
 
 /** [key, name]; ?name=… picks one, the black bar at the top switches. Round 2: the table won. */
 export const NAMINGS = [["3", "Tabelle"], ["1", "Name zuerst"], ["2", "Ein Satz"]];
-const COLS = "34px 10px minmax(0,1.45fr) minmax(0,.85fr) minmax(0,.95fr) minmax(0,1.15fr) 24px";
+// Round 2 (places ticket): "Wann · wo" split into Wann and Wo, each sortable and filterable.
+const COLS = "34px 10px minmax(0,1.35fr) minmax(0,.8fr) minmax(0,.85fr) minmax(0,1fr) minmax(0,.8fr) 24px";
 const nv = () => { const v = new URLSearchParams(location.search).get("name"); return NAMINGS.some(([k]) => k === v) ? v : "3"; };
 
 /** Round 2: names longer than this are cut with "…"; the full name shows on hover. */
@@ -582,7 +588,8 @@ function rowBody(g, num, tog) {
       h("span", { title: [n.length > MAX_NAME ? n : null, srcNote(g)].filter(Boolean).join(" · "), style: "min-width:0;overflow-wrap:anywhere" }, nameEl(g)),
       h("span", { style: "font-size:13px;min-width:0" }, catLabel(g.cat)),
       h("span", { style: "font-size:13px;min-width:0;font-variant-numeric:tabular-nums" }, um || (sub ? null : h("span", { class: "muted" }, "–")), small(sub, nm.old)),
-      h("span", { style: "font-size:12.5px;min-width:0" }, nm.dates || h("span", { class: "muted" }, "–"), small(nm.km || (nm.row && nm.src !== "Zeile" ? `in »${cut(nm.row, 30)}«` : null))),
+      h("span", { style: "font-size:12.5px;min-width:0" }, nm.dates || h("span", { class: "muted" }, "–")),
+      h("span", { style: "font-size:12.5px;min-width:0" }, nm.km || (nm.row && nm.src !== "Zeile" ? `in »${cut(nm.row, 30)}«` : h("span", { class: "muted" }, "–"))),
       tog];
   }
   return [h("div", { style: "min-width:0;flex:1" },
@@ -611,6 +618,81 @@ function sortHead() {
   return h("li", { style: `position:sticky;top:0;z-index:2;background:#faf9f7;display:grid;grid-template-columns:${COLS};gap:0 8px;padding:6px;font-size:12px;font-weight:600;color:var(--muted);border-bottom:1px solid var(--line)` },
     col("no", "Nr", "Nach Nummer (Lage entlang der Zeit)"), h("span", {}),
     col("name", "Was", "Nach Name, A–Z"), col("cat", "Art", "Nach Art der Änderung"),
-    col("amt", "Um", "Nach Größe der Änderung, die größte zuerst"), col("when", "Wann · wo", "Nach Beginn"),
+    col("amt", "Um", "Nach Größe der Änderung, die größte zuerst"),
+    h("span", { style: "display:flex;gap:4px;align-items:center" }, col("when", "Wann", "Nach Beginn"), rangeBtn("day")),
+    h("span", { style: "display:flex;gap:4px;align-items:center" }, col("where", "Wo", "Nach km, der kleinste zuerst"), rangeBtn("km")),
     keys.length ? h("button", { title: "Sortierung aufheben: wieder nach Nummer", style: "all:unset;cursor:pointer;text-align:center", onclick: (e) => { e.stopPropagation(); clearSort(); } }, "×") : h("span", {}));
+}
+
+// ---------- round 2 (places ticket): Wann / Wo range filter, like Excel's "between" ----------
+
+const dd2 = (n) => String(n).padStart(2, "0");
+const deNum = (v) => v.toLocaleString("de-DE", { maximumFractionDigits: 3 });
+/** "12,4" · "12.4" · "km 12,4 + 70" (Bahn-km plus metres) → km. */
+function parseKm(t) {
+  const m = /^\s*(?:km\s*)?(\d+)(?:[.,](\d+))?(?:\s*\+\s*(\d{1,3}))?\s*$/i.exec(t || "");
+  return m ? +m[1] + (m[2] ? +("0." + m[2]) : 0) + (m[3] ? +m[3] / 1000 : 0) : null;
+}
+/** "25.09.26" · "25.09.2026" · "25.09." (the Plan's year), optionally "14:00" → days since 1970; a "bis" day without a time means its end. */
+function parseDay(t, end) {
+  const m = /^\s*(\d{1,2})\.(\d{1,2})\.(\d{2,4})?\s*(?:,?\s*(\d{1,2}):(\d{2}))?\s*$/.exec(t || "");
+  if (!m) return null;
+  let y = m[3] ? +m[3] : null;
+  if (y == null) { const p = allPlaces().find((q) => q.nm && q.nm.dayLo != null); y = p ? new Date(p.nm.dayLo * 864e5).getUTCFullYear() : new Date().getFullYear(); }
+  if (y < 100) y += 2000;
+  const day = Date.UTC(y, +m[2] - 1, +m[1]) / 864e5;
+  return m[4] != null ? day + (+m[4] * 60 + +m[5]) / 1440 : day + (end ? 1 : 0);
+}
+function dayText(d, end) {
+  const mins = Math.round(d * 1440);
+  if (mins % 1440 === 0) return fmtDate(end ? mins / 1440 - 1 : mins / 1440);
+  return `${fmtDate(Math.floor(mins / 1440))} ${dd2(Math.floor((mins % 1440) / 60))}:${dd2(mins % 60)}`;
+}
+const RANGE_UI = {
+  km: { title: "Wo: nur Stellen in diesem km-Bereich", from: "von km", to: "bis km", ph: ["z. B. 12,4", "z. B. 14 + 500"], parse: (t) => parseKm(t), show: (v) => deNum(v), lo: "kmLo", hi: "kmHi" },
+  day: { title: "Wann: nur Stellen in dieser Zeit", from: "von", to: "bis", ph: ["TT.MM.JJ hh:mm", "TT.MM.JJ"], parse: (t, end) => parseDay(t, end), show: (v, end) => dayText(v, end), lo: "dayLo", hi: "dayHi" },
+};
+/** The small funnel beside a column title: opens the range panel; filled blue while a range is set. */
+function rangeBtn(k) {
+  const on = rangeOf(k), U = RANGE_UI[k];
+  const b = h("button", { title: on ? `${U.title}: ${rangeText(k)}` : U.title, style: `all:unset;cursor:pointer;display:inline-flex;padding:1px;border-radius:4px;${on ? "color:#fff;background:var(--accent)" : "opacity:.55"}` });
+  b.append(FUNNEL());
+  const svg = b.querySelector("svg");
+  if (svg) { svg.setAttribute("width", "12"); svg.setAttribute("height", "12"); }
+  b.onclick = (e) => { e.stopPropagation(); rangePanel(k, b); };
+  return b;
+}
+let openPanel = null;
+const OPEN = 1e9;
+/** "km 12,4 – …" for the tooltip and the Filter button. */
+const rangeText = (k) => { const r = rangeOf(k), U = RANGE_UI[k]; return r ? `${r[0] > -OPEN ? U.show(r[0]) : "…"} – ${r[1] < OPEN ? U.show(r[1], true) : "…"}` : ""; };
+function rangePanel(k, anchor) {
+  if (openPanel) openPanel.close();
+  const U = RANGE_UI[k], cur = rangeOf(k), r = anchor.getBoundingClientRect();
+  const inp = (v, ph) => h("input", { value: v, placeholder: ph, style: "width:100%;box-sizing:border-box;padding:5px 7px;border:1px solid var(--line);border-radius:7px;font:inherit" });
+  // an open end is ±OPEN (the filter is stored as JSON, which has no Infinity)
+  const a = inp(cur && cur[0] > -OPEN ? U.show(cur[0]) : "", U.ph[0]), b = inp(cur && cur[1] < OPEN ? U.show(cur[1], true) : "", U.ph[1]);
+  const msg = h("div", { class: "hint", style: "min-height:16px" });
+  const apply = () => {
+    const lo = a.value.trim() ? U.parse(a.value, false) : -OPEN, hi = b.value.trim() ? U.parse(b.value, true) : OPEN;
+    if (lo == null || hi == null) { msg.textContent = "Nicht verstanden. Beispiel: " + U.ph.join(" oder "); return; }
+    setRange(k, lo === -OPEN && hi === OPEN ? null : [Math.min(lo, hi), Math.max(lo, hi)]);
+    p.close();
+  };
+  // A region marked on the plan: the extent of the selected places.
+  const selected = [...(CS.selSet || [])].filter((g) => g.nm && g.nm[U.lo] != null);
+  const fromSel = selected.length ? h("button", { title: "Den Bereich der im Plan ausgewählten Stellen übernehmen", onclick: () => {
+    a.value = U.show(Math.min(...selected.map((g) => g.nm[U.lo]))); b.value = U.show(Math.max(...selected.map((g) => g.nm[U.hi])), true);
+  } }, `wie Auswahl (${selected.length})`) : null;
+  for (const x of [a, b]) x.onkeydown = (e) => { e.stopPropagation(); if (e.key === "Enter") apply(); if (e.key === "Escape") p.close(); };
+  const p = h("div", { style: `position:fixed;left:${Math.max(8, Math.min(r.left - 120, innerWidth - 268))}px;top:${r.bottom + 6}px;width:260px;z-index:30;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px;box-shadow:0 8px 30px rgba(0,0,0,.15);display:grid;gap:6px;font-size:13px;font-weight:400;color:#1d1d1f` },
+    h("b", {}, U.title),
+    h("label", { style: "display:grid;grid-template-columns:52px 1fr;align-items:center;gap:6px" }, U.from, a),
+    h("label", { style: "display:grid;grid-template-columns:52px 1fr;align-items:center;gap:6px" }, U.to, b),
+    msg,
+    h("div", { style: "display:flex;gap:6px;justify-content:flex-end" }, fromSel, h("button", { onclick: () => { setRange(k, null); p.close(); } }, "Leeren"), h("button", { class: "primary", onclick: apply }, "OK")));
+  const outside = (e) => { if (!p.contains(e.target)) p.close(); };
+  p.close = () => { p.replaceWith(); openPanel = null; removeEventListener("pointerdown", outside, true); };
+  document.body.append(p); openPanel = p; a.focus();
+  setTimeout(() => addEventListener("pointerdown", outside, true));
 }

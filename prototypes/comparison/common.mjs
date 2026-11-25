@@ -30,7 +30,8 @@ const COL = { grey: [74, 74, 74], yellow: [240, 190, 0], red: [220, 42, 30] };
 
 /**
  * The selected place and the peek: null, or "new" while Space is held / "old" while
- * Shift + Space is held (that Plan alone, without marks).
+ * Ctrl + Space is held (that Plan alone, without marks; Ctrl, not Shift: pressing Shift
+ * often turns on Windows Sticky Keys).
  */
 export const CS = { sel: 0, peek: null };
 
@@ -80,7 +81,24 @@ export const isHidden = (p) => hiddenKeys().has(placeKey(p));
 export function setHidden(p, on) { const k = hiddenKeys(); for (const x of [].concat(p)) { if (on) k.add(placeKey(x)); else k.delete(placeKey(x)); } emit("hidden"); }
 export const hiddenCount = () => allPlaces().filter(isHidden).length;
 /** Is a place on the plan and in the list: let through by the filter and not hidden. */
-export const shownPlace = (p) => catOn(p.cat) && !isHidden(p);
+export const shownPlace = (p) => catOn(p.cat) && !isHidden(p) && inRange(p);
+/**
+ * Wann / Wo ranges (user, 2026-11-25: "filter for a region of interest"): part of the filter,
+ * so a Vorlage can keep a region. km: [lo, hi] in km; day: [lo, hi] in days since 1970 (UTC).
+ * A place shows when it overlaps the range; one without km (or dates) does not, as in Excel.
+ */
+export const rangeOf = (k) => (CV.filter && Array.isArray(CV.filter[k]) ? CV.filter[k] : null);
+const RANGES = [["km", "kmLo", "kmHi"], ["day", "dayLo", "dayHi"]];
+function inRange(p) {
+  const nm = p.nm || {};
+  for (const [k, lo, hi] of RANGES) {
+    const r = rangeOf(k);
+    if (!r) continue;
+    if (nm[lo] == null || nm[hi] < r[0] || nm[lo] > r[1]) return false;
+  }
+  return true;
+}
+export function setRange(k, r) { const f = fullFilter(); if (r) f[k] = r; else delete f[k]; setFilter(f); }
 
 /** The places the filter lets through and the user did not hide (list, marks, ◀ ▶). */
 export const groups = () => sortPlaces(allPlaces().filter(shownPlace));
@@ -95,6 +113,7 @@ export const SORTS = {
   cat: ["Art", (p) => CATS.findIndex((c) => c[0] === p.cat), 1],
   amt: ["Um", (p) => (p.amtT != null ? Math.abs(p.amtT) : p.amtA != null ? Math.abs(p.amtA) / 1e6 : null), -1],
   when: ["Wann", (p) => tLo((p.nm && p.nm.box) || p.box), 1],
+  where: ["Wo", (p) => (p.nm && p.nm.kmLo != null ? p.nm.kmLo : null), 1], // round 2 (places): Wann and Wo split
 };
 const cmpVal = (a, b) => (typeof a === "string" ? a.localeCompare(b, "de", { numeric: true }) : a - b);
 function sortPlaces(list) {
@@ -260,6 +279,10 @@ function nameOne(p) {
     const a0 = t ? mainRaw.x0 : mainRaw.y0, a1 = t ? mainRaw.x1 : mainRaw.y1, t0 = t ? mainRaw.y0 : mainRaw.x0, t1 = t ? mainRaw.y1 : mainRaw.x1;
     nm.km = N.kmText(ax, a0, a1);
     nm.dates = N.dateText(ax, t0, t1, { point: nm.shape === "Raute" });
+    // Wann and Wo as numbers, to sort and filter by a region of interest (user, 2026-11-25)
+    const k0 = N.kmAt(ax, a0), k1 = N.kmAt(ax, a1);
+    if (k0 != null && k1 != null) { nm.kmLo = Math.min(k0, k1); nm.kmHi = Math.max(k0, k1); }
+    if (ax.time) { const d0 = ax.time.c0 + ax.time.c1 * t0, d1 = ax.time.c0 + ax.time.c1 * t1; nm.dayLo = Math.min(d0, d1); nm.dayHi = Math.max(d0, d1); }
     // Round 3: the row guess only for bar charts (time runs right) or with a Vorgänge zone; on a
     // time-distance diagram the Header text across from a place is not its name.
     if (!ax.km && (S.axis === "x" || N.axisZones(side).rows.length)) nm.row = timed("Zeile", () => N.rowText(side, (a0 + a1) / 2));
@@ -336,8 +359,12 @@ export const BUILTIN = [
 const PKEY = "compareview.presets";
 export function userPresets() { try { return JSON.parse(localStorage.getItem(PKEY) || "[]"); } catch { return []; } }
 export function savePresets(list) { try { localStorage.setItem(PKEY, JSON.stringify(list)); } catch {} emit("presets"); }
-export const fullFilter = () => Object.fromEntries(CATS.map(([k]) => [k, catOn(k)]));
-export const sameFilter = (f) => CATS.every(([k]) => (f[k] !== false) === catOn(k));
+export const fullFilter = () => {
+  const f = Object.fromEntries(CATS.map(([k]) => [k, catOn(k)]));
+  for (const [k] of RANGES) if (rangeOf(k)) f[k] = rangeOf(k).slice();
+  return f;
+};
+export const sameFilter = (f) => CATS.every(([k]) => (f[k] !== false) === catOn(k)) && RANGES.every(([k]) => JSON.stringify(f[k] || null) === JSON.stringify(rangeOf(k)));
 export const setFilter = (f) => setCV({ filter: { ...f } });
 
 // ---------- German wording ----------
@@ -593,7 +620,7 @@ export function drawOverlay(ctx, V, { plans, selected = true, label = null, only
       const n = g.no;
       pill(ctx, x, y - 24 < 2 ? y + hh + 4 : y - 24, String(n), { bg: "#1d1d1f" }); // round 7: just the number, no "/ total"
     }
-    if (CS.peek) pill(ctx, V.w / 2 - 90, 12, label || "Plan ohne Markierungen (Shift)", { bg: "#1d1d1f" });
+    if (CS.peek) pill(ctx, V.w / 2 - 90, 12, label || "Plan ohne Markierungen (Strg)", { bg: "#1d1d1f" });
   });
 }
 
@@ -649,7 +676,7 @@ export function compareViewer(host, { only = null, onChange, overlayExtra, down 
     },
     overlay: (ctx, V) => {
       const plans = only ? [only] : CS.peek ? [CS.peek] : CV.base === "both" ? ["old", "new"] : [CV.base];
-      const label = (only || CS.peek) === "old" ? "nur alter Plan, ohne Markierungen (Shift + Leertaste)" : "nur neuer Plan, ohne Markierungen (Leertaste)";
+      const label = (only || CS.peek) === "old" ? "nur alter Plan, ohne Markierungen (Strg + Leertaste)" : "nur neuer Plan, ohne Markierungen (Leertaste)";
       drawOverlay(ctx, V, { plans, only, label });
       if (overlayExtra) overlayExtra(ctx, V);
     },
@@ -662,12 +689,55 @@ export function compareViewer(host, { only = null, onChange, overlayExtra, down 
   return viewer;
 }
 
-/** Zoom to a place: it fills about half the view, with at least 80 mm around it. */
+/**
+ * Zoom to a place: it fills about half the view, with at least 80 mm around it.
+ * Round 2 (places ticket, user): the view flies there instead of jumping, so it shows whether
+ * the next place is near (a short pan) or somewhere else (out, across, back in). Smooth zoom
+ * after van Wijk & Nuij, "Smooth and efficient zooming and panning" (2003). Instant with
+ * "reduce motion"; stops as soon as the user pans or zooms.
+ */
 export function fitPlace(viewer, g) {
   const b = placeBox(g);
   const cx = (b.x0 + b.x1) / 2, cy = (b.y0 + b.y1) / 2;
   const wmm = Math.max(b.x1 - b.x0, 80), hmm = Math.max(b.y1 - b.y0, 80);
+  const V = viewer.V, from = { ...V };
+  globalThis.__V = V; // prototype: lets the headless check watch the flight
   viewer.fit({ x0: cx - wmm, x1: cx + wmm, y0: cy - hmm, y1: cy + hmm }, 0); // fit() measures the view first
+  const to = { x0: V.x0, y0: V.y0, s: V.s };
+  if (!from.s || !V.w || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  // view as [centre x, centre y, width in mm]
+  const p0 = [from.x0 + V.w / 2 / from.s, from.y0 + V.h / 2 / from.s, V.w / from.s], p1 = [to.x0 + V.w / 2 / to.s, to.y0 + V.h / 2 / to.s, V.w / to.s];
+  const path = smoothZoom(p0, p1), ms = Math.min(900, Math.max(250, path.len * 450));
+  if (path.len < 1e-3) return;
+  const id = (viewer.flight = (viewer.flight || 0) + 1), t0 = performance.now();
+  let last = null;
+  const frame = (now) => {
+    if (viewer.flight !== id) return;
+    if (last && (V.x0 !== last.x0 || V.y0 !== last.y0 || V.s !== last.s)) return; // the user took over
+    const t = Math.min(1, (now - t0) / ms), e = t < 0.5 ? 2 * t * t : 1 - 2 * (1 - t) * (1 - t); // ease in and out
+    const [ux, uy, w] = t < 1 ? path(e) : p1, s = V.w / w;
+    viewer.setView(ux - V.w / 2 / s, uy - V.h / 2 / s, s);
+    last = { x0: V.x0, y0: V.y0, s: V.s };
+    if (t < 1) requestAnimationFrame(frame);
+  };
+  viewer.setView(from.x0, from.y0, from.s);
+  last = { x0: V.x0, y0: V.y0, s: V.s };
+  requestAnimationFrame(frame);
+}
+/** The smooth zoom path from view p0 to p1 ([cx, cy, width]); path(t) for t in 0..1, path.len its length. */
+function smoothZoom([x0, y0, w0], [x1, y1, w1]) {
+  const rho = Math.SQRT2, dx = x1 - x0, dy = y1 - y0, d2 = dx * dx + dy * dy;
+  if (d2 < 1e-12) { // only zooming
+    const S = Math.log(w1 / w0) / rho, f = (t) => [x0 + t * dx, y0 + t * dy, w0 * Math.exp(rho * t * S)];
+    f.len = Math.abs(S); return f;
+  }
+  const d = Math.sqrt(d2), r = (b) => Math.log(Math.sqrt(b * b + 1) - b);
+  const r0 = r((w1 * w1 - w0 * w0 + 4 * d2) / (2 * w0 * 2 * d)), r1 = r((w1 * w1 - w0 * w0 - 4 * d2) / (2 * w1 * 2 * d)), S = (r1 - r0) / rho;
+  const f = (t) => {
+    const s = t * S, u = (w0 / (2 * d)) * (Math.cosh(r0) * Math.tanh(rho * s + r0) - Math.sinh(r0));
+    return [x0 + u * dx, y0 + u * dy, (w0 * Math.cosh(r0)) / Math.cosh(rho * s + r0)];
+  };
+  f.len = Math.abs(S); return f;
 }
 export function fitWhole(viewer) {
   const [w0, w1] = S.result ? S.result.win : S.body.old;
@@ -684,7 +754,7 @@ export function fitAcross(viewer, t) {
 
 /**
  * ← / → (and J / K): previous / next place. Hold Space: only the New Plan, without marks;
- * Shift + Space: only the Old Plan. M: marks on/off. Returns a cleanup function.
+ * Ctrl + Space: only the Old Plan. M: marks on/off. Returns a cleanup function.
  */
 export function keys({ go, redraw, hide, esc }) {
   let space = false;
@@ -692,8 +762,9 @@ export function keys({ go, redraw, hide, esc }) {
   const down = (e) => {
     if (e.target.closest("input, textarea, select")) return;
     if (e.ctrlKey && e.altKey) return; // the prototype switcher
-    if (e.key === " ") { space = true; peek(e.shiftKey ? "old" : "new"); }
-    else if (e.key === "Shift") { if (space) peek("old"); }
+    if (e.ctrlKey && e.key !== " " && e.key !== "Control") return; // Ctrl + other keys: the browser's
+    if (e.key === " ") { e.preventDefault(); space = true; peek(e.ctrlKey ? "old" : "new"); }
+    else if (e.key === "Control") { if (space) peek("old"); }
     else if (e.key === "ArrowRight" || e.key === "j" || e.key === "J") { e.preventDefault(); go(+1); }
     else if (e.key === "ArrowLeft" || e.key === "k" || e.key === "K") { e.preventDefault(); go(-1); }
     else if (e.key === "m" || e.key === "M") setCV({ marks: !CV.marks });
@@ -702,7 +773,7 @@ export function keys({ go, redraw, hide, esc }) {
   };
   const up = (e) => {
     if (e.key === " ") { space = false; peek(null); }
-    else if (e.key === "Shift" && space) peek("new");
+    else if (e.key === "Control" && space) peek("new");
   };
   const blur = () => { space = false; peek(null); };
   addEventListener("keydown", down); addEventListener("keyup", up); addEventListener("blur", blur);
