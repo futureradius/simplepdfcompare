@@ -351,10 +351,8 @@ function classify(p) {
   } else if (!go.length || !gn.length) return set("other");
   const bo = union(go.map((i) => i.box)), bn = union(gn.map((i) => i.box));
   const d0 = tLo(bn) - tLo(bo), d1 = tHi(bn) - tHi(bo), dl = d1 - d0, da0 = aLo(bn) - aLo(bo), da1 = aHi(bn) - aHi(bo);
-  if (labelOnly) {
-    const parts = [Math.abs(d0) > TOL && `${along(d0)} ${d0 > 0 ? "später" : "früher"}`, (Math.abs(da0) > TOL || Math.abs(da1) > TOL) && `${acrossAmt((da0 + da1) / 2, aLo(bo))} quer`].filter(Boolean);
-    return set("textmove", parts.join(", "), Math.abs(d0) > TOL ? d0 : null, Math.abs(d0) > TOL ? null : (da0 + da1) / 2);
-  }
+  // Ticket 21: labels are placed by hand, so a moved label says nothing about the time: no amount.
+  if (labelOnly) return set("textmove");
   if (Math.abs(dl) <= TOL) {
     if (Math.abs(d0) > TOL) return set(d0 > 0 ? "later" : "earlier", `um ${along(d0)}`, d0);
     if (Math.abs(da0) > TOL || Math.abs(da1) > TOL) return set("across", `um ${acrossAmt((da0 + da1) / 2, aLo(bo))}`, null, (da0 + da1) / 2);
