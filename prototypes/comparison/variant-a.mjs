@@ -604,7 +604,8 @@ function sortHead() {
   const keys = CV.sort || [];
   const col = (key, label, title) => {
     const i = keys.findIndex((k) => k.key === key), k = keys[i];
-    const mark = k ? h("span", { style: "color:var(--accent)" }, k.dir > 0 ? " ▲" : " ▼", keys.length > 1 ? h("sup", { style: "font-size:9px" }, String(i + 1)) : null) : null;
+    // Round 4: only the column clicked last shows its arrow; the order before stays inside it
+    const mark = i === 0 ? h("span", { style: "color:var(--accent)" }, k.dir > 0 ? " ▲" : " ▼") : null;
     return h("button", { title, style: `all:unset;cursor:pointer;white-space:nowrap;${i === 0 ? "color:#1d1d1f" : ""}`, onclick: (e) => { e.stopPropagation(); sortBy(key); } }, label, mark);
   };
   return h("li", { style: `position:sticky;top:0;z-index:2;background:#faf9f7;display:grid;grid-template-columns:${COLS};gap:0 8px;padding:6px;font-size:12px;font-weight:600;color:var(--muted);border-bottom:1px solid var(--line)` },

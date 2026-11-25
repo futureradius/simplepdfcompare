@@ -221,11 +221,11 @@ function nameCounts() {
   for (const w of ["old", "new"]) {
     const a = NM.axesOf(w), n = a.counts;
     L.push(`${w === "old" ? "Alter" : "Neuer"} Plan:`);
-    L.push(`  km-Zahlen${a.zones.dist ? " in der Wegachse" : " im Kopf"}: ${n.km}${a.km ? `, auf einer Geraden: ${a.km.inliers}, Abweichung (Median) ${r1(a.km.residual)} mm, ${r1(1 / Math.abs(a.km.c1))} mm pro km` : ", keine Gerade"}`);
+    L.push(`  km-Zahlen${a.zones.dist ? " in der Wegachse" : " im Kopf"}: ${n.km}${a.km ? (a.km.pw ? `, stückweise (Maßstab wechselt): ${a.km.inliers} von ${a.km.of} Marken in einer Richtung` : `, auf einer Geraden: ${a.km.inliers}, Abweichung (Median) ${r1(a.km.residual)} mm, ${r1(1 / Math.abs(a.km.c1))} mm pro km`) : ", keine Gerade"}`);
     L.push(`  Achsen von Hand: Zeitachse ${a.zones.time}, Wegachse ${a.zones.dist}, Vorgänge ${a.zones.rows}`);
     L.push(`  Datumsangaben${a.zones.time ? " in der Zeitachse" : " im Körper"}: TT.MM.JJ ${n.dmy}, KW ${n.kw}, Monat Jahr ${n.mon}${a.time ? `; passend: ${a.time.inliers} von ${a.time.of}, Abweichung (Median) ${r1(a.time.residual)} mm, ${r1(1 / Math.abs(a.time.c1))} mm pro Tag` : "; keine Zeitachse"}`);
     L.push(`  Gitterlinien quer zur Zeit: ${a.grid ? `${a.grid.lines}, Beschriftungen eingerastet: ${a.grid.snapped}` : "keine"}`);
-    L.push(`  Stundenangaben: ${a.hours ? `${a.hours.labels}${a.hours.agree != null ? `, einig zu ${Math.round(a.hours.agree * 100)} %` : ""}${a.hours.shift != null ? `, benutzt: Uhrzeit um ${r1(a.hours.shift)} Std. verschoben gegenüber den Daten` : ", nicht benutzt"}` : "keine"}`);
+    L.push(`  Stundenangaben: ${a.hours ? `${a.hours.labels}${a.hours.agree != null ? `, einig zu ${Math.round(a.hours.agree * 100)} %` : ""}${a.hours.shift != null ? `, benutzt (Linie ${a.hours.way}): Uhrzeit um ${r1(a.hours.shift)} Std. verschoben gegenüber den Daten` : ", nicht benutzt"}` : "keine"}`);
     L.push(`  Index gebaut in ${NM.planIndex(w).ms} ms`);
   }
   L.push("");

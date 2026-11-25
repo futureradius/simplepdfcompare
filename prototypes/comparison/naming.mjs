@@ -241,7 +241,7 @@ export function followBack(ix, spans) {
 
 export function besideText(ix, seeds) {
   let best = null, bd = BESIDE;
-  for (const [x, y] of along(seeds.flatMap(edgesOf), 1)) for (const [s, d] of spansNear(ix, x, y, bd)) if (s.text && d < bd && !/^[\d.,:\s-]+$/.test(s.text)) { best = s; bd = d; }
+  for (const [x, y] of along(seeds.flatMap(edgesOf), 2)) for (const [s, d] of spansNear(ix, x, y, bd)) if (s.text && d < bd && !/^[\d.,:\s-]+$/.test(s.text)) { best = s; bd = d; }
   return best;
 }
 
@@ -331,16 +331,33 @@ export function axesOf(which) {
   for (const s of spans) {
     let m;
     if (zones.dist.length) {
-      if (!inRects(zones.dist, s.box) || !(m = /^(?:km\s*)?(\d{1,4})(?:([,.+])(\d{1,3}))?$/i.exec(s.text))) continue;
+      if (!inRects(zones.dist, s.box)) continue;
+      // Bahn-km as "12,4 + 70" (km 12,4 plus 70 m)
+      if ((m = /^(?:km\s*)?(\d{1,4}),(\d)\s*\+\s*(\d{1,3})$/i.exec(s.text))) { kmPts.push([(aLo(s.box) + aHi(s.box)) / 2, +m[1] + +m[2] / 10 + +m[3] / 1000]); continue; }
+      if (!(m = /^(?:km\s*)?(\d{1,4})(?:([,.+])(\d{1,3}))?$/i.exec(s.text))) continue;
       kmPts.push([(aLo(s.box) + aHi(s.box)) / 2, m[2] === "+" ? +m[1] + +m[3] / 1000 : +`${m[1]}.${m[3] || 0}`]);
       continue;
     }
     if ((lo(s.box) + hi(s.box)) / 2 >= b0) continue;
-    if (!(m = /^(\d{1,3})[,.+](\d{1,3})$/.exec(s.text))) continue;
-    kmPts.push([(aLo(s.box) + aHi(s.box)) / 2, s.text.includes("+") ? +m[1] + +m[2] / 1000 : +`${m[1]}.${m[2]}`]);
+    if ((m = /^(\d{1,3})[,.+](\d{1,3})$/.exec(s.text))) { kmPts.push([(aLo(s.box) + aHi(s.box)) / 2, s.text.includes("+") ? +m[1] + +m[2] / 1000 : +`${m[1]}.${m[2]}`]); continue; }
+    // Round 4: a km inside a longer label, written along the time direction so that it marks
+    // one place across ("Anfang Brücke km 12,0 + 86", "DL km 14,594")
+    if (aHi(s.box) - aLo(s.box) > 6) continue;
+    if ((m = /km\s*(\d{1,4}),(\d{1,3})(?:\s*\+\s*(\d{1,3}))?/i.exec(s.text))) {
+      const v = m[3] !== undefined ? +m[1] + +`0.${m[2]}` + +m[3] / 1000 : +`${m[1]}.${m[2]}`;
+      kmPts.push([(aLo(s.box) + aHi(s.box)) / 2, v]);
+    }
   }
   kmPts.sort((a, b) => a[0] - b[0]);
-  const km = fitLine(kmPts, 3);
+  let km = fitLine(kmPts, 3);
+  // Round 4: a scale that changes between sections ("1 : 10000", "1 : 5000") is straight only
+  // piece by piece: then km are interpolated between the marks that run in one direction.
+  if ((!km || km.inliers < 0.8 * kmPts.length) && kmPts.length >= 3) {
+    const uniq = [];
+    for (const p of kmPts) if (!uniq.some((q) => Math.abs(q[0] - p[0]) < 0.5 && Math.abs(q[1] - p[1]) < 0.0005)) uniq.push(p);
+    const pw = monotone(uniq);
+    if (pw.length >= 3) km = { pw, inliers: pw.length, of: uniq.length, residual: 0, c0: null, c1: null };
+  }
 
   // dates along time, inside the Body band (or the time zone): "04.01.27", "Mo 04.01.2027", "KW 01", "Jan 2027"
   const inBody = zones.time.length ? (s) => inRects(zones.time, s.box) : (s) => { const c = (lo(s.box) + hi(s.box)) / 2; return c >= b0 && c <= b1; };
@@ -348,8 +365,9 @@ export function axesOf(which) {
   for (const s of spans) {
     if (!inBody(s)) continue;
     let m;
-    // Round 3: hour labels ("08:00", "14 Uhr"; a bare "02" only inside a Zeitachse zone)
-    if ((m = /^(d{1,2})(?::(d{2}))?(?:s*Uhr)?$/i.exec(s.text)) && (m[2] || /Uhr/i.test(s.text) || zones.time.length) && +m[1] <= 24 && (!m[2] || +m[2] < 60)) {
+    // Round 3: hour labels ("2", "08:00", "14 Uhr"), only inside a Zeitachse zone: elsewhere
+    // "21:00" is often the time written at the end of a bar, not an axis
+    if (zones.time.length && (m = /^(\d{1,2})(?::(\d{2}))?(?:\s*Uhr)?$/i.exec(s.text)) && +m[1] <= 24 && (!m[2] || +m[2] < 60)) {
       hrs.push({ lo: lo(s.box), hi: hi(s.box), h: +m[1] + (m[2] ? +m[2] / 60 : 0) });
       continue;
     }
@@ -398,25 +416,29 @@ export function axesOf(which) {
     if (hrs.length >= 3) {
       const near = (x) => { let l = 0, r = pos.length - 1; while (l < r) { const m = (l + r) >> 1; if (pos[m] < x) l = m + 1; else r = m; } return l; };
       const hourMm = per / 24, c1 = time.c1;
-      const anchor = (hl) => {
-        if (pos.length) {
-          const i = near(hl.lo);
-          if (pos[i] !== undefined && pos[i] >= hl.lo - 0.05 && pos[i] <= hl.hi + 0.05) return pos[i];
-          const j = pos[i] !== undefined && pos[i] <= hl.lo + 0.05 ? i : i - 1;
-          if (j >= 0 && hl.lo - pos[j] < hourMm) return pos[j];
-        }
-        return (hl.lo + hl.hi) / 2;
+      // Which grid line does an hour label stand for? Plans differ, so each way is tried:
+      // a line through the label (centred), the line just before it (label after its tick),
+      // the line just after it (label above / left of its line), or no line (its middle).
+      const lineIn = (a, b) => { const i = near(a); return pos[i] !== undefined && pos[i] <= b ? pos[i] : null; };
+      const WAYS = {
+        "durch die Zahl": (hl) => lineIn(hl.lo - 0.05, hl.hi + 0.05),
+        "vor der Zahl": (hl) => { const i = near(hl.lo + 0.05) - 1; return i >= 0 && hl.lo - pos[i] < hourMm ? pos[i] : null; },
+        "nach der Zahl": (hl) => lineIn(hl.hi - 0.05, hl.hi + hourMm),
+        "Mitte der Zahl": (hl) => (hl.lo + hl.hi) / 2,
       };
-      // where the day starts, as a fraction of a day: the same for all labels if they are hours
-      let sx = 0, sy = 0;
-      for (const hl of hrs) { const f = hl.h / 24 - c1 * anchor(hl); sx += Math.cos(2 * Math.PI * f); sy += Math.sin(2 * Math.PI * f); }
-      const R = Math.hypot(sx, sy) / hrs.length, frac = ((Math.atan2(sy, sx) / (2 * Math.PI)) % 1 + 1) % 1;
-      if (R > 0.95) {
-        // the date labels sit at or after the start of their day, so their c0 is at most a day early
-        const n = Math.ceil(time.c0 - frac - 0.1);
-        hours = { labels: hrs.length, agree: R, shift: (n + frac - time.c0) * 24 };
-        time = { ...time, c0: n + frac };
-      } else hours = { labels: hrs.length, agree: R, shift: null };
+      const tries = [];
+      for (const [way, fn] of Object.entries(WAYS)) {
+        let sx = 0, sy = 0, n = 0;
+        for (const hl of hrs) { const p = fn(hl); if (p == null) continue; const f = hl.h / 24 - c1 * p; sx += Math.cos(2 * Math.PI * f); sy += Math.sin(2 * Math.PI * f); n++; }
+        if (n < Math.max(3, hrs.length * 0.6)) continue;
+        const R = Math.hypot(sx, sy) / n, frac = ((Math.atan2(sy, sx) / (2 * Math.PI)) % 1 + 1) % 1;
+        const c0 = frac + Math.round(time.c0 - frac); // the day nearest to what the dates say
+        tries.push({ way, R, c0, shift: (c0 - time.c0) * 24 });
+      }
+      // consistent ways only; of those, the one that moves the dates' time of day the least
+      const ok = tries.filter((x) => x.R > 0.95).sort((a, b) => Math.abs(a.shift) - Math.abs(b.shift));
+      if (ok.length) { hours = { labels: hrs.length, agree: ok[0].R, shift: ok[0].shift, way: ok[0].way }; time = { ...time, c0: ok[0].c0 }; }
+      else hours = { labels: hrs.length, agree: Math.max(0, ...tries.map((x) => x.R)), shift: null };
     }
   }
   const out = { km, time, grid, hours, zones: { time: zones.time.length, dist: zones.dist.length, rows: zones.rows.length }, counts: { km: kmPts.length, dmy: dmy.length, kw: kw.length, mon: mon.length } };
@@ -432,9 +454,33 @@ const dateParts = (day) => { const x = new Date(Math.round(day) * DAY); return [
 export const fmtDate = (day) => { const [d, m, y] = dateParts(day); return `${dd(d)}.${dd(m)}.${String(y).slice(2)}`; };
 
 /** "km 12,4–15,6" or "km 26,0" for a box across (raw mm), or null. */
+/** The longest run of marks whose km only rise (or only fall) across: the scale's own marks. */
+function monotone(pts) {
+  const best = (sign) => {
+    const n = pts.length, len = new Array(n).fill(1), prev = new Array(n).fill(-1);
+    for (let i = 0; i < n; i++) for (let j = 0; j < i; j++)
+      if (pts[i][0] - pts[j][0] > 0.5 && sign * (pts[i][1] - pts[j][1]) > 0 && len[j] + 1 > len[i]) { len[i] = len[j] + 1; prev[i] = j; }
+    let k = len.indexOf(Math.max(...len)), out = [];
+    while (k >= 0) { out.push(pts[k]); k = prev[k]; }
+    return out.reverse();
+  };
+  const up = best(1), down = best(-1);
+  return up.length >= down.length ? up : down;
+}
+/** km at a position across (raw mm): on the straight line, or between the marks (round 4). */
+export function kmAt(ax, a) {
+  const k = ax.km;
+  if (!k) return null;
+  if (!k.pw) return k.c0 + k.c1 * a;
+  const p = k.pw;
+  let i = 1;
+  while (i < p.length - 1 && p[i][0] < a) i++;
+  const [x0, v0] = p[i - 1], [x1, v1] = p[i];
+  return v0 + ((v1 - v0) * (a - x0)) / (x1 - x0);
+}
 export function kmText(ax, a0, a1) {
   if (!ax.km) return null;
-  let k0 = ax.km.c0 + ax.km.c1 * a0, k1 = ax.km.c0 + ax.km.c1 * a1;
+  let k0 = kmAt(ax, a0), k1 = kmAt(ax, a1);
   if (k0 > k1) [k0, k1] = [k1, k0];
   return k1 - k0 < 0.05 ? `km ${de((k0 + k1) / 2, 1)}` : `km ${de(k0, 1)}–${de(k1, 1)}`;
 }
@@ -473,7 +519,8 @@ export function daysText(ax, mm) {
   if (!ax.time) return null;
   // within 0.6 mm of whole days (line widths, outlines): whole days
   const mmPerDay = 1 / Math.abs(ax.time.c1), v = Math.abs(mm) / mmPerDay;
-  return durText(Math.abs(v - Math.round(v)) * mmPerDay < 0.6 ? Math.round(v) : v);
+  // a difference between Old and New: line widths cancel, so only rounding noise is snapped
+  return durText(Math.abs(v - Math.round(v)) * mmPerDay < 0.05 ? Math.round(v) : v);
 }
 /** Round 2: "8 Std.", "1 Tag 8 Std." (not "1,3 Tage"), "3 Tage", "40 Min.". */
 export function durText(days) {
@@ -485,9 +532,9 @@ export function durText(days) {
   return r ? `${ds} ${r} Std.` : ds;
 }
 /** A length across (mm) in km, or null without a km axis. */
-export function kmLenText(ax, mm) {
+export function kmLenText(ax, mm, at = 0) {
   if (!ax.km) return null;
-  const v = Math.abs(mm * ax.km.c1);
+  const v = Math.abs(kmAt(ax, at + mm) - kmAt(ax, at));
   return v >= 1 ? `${de(v, 1)} km` : `${de(v * 1000, 0)} m`;
 }
 

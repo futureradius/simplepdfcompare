@@ -55,6 +55,7 @@ export const CATS = [
   ["added", "Neu", "nur im neuen Plan"],
   ["removed", "Entfallen", "nur im alten Plan"],
   ["recolour", "Umgefärbt", "gleiche Form, andere Farbe"],
+  ["textmove", "Beschriftung verschoben", "nur ein Text an anderer Stelle, gleicher Wortlaut"],
   ["other", "Sonstiges", "Form geändert oder mehreres zugleich"],
 ];
 export const catLabel = (k) => (CATS.find((c) => c[0] === k) || [k, k])[1];
@@ -129,7 +130,7 @@ const union = (bs) => bs.reduce((a, b) => ({ x0: Math.min(a.x0, b.x0), y0: Math.
 const fmm = (v) => `${fmt(Math.abs(v), Math.abs(v) < 10 ? 1 : 0)} mm`;
 /** An amount along time in days, across in km, when the axes were read (else mm). */
 const along = (v) => { try { return N.daysText(N.axesOf("new"), v) || fmm(v); } catch { return fmm(v); } };
-const acrossAmt = (v) => { try { return N.kmLenText(N.axesOf("new"), v) || fmm(v); } catch { return fmm(v); } };
+const acrossAmt = (v, at = 0) => { try { return N.kmLenText(N.axesOf("new"), v, at) || fmm(v); } catch { return fmm(v); } };
 
 function derive(R) {
   let places = R.groups.map((g) => ({ box: g.box, items: g.items }));
@@ -254,7 +255,9 @@ function nameOne(p) {
     const a0 = t ? mainRaw.x0 : mainRaw.y0, a1 = t ? mainRaw.x1 : mainRaw.y1, t0 = t ? mainRaw.y0 : mainRaw.x0, t1 = t ? mainRaw.y1 : mainRaw.x1;
     nm.km = N.kmText(ax, a0, a1);
     nm.dates = N.dateText(ax, t0, t1, { point: nm.shape === "Raute" });
-    if (!ax.km) nm.row = timed("Zeile", () => N.rowText(side, (a0 + a1) / 2));
+    // Round 3: the row guess only for bar charts (time runs right) or with a Vorgänge zone; on a
+    // time-distance diagram the Header text across from a place is not its name.
+    if (!ax.km && (S.axis === "x" || N.axisZones(side).rows.length)) nm.row = timed("Zeile", () => N.rowText(side, (a0 + a1) / 2));
     // Bar chart: the row is the process; a text by the bar ("20 AT", "Nachtrag") is only a note.
     if (nm.row && nm.src !== "Linie") { if (nm.name && nm.name !== nm.row) nm.label = nm.name; nm.name = nm.row; nm.src = "Zeile"; }
   }
@@ -292,17 +295,21 @@ function classify(p) {
   const textDetail = () => (whys.has("replaced") ? "Text anders" : whys.has("shortened") ? "Text gekürzt" : whys.has("inserted") ? "Wort dazu" : "Wort weg");
   if (!o.length) return words(n) && !n.every((i) => i.text.why === "new") ? set("text", textDetail()) : set("added", words(n) ? "Beschriftung" : "");
   if (!n.length) return words(o) && !o.every((i) => i.text.why === "gone") ? set("text", textDetail()) : set("removed", words(o) ? "Beschriftung" : "");
-  let go = o.filter((i) => !i.text), gn = n.filter((i) => !i.text);
+  let go = o.filter((i) => !i.text), gn = n.filter((i) => !i.text), labelOnly = false;
   if (!go.length && !gn.length) {
     const texts = (l) => l.map((i) => i.text.text).sort().join(" ");
     if (texts(o) !== texts(n)) return set("text", textDetail());
-    go = o; gn = n; // the same label, moved
+    go = o; gn = n; labelOnly = true; // the same label, moved: its own kind (round 4), so it can be filtered out
   } else if (!go.length || !gn.length) return set("other");
   const bo = union(go.map((i) => i.box)), bn = union(gn.map((i) => i.box));
   const d0 = tLo(bn) - tLo(bo), d1 = tHi(bn) - tHi(bo), dl = d1 - d0, da0 = aLo(bn) - aLo(bo), da1 = aHi(bn) - aHi(bo);
+  if (labelOnly) {
+    const parts = [Math.abs(d0) > TOL && `${along(d0)} ${d0 > 0 ? "später" : "früher"}`, (Math.abs(da0) > TOL || Math.abs(da1) > TOL) && `${acrossAmt((da0 + da1) / 2, aLo(bo))} quer`].filter(Boolean);
+    return set("textmove", parts.join(", "), Math.abs(d0) > TOL ? d0 : null, Math.abs(d0) > TOL ? null : (da0 + da1) / 2);
+  }
   if (Math.abs(dl) <= TOL) {
     if (Math.abs(d0) > TOL) return set(d0 > 0 ? "later" : "earlier", `um ${along(d0)}`, d0);
-    if (Math.abs(da0) > TOL || Math.abs(da1) > TOL) return set("across", `um ${acrossAmt((da0 + da1) / 2)}`, null, (da0 + da1) / 2);
+    if (Math.abs(da0) > TOL || Math.abs(da1) > TOL) return set("across", `um ${acrossAmt((da0 + da1) / 2, aLo(bo))}`, null, (da0 + da1) / 2);
     return set("other", "Form anders");
   }
   const ends = [Math.abs(d0) > TOL && `Anfang ${along(d0)} ${d0 > 0 ? "später" : "früher"}`, Math.abs(d1) > TOL && `Ende ${along(d1)} ${d1 > 0 ? "später" : "früher"}`].filter(Boolean).join(", ");
@@ -311,11 +318,13 @@ function classify(p) {
 
 // ---------- filter presets ("Vorlagen", as in simplepdfclipper) ----------
 
+// Round 4: the built-in presets leave moved labels out where only real changes count.
 const ALL = Object.fromEntries(CATS.map(([k]) => [k, true]));
 const only = (...ks) => Object.fromEntries(CATS.map(([k]) => [k, ks.includes(k)]));
 export const BUILTIN = [
   { name: "Alle Änderungen", filter: ALL, builtin: true },
   { name: "Nur Terminänderungen", filter: only("later", "earlier", "longer", "shorter"), builtin: true },
+  { name: "Ohne verschobene Beschriftungen", filter: { ...ALL, textmove: false }, builtin: true },
   { name: "Ohne Text", filter: { ...ALL, text: false }, builtin: true },
   { name: "Nur Text", filter: only("text"), builtin: true },
 ];
