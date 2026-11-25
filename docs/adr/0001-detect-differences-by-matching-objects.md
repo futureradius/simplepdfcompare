@@ -11,5 +11,6 @@ Differences are found by matching every drawn object (line, area, hatched area, 
 
 - Matching is exact, so it needs the exact Offset. The Offset is found automatically by voting over identical shapes, and the user confirms it.
 - It trusts the producer to emit unchanged drawing as identical objects. On the real pair the coordinates were exact (a match tolerance from 0.05 to 0.5 mm changed nothing). A producer that splits or rounds objects differently would need a new look.
+- There is no sensitivity setting. Once lines cut into other pieces and redrawn line widths are handled (ADR 0005), nothing left over on the real pair lay within 1 mm of an identical object in the other Plan. The smallest moves left were labels the scheduler moved by hand. A tolerance would only hide real edits; the list's filters hide real changes on purpose.
 - A second pass that ignores colour finds recoloured objects, which count as Differences.
 - Text is compared letter by letter and reported per word, so a changed word is marked, not the whole label.
