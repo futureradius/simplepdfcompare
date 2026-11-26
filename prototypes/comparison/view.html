@@ -145,7 +145,7 @@ import setup from "../alignment/variant-a.mjs";
 import viewA, { NAME as nA, NAMINGS } from "./variant-a.mjs";
 import viewB, { NAME as nB } from "./variant-b.mjs";
 import viewC, { NAME as nC } from "./variant-c.mjs";
-import { CV, CS, groups, allPlaces, describe, title, lage, NAMING } from "./common.mjs";
+import { CV, CS, groups, allPlaces, describe, title, lage, NAMING, FILTS, filtMode } from "./common.mjs";
 import * as NM from "./naming.mjs";
 
 const VIEWS = { A: [nA, viewA], B: [nB, viewB], C: [nC, viewC] };
@@ -171,11 +171,12 @@ function mount() {
 }
 // Naming ticket: the black bar (bottom right) switches how places are named (?name=1|2|3).
 // The losing views B and C stay reachable with ?view=B / ?view=C.
-const nameKey = () => { const v = new URLSearchParams(location.search).get("name"); return NAMINGS.some(([k]) => k === v) ? v : "3"; };
-function label() { const k = nameKey(); $("sw-label").textContent = `Benennung ${k} · ${NAMINGS.find((n) => n[0] === k)[1]}`; }
+// Ticket 22: the black bar now switches how Places with several kinds are filtered (?filt=A|B|C).
+// Naming is decided (table); ?name=1|2 still shows the other namings.
+function label() { const k = filtMode(); $("sw-label").textContent = `Filter ${k} · ${FILTS.find((n) => n[0] === k)[1]}`; }
 function go(d) {
-  const i = NAMINGS.findIndex((n) => n[0] === nameKey()), k = NAMINGS[(i + d + NAMINGS.length) % NAMINGS.length][0];
-  const u = new URL(location); u.searchParams.set("name", k); history.replaceState(null, "", u);
+  const i = FILTS.findIndex((n) => n[0] === filtMode()), k = FILTS[(i + d + FILTS.length) % FILTS.length][0];
+  const u = new URL(location); u.searchParams.set("filt", k); history.replaceState(null, "", u);
   label();
   if (cv) { cv.unmount(); cv.host.replaceChildren(); cv.unmount = VIEWS[current][1](cv.host, cv.ctx); }
 }

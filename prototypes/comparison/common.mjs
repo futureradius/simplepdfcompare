@@ -64,14 +64,48 @@ export const CATS = [
 export const catLabel = (k) => (CATS.find((c) => c[0] === k) || [k, k])[1];
 export const catOn = (k) => CV.filter[k] !== false;
 
-let derivedFor = null, derived = [];
+// ---------- ticket 22: Places with several kinds of change (?filt=A|B|C, the black bar) ----------
+//   A "Alle Arten zählen": a Place shows when any of its kinds is on; each mark follows its own kind.
+//   B "Hauptart + Auch": the main kind decides; side changes have their own checkboxes (marks only).
+//   C "Je Art eine Zeile": a Place with several kinds becomes one row per kind (12a, 12b …).
+export const FILTS = [["A", "Alle Arten zählen"], ["B", "Hauptart + „Auch“"], ["C", "Je Art eine Zeile"]];
+export const filtMode = () => { const v = new URLSearchParams(location.search).get("filt"); return FILTS.some(([k]) => k === v) ? v : "A"; };
+/** B: the side changes, filtered on their own ("+recolour" …). */
+export const AUX = ["recolour", "restyle", "text", "textmove"];
+export const auxOn = (k) => CV.filter["+" + k] !== false;
+/** The kinds a Place carries beside its main kind. */
+export const extrasOf = (p) => (p.kinds || [p.cat]).slice(1);
+
+let derivedFor = null, derived = [], viewFor = null, viewed = [];
 /** All places of the current result, with moved pairs merged and a kind of change each. */
 export function allPlaces() {
   const R = S.result;
   if (!R) return [];
-  if (derivedFor !== R) { derivedFor = R; derived = derive(R); }
-  return derived;
+  if (derivedFor !== R) { derivedFor = R; derived = derive(R); viewFor = null; }
+  const m = filtMode();
+  if (viewFor !== m) { viewFor = m; viewed = m === "C" ? splitByKind(derived) : derived; if (m !== "C") for (const p of derived) for (const it of p.items) it.place = p; }
+  return viewed;
 }
+/** C: one row per kind; each row holds the parts of that kind (its marks) and is numbered 12a, 12b … */
+function splitByKind(places) {
+  const out = [];
+  for (const p of places) {
+    for (const it of p.items) it.place = p;
+    if (!p.kinds || p.kinds.length < 2) { out.push(p); continue; }
+    let j = 0;
+    for (const k of p.kinds) {
+      const items = p.items.filter((it) => it.pk === k);
+      if (!items.length) continue;
+      const q = { ...p, items, box: union(items.map((i) => i.box)), cat: k, kinds: [k], sub: "abcdefgh"[j++], parent: p };
+      if (k !== p.cat) { q.amtT = null; q.amtA = null; q.detail = k === "recolour" || k === "restyle" ? widthText(items) : ""; }
+      for (const it of items) it.place = q;
+      out.push(q);
+    }
+  }
+  return out;
+}
+/** Does the kind filter let this place through (before hiding and ranges)? */
+export const kindPass = (p) => (filtMode() === "A" ? (p.kinds || [p.cat]).some(catOn) : catOn(p.cat));
 // Round 3: places the user hid ("not a real change"), per pair of Plans, for this session.
 // Keyed by kind and rounded box, so they stay hidden when the comparison reruns.
 const hidden = { plans: null, keys: new Set() };
@@ -83,8 +117,15 @@ export function setHidden(p, on) { const k = hiddenKeys(); for (const x of [].co
 export const hiddenCount = () => allPlaces().filter(isHidden).length;
 /** Is a place on the plan and in the list: let through by the filter and not hidden. */
 /** Round 4 (places): a recoloured or thicker part shows only while its kind is on in the filter, also inside a Place of another kind. */
-export const styleShown = (it) => !it.recol || catOn(it.how && it.how.colour === false ? "restyle" : "recolour");
-export const shownPlace = (p) => catOn(p.cat) && !isHidden(p) && inRange(p);
+// Ticket 22: every part has its kind (it.pk). A: each mark follows its own kind; B: the main
+// kind's marks always show, side changes follow their "Auch" checkbox; C: a row is one kind.
+export function styleShown(it) {
+  const m = filtMode(), k = it.pk || (it.place && it.place.cat);
+  if (!k || !it.place || m === "C") return true;
+  if (m === "A") return catOn(k);
+  return k === it.place.cat || auxOn(k);
+}
+export const shownPlace = (p) => kindPass(p) && !isHidden(p) && inRange(p);
 /**
  * Wann / Wo ranges (user, 2026-11-25: "filter for a region of interest"): part of the filter,
  * so a Vorlage can keep a region. km: [lo, hi] in km; day: [lo, hi] in days since 1970 (UTC).
@@ -114,6 +155,7 @@ export const SORTS = {
   no: ["Nr", (p) => p.no, 1],
   name: ["Was", (p) => (nameOf(p) || shapeName(p) || "").toLocaleLowerCase("de"), 1],
   cat: ["Art", (p) => CATS.findIndex((c) => c[0] === p.cat), 1],
+  aux: ["Auch", (p) => { const x = extrasOf(p); return x.length ? CATS.findIndex((c) => c[0] === x[0]) : null; }, 1], // ticket 22, B
   amt: ["Um", (p) => (p.amtT != null ? Math.abs(p.amtT) : p.amtA != null ? Math.abs(p.amtA) / 1e6 : null), -1],
   when: ["Wann", (p) => tLo((p.nm && p.nm.box) || p.box), 1],
   where: ["Wo", (p) => (p.nm && p.nm.kmLo != null ? p.nm.kmLo : null), 1], // round 2 (places): Wann and Wo split
@@ -317,6 +359,11 @@ export function amountText(g) {
 }
 export const SRC = { Linie: "Name über die Hinweislinie", daneben: "Name: Text daneben", Text: "Name: die geänderte Beschriftung", Zeile: "Name: Zeile im Kopf" };
 
+/** "dicker 0,20 → 0,30 mm", from the first part drawn at another width. */
+function widthText(items) {
+  const w = items.map((i) => i.how && i.how.width).find((x) => x && Math.abs(x[0] - x[1]) > 0.005);
+  return w ? `${w[1] > w[0] ? "dicker" : "dünner"} ${fmt(w[0], 2)} → ${fmt(w[1], 2)} mm` : "";
+}
 /** Sets p.cat and p.detail (German, short). */
 function classify(p) {
   // Round 4 (places): a change of style (recoloured, thicker) does not decide the kind when
@@ -325,12 +372,21 @@ function classify(p) {
   p.styled = p.items.length - core.length;
   const o = core.filter((i) => i.src === "old"), n = core.filter((i) => i.src === "new");
   const words = (l) => l.length && l.every((i) => i.text && !i.recol);
-  const set = (cat, detail = "", amtT = null, amtA = null) => { p.cat = cat; p.detail = detail; p.amtT = amtT; p.amtA = amtA; };
+  // Ticket 22: every kind the Place carries, its main kind first (p.kinds). Recoloured and
+  // thicker parts, and a label edited or moved beside a changed shape, are extra kinds.
+  const extras = [];
+  const styleKind = (i) => (i.how && i.how.colour === false ? "restyle" : "recolour");
+  if (p.items.some((i) => i.recol && styleKind(i) === "recolour")) extras.push("recolour");
+  if (p.items.some((i) => i.recol && styleKind(i) === "restyle")) extras.push("restyle");
+  const isLabel = (i) => !!i.text || (i.o && ACT.partOf(S.plans[i.src], i.o.seq) === "label");
+  const set = (cat, detail = "", amtT = null, amtA = null) => {
+    p.cat = cat; p.detail = detail; p.amtT = amtT; p.amtA = amtA; p.kinds = [cat, ...extras.filter((k) => k !== cat)];
+    const lx = p.kinds.find((k) => k !== cat && (k === "text" || k === "textmove"));
+    for (const i of p.items) i.pk = i.recol ? styleKind(i) : lx && isLabel(i) ? lx : cat; // the kind of each part
+  };
   if (p.items.every((i) => i.recol)) {
     // Round 3 (places): the same line drawn thicker or thinner is a change of style too, not a move.
-    const w = p.items.map((i) => i.how && i.how.width).find((x) => x && Math.abs(x[0] - x[1]) > 0.005);
-    const wd = w ? `${w[1] > w[0] ? "dicker" : "dünner"} ${fmt(w[0], 2)} → ${fmt(w[1], 2)} mm` : "";
-    return set(p.items.some((i) => !i.how || i.how.colour) ? "recolour" : "restyle", wd);
+    return set(p.items.some((i) => !i.how || i.how.colour) ? "recolour" : "restyle", widthText(p.items));
   }
   // A whole label that appears ("new") or disappears ("gone") belongs with a new or removed
   // Activity: Neu / Entfallen. "Text geändert" is an edit to a label that is in both Plans.
@@ -342,13 +398,17 @@ function classify(p) {
   if (!n.length) return words(o) && (p.styled || !o.every((i) => i.text.why === "gone")) ? set("text", textDetail()) : set("removed", words(o) ? "Beschriftung" : "");
   // Round 4 (places): an Activity's label parts (text, its background, leader, tags) are not its
   // shape: a shorter label with a shorter leader is "Text geändert", not "Verkürzt".
-  const isLabel = (i) => !!i.text || (i.o && ACT.partOf(S.plans[i.src], i.o.seq) === "label");
   let go = o.filter((i) => !isLabel(i)), gn = n.filter((i) => !isLabel(i)), labelOnly = false;
+  const texts = (l) => l.filter((i) => i.text).map((i) => i.text.text).sort().join(" ");
   if (!go.length && !gn.length) {
-    const texts = (l) => l.filter((i) => i.text).map((i) => i.text.text).sort().join(" ");
     if (texts(o) !== texts(n)) return set("text", textDetail());
     go = o; gn = n; labelOnly = true; // the same label, moved: its own kind (round 4), so it can be filtered out
-  } else if (!go.length || !gn.length) return set("other");
+  } else {
+    // Ticket 22: the shape changed; a changed label beside it is an extra kind.
+    const lo = o.filter(isLabel), ln = n.filter(isLabel);
+    if (lo.length || ln.length) extras.push(texts(lo) !== texts(ln) ? "text" : "textmove");
+    if (!go.length || !gn.length) return set("other");
+  }
   const bo = union(go.map((i) => i.box)), bn = union(gn.map((i) => i.box));
   const d0 = tLo(bn) - tLo(bo), d1 = tHi(bn) - tHi(bo), dl = d1 - d0, da0 = aLo(bn) - aLo(bo), da1 = aHi(bn) - aHi(bo);
   // Ticket 21: labels are placed by hand, so a moved label says nothing about the time: no amount.
@@ -379,10 +439,11 @@ export function userPresets() { try { return JSON.parse(localStorage.getItem(PKE
 export function savePresets(list) { try { localStorage.setItem(PKEY, JSON.stringify(list)); } catch {} emit("presets"); }
 export const fullFilter = () => {
   const f = Object.fromEntries(CATS.map(([k]) => [k, catOn(k)]));
+  for (const k of AUX) if (!auxOn(k)) f["+" + k] = false; // B: side changes switched off
   for (const [k] of RANGES) if (rangeOf(k)) f[k] = rangeOf(k).slice();
   return f;
 };
-export const sameFilter = (f) => CATS.every(([k]) => (f[k] !== false) === catOn(k)) && RANGES.every(([k]) => JSON.stringify(f[k] || null) === JSON.stringify(rangeOf(k)));
+export const sameFilter = (f) => CATS.every(([k]) => (f[k] !== false) === catOn(k)) && AUX.every((k) => (f["+" + k] !== false) === auxOn(k)) && RANGES.every(([k]) => JSON.stringify(f[k] || null) === JSON.stringify(rangeOf(k)));
 export const setFilter = (f) => setCV({ filter: { ...f } });
 
 // ---------- German wording ----------

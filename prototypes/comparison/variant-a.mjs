@@ -13,7 +13,8 @@
 import { S, on, h, CV, CS, setCV, groups, allPlaces, describe, placeLabel, where, dot, totals, compareViewer, fitPlace, fitWhole, keys,
   baseSwitch, outlineSlider, fadeSlider, removedSwitch, xSizeSlider, check, legend, bindRedraw, placeBox, tLo, tHi, kindOf, drawThumb,
   CATS, catOn, BUILTIN, userPresets, savePresets, fullFilter, sameFilter, setFilter, RED, YELLOW, YELLOW_INK,
-  hiddenCount, setHidden, isHidden, fmt, screen, catLabel, nameOf, shapeName, lage, SRC, SORTS, sortBy, clearSort, amountText, rangeOf, setRange } from "./common.mjs";
+  hiddenCount, setHidden, isHidden, fmt, screen, catLabel, nameOf, shapeName, lage, SRC, SORTS, sortBy, clearSort, amountText, rangeOf, setRange,
+  filtMode, AUX, auxOn, extrasOf, kindPass } from "./common.mjs";
 import { fmtDate } from "./naming.mjs";
 
 const SIDE_KEY = "compareview.side";
@@ -142,7 +143,7 @@ export default function mount(host, { back }) {
       Promise.all(rows.map(fold)).then(() => { showHidden = false; drawSide(); });
     } else {
       showHidden = true;
-      for (const p of allPlaces()) if (catOn(p.cat) && !groups().includes(p)) unfolding.add(p);
+      for (const p of allPlaces()) if (kindPass(p) && !groups().includes(p)) unfolding.add(p);
       drawSide();
     }
   }
@@ -272,7 +273,9 @@ export default function mount(host, { back }) {
     drawPresets(); drawFilterButton();
     drawHiddenRow(); drawSelRow();
     if (!S.result) { count.textContent = "Vergleiche…"; sums.textContent = ""; list.replaceChildren(); drawNav(); return; }
-    count.textContent = !all.length ? "Keine Unterschiede" : gs.length === all.length ? `${all.length} Stellen mit Unterschieden` : `${gs.length} von ${all.length} Stellen`;
+    // Ticket 22, C: rows are not Places when some are split by kind
+    const split = all.some((g) => g.sub), unit = split ? "Zeilen" : "Stellen", places = new Set(all.map((g) => g.parent || g)).size;
+    count.textContent = !all.length ? "Keine Unterschiede" : (gs.length === all.length ? `${all.length} ${unit} mit Unterschieden` : `${gs.length} von ${all.length} ${unit}`) + (split ? ` (${places} Stellen)` : "");
     sums.replaceChildren(
       h("span", { style: `color:${RED};font-weight:600` }, `${c.new} nur dazu`), " · ",
       h("span", { style: `color:${YELLOW_INK};font-weight:600` }, `${c.old} nur weg`), " · ",
@@ -303,7 +306,7 @@ export default function mount(host, { back }) {
   function drawList() {
     const gs = groups(), ts = thumbSize(), tw = ts ? ts.tw : 0, th = ts ? ts.th : 0;
     // With "zeigen", hidden places are listed too (greyed, with "einblenden"); they stay off the plan.
-    const rows = showHidden ? allPlaces().filter((p) => catOn(p.cat)) : gs;
+    const rows = showHidden ? allPlaces().filter(kindPass) : gs;
     io.disconnect(); queue = [];
     const scroll = list.scrollTop; // rebuilding must not move the list
     const head = NV === "3" ? [sortHead()] : [];
@@ -331,7 +334,7 @@ export default function mount(host, { back }) {
           else if (ctrl) toggleSel(g, "toggle");
           else selectOnly(i);
         },
-      }, box, ...rowBody(g, String(g.no), tog));
+      }, box, ...rowBody(g, numText(g), tog));
       if (NV === "3") { li.style.display = "grid"; li.style.gridTemplateColumns = colsTemplate(); li.style.minWidth = tableMin() + "px"; li.style.alignItems = "baseline"; li.style.padding = "5px 6px"; li.style.gap = "0 8px"; li.style.borderBottom = "1px solid #f0efec"; li.style.borderRadius = "0"; }
       Object.assign(li, { _g: g, _tw: tw, _th: th, _box: box, _off: off });
       if (ts) io.observe(li);
@@ -353,16 +356,27 @@ export default function mount(host, { back }) {
   }
 
   function drawFilterButton() {
-    const on = CATS.filter(([k]) => catOn(k)).length;
+    const on = CATS.filter(([k]) => catOn(k)).length, auxOff = filtMode() === "B" ? AUX.filter((k) => !auxOn(k)).length : 0;
     // round 2 (places): a Wann / Wo range shows here too, so a hidden region is never a surprise
     const ranges = [["day", "Wann"], ["km", "Wo"]].filter(([k]) => rangeOf(k)).map(([k, w]) => `${w} ${rangeText(k)}`);
     fbtn.replaceChildren(...[FUNNEL(), h("span", { style: "flex:1" }, "Filter"),
       ranges.length ? h("span", { style: "color:var(--accent);font-weight:600;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0" }, ranges.join(" · ")) : null,
-      h("span", { class: on === CATS.length ? "muted" : "", style: on === CATS.length ? "" : "color:var(--accent);font-weight:600" }, `${on === CATS.length ? "alle" : `${on} von ${CATS.length}`} ▾`)].filter(Boolean));
+      h("span", { class: on === CATS.length && !auxOff ? "muted" : "", style: on === CATS.length && !auxOff ? "" : "color:var(--accent);font-weight:600" },
+        `${on === CATS.length ? "alle" : `${on} von ${CATS.length}`}${auxOff ? ` · auch: ${auxOff} aus` : ""} ▾`)].filter(Boolean));
   }
   function drawFilter() {
-    const counts = {};
-    for (const p of allPlaces()) counts[p.cat] = (counts[p.cat] || 0) + 1;
+    // Ticket 22: what a count means depends on the variant (A: Places with that kind anywhere).
+    const m = filtMode(), counts = {}, auxN = {};
+    for (const p of allPlaces()) {
+      for (const k of m === "A" ? p.kinds || [p.cat] : [p.cat]) counts[k] = (counts[k] || 0) + 1;
+      for (const k of extrasOf(p)) auxN[k] = (auxN[k] || 0) + 1;
+    }
+    const multi = allPlaces().filter((p) => extrasOf(p).length).length, rowsSplit = allPlaces().filter((p) => p.sub).length;
+    const rule = {
+      A: `Eine Stelle kann mehrere Arten haben (${multi} hier). Sie erscheint, wenn eine davon angehakt ist; jede Markierung folgt ihrer Art.`,
+      B: "Jede Stelle hat eine Hauptart. Was nebenbei geändert ist, steht unter „Auch“ und blendet nur seine Markierungen aus.",
+      C: `Stellen mit mehreren Arten stehen in mehreren Zeilen (${rowsSplit} Zeilen, z. B. 12a, 12b), je Art eine.`,
+    }[m];
     const allOn = CATS.every(([k]) => catOn(k)), noneOn = CATS.every(([k]) => !catOn(k));
     const row = (checked, label, n, hint, onchange, bold = false) => {
       const inp = h("input", { type: "checkbox" });
@@ -373,8 +387,13 @@ export default function mount(host, { back }) {
     };
     const all = row(allOn, "(Alle auswählen)", allPlaces().length, null, (v) => setFilter(Object.fromEntries(CATS.map(([k]) => [k, v]))), true);
     if (!allOn && !noneOn) all.querySelector("input").indeterminate = true;
-    fpanel.replaceChildren(all, h("hr", { style: "border:0;border-top:1px solid var(--line);margin:4px 0" }),
+    const hr = () => h("hr", { style: "border:0;border-top:1px solid var(--line);margin:4px 0" });
+    const aux = m !== "B" ? [] : [hr(), h("div", { style: "font-weight:600;padding:4px 6px 0" }, "Auch geändert"), h("div", { class: "hint", style: "padding:0 6px 4px" }, "nur die Markierungen; die Stelle bleibt in der Liste"),
+      ...AUX.map((k) => row(auxOn(k), catLabel(k), auxN[k] || 0, null, (v) => setFilter({ ...fullFilter(), ["+" + k]: v })))];
+    fpanel.replaceChildren(h("div", { class: "hint", style: "padding:2px 6px 6px" }, rule), all, hr(),
+      ...(m === "B" ? [h("div", { style: "font-weight:600;padding:4px 6px 0" }, "Art")] : []),
       ...CATS.map(([k, label, hint]) => row(catOn(k), label, counts[k] || 0, hint, (v) => setFilter({ ...fullFilter(), [k]: v }))),
+      ...aux,
       h("div", { style: "display:flex;justify-content:flex-end;margin-top:6px" }, h("button", { onclick: () => (fpanel.hidden = true) }, "OK")));
   }
   function drawPresets() {
@@ -396,7 +415,7 @@ export default function mount(host, { back }) {
     if (sel.size > 1) { navText.replaceChildren(h("b", {}, `${sel.size} ausgewählt`), h("span", { style: "opacity:.7" }, "· H blendet sie aus · Esc hebt auf")); return; }
     const g = sel.size ? [...sel][0] : null;
     if (!g) { navText.replaceChildren(h("span", { style: "opacity:.75" }, `Keine Auswahl · ${gs.length} Stellen`)); return; }
-    navText.replaceChildren(dot(g, 10), h("b", { style: "font-variant-numeric:tabular-nums" }, String(g.no)), h("span", {}, "·"), ...navBody(g));
+    navText.replaceChildren(dot(g, 10), h("b", { style: "font-variant-numeric:tabular-nums" }, numText(g)), h("span", {}, "·"), ...navBody(g));
   }
 
   function drawStrip() {
@@ -561,8 +580,11 @@ function changeText(g) {
     if (nm.old) return `${catLabel(g.cat)} · vorher »${nm.old}«`;
     return catLabel(g.cat);
   }
-  return [catLabel(g.cat), g.detail].filter(Boolean).join(" · ");
+  const x = filtMode() !== "C" && extrasOf(g).length ? `auch ${extrasOf(g).map((k) => catLabel(k)).join(", ")}` : null;
+  return [catLabel(g.cat), g.detail, x].filter(Boolean).join(" · ");
 }
+/** "12", or "12a" for one kind of a Place split into rows (ticket 22, C). */
+const numText = (g) => String(g.no) + (g.sub || "");
 /** One sentence: "Gleis 1 erneuern 3 Tage später". */
 function sentence(g) {
   const nm = g.nm || {}, d = g.detail || "", amt = d.replace(/^um /, "");
@@ -650,7 +672,21 @@ const TCOLS = {
     const n = nameOf(g) || "";
     return h("span", { title: [n.length > MAX_NAME ? n : null, srcNote(g)].filter(Boolean).join(" · "), style: "min-width:0;overflow-wrap:anywhere;display:flex;gap:6px;align-items:baseline" }, dot(g), h("span", { style: "min-width:0" }, nameEl(g)));
   } },
-  cat: { label: "Art", sort: "cat", title: "Nach Art der Änderung", min: 70, fr: 0.8, cell: (g) => h("span", { style: "font-size:13px;min-width:0" }, catLabel(g.cat)) },
+  cat: { label: "Art", sort: "cat", title: "Nach Art der Änderung", min: 70, fr: 0.8, cell: (g) => {
+    const m = filtMode(), x = extrasOf(g);
+    // Ticket 22, A: every kind of the Place, the main one first, the others as small tags.
+    if (m === "A" && x.length) return h("span", { style: "font-size:13px;min-width:0;display:flex;flex-wrap:wrap;gap:3px 4px;align-items:baseline" },
+      h("span", {}, catLabel(g.cat)), ...x.map((k) => h("span", { style: `font-size:11px;padding:0 5px;border-radius:8px;white-space:nowrap;${catOn(k) ? "background:#ecebe7;color:#55555c" : "background:transparent;color:#b0b0b5;text-decoration:line-through"}`, title: catOn(k) ? "auch" : "auch, aber im Filter aus" }, "+ " + catLabel(k))));
+    // C: a row split off a Place says so
+    if (m === "C" && g.parent) return h("span", { style: "font-size:13px;min-width:0", title: `Stelle ${g.no} hat mehrere Arten: ${g.parent.kinds.map(catLabel).join(", ")}` }, catLabel(g.cat), h("span", { class: "hint", style: "display:block" }, `Teil ${g.sub} von ${g.parent.kinds.length}`));
+    return h("span", { style: "font-size:13px;min-width:0" }, catLabel(g.cat));
+  } },
+  // Ticket 22, B: what changed beside the main kind, filtered on its own (marks only).
+  aux: { label: "Auch", sort: "aux", title: "Nach Nebenänderung", min: 70, fr: 0.7, only: "B", cell: (g) => {
+    const x = extrasOf(g);
+    if (!x.length) return dash();
+    return h("span", { style: "font-size:12.5px;min-width:0;display:flex;flex-direction:column" }, ...x.map((k) => h("span", { style: auxOn(k) ? "" : "color:#b0b0b5;text-decoration:line-through", title: auxOn(k) ? null : "im Filter aus: nicht markiert" }, catLabel(k))));
+  } },
   amt: { label: "Um", sort: "amt", title: "Nach Größe der Änderung, die größte zuerst", min: 72, fr: 0.85, cell: (g) => {
     const nm = g.nm || {}, um = amountText(g);
     const sub = g.cat === "text" && nm.old ? `vorher »${cut(nm.old, 28)}«` : g.cat === "longer" || g.cat === "shorter" || ((g.cat === "recolour" || g.cat === "restyle") && g.detail) ? g.detail : null;
@@ -662,11 +698,12 @@ const TCOLS = {
     return h("span", { style: "font-size:12.5px;min-width:0" }, nm.km || (nm.row && nm.src !== "Zeile" ? `in »${cut(nm.row, 30)}«` : dash()));
   } },
 };
-const DEFAULT_ORDER = ["no", "name", "cat", "amt", "when", "where"];
+const DEFAULT_ORDER = ["no", "name", "cat", "aux", "amt", "when", "where"];
 /** The user's column order (kept in this browser), with any unknown or missing column fixed. */
 function colOrder() {
-  const saved = Array.isArray(CV.tcols) ? CV.tcols.filter((k) => TCOLS[k]) : [];
-  return [...new Set([...saved, ...DEFAULT_ORDER])];
+  const has = (k) => TCOLS[k] && (!TCOLS[k].only || TCOLS[k].only === filtMode());
+  const saved = Array.isArray(CV.tcols) ? CV.tcols.filter(has) : [];
+  return [...new Set([...saved, ...DEFAULT_ORDER.filter(has)])];
 }
 const colsTemplate = () => colOrder().map((k) => (TCOLS[k].fr ? `minmax(${TCOLS[k].min}px,${TCOLS[k].fr}fr)` : `${TCOLS[k].min}px`)).join(" ") + " 30px";
 /** Below this width the list scrolls sideways instead of squeezing the columns (user, round 3). */
