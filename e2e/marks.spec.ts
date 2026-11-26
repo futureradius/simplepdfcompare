@@ -39,7 +39,7 @@ async function openPair(page: Page, url: string, paths: readonly string[]) {
 /** How many pixels of the marks canvas have each mark colour. */
 const colours = (page: Page) =>
   page.evaluate(() => {
-    const c = document.getElementById("marks-canvas") as HTMLCanvasElement;
+    const c = document.getElementById("compare-canvas") as HTMLCanvasElement;
     const d = c.getContext("2d")!.getImageData(0, 0, c.width, c.height).data;
     let red = 0,
       yellow = 0,
@@ -47,7 +47,8 @@ const colours = (page: Page) =>
     for (let i = 0; i < d.length; i += 4) {
       const [r, g, b] = [d[i]!, d[i + 1]!, d[i + 2]!];
       if (r > 200 && g < 80 && b < 80) red++;
-      else if (r > 220 && g > 170 && g < 210 && b < 60) yellow++;
+      // Removed yellow, or its darker x–x–x line and ring.
+      else if (r > 170 && g > 120 && g < 210 && b < 70) yellow++;
       else if (Math.abs(r - 74) < 6 && Math.abs(g - 74) < 6 && Math.abs(b - 74) < 6) grey++;
     }
     return { red, yellow, grey };
@@ -70,7 +71,7 @@ for (const [name, offset] of [
     await openPair(page, APP, PAIRS[name]);
     await expect(page.locator("#tab-compare")).toBeDisabled();
     await page.locator("#offset-compare").click();
-    const view = page.locator("#marks-view");
+    const view = page.locator("#compare-view");
     await expect(view).toHaveAttribute("data-state", "done", { timeout: 90_000 });
     await expect(page.locator("#plans")).toBeHidden();
     await expect(page.locator("#body-compare")).toContainText(`${offset} mm`);
@@ -80,7 +81,14 @@ for (const [name, offset] of [
     expect(c.red).toBeGreaterThan(20);
     expect(c.yellow).toBeGreaterThan(20);
     // Both pairs have a shape that moved by less than its length: its common part is grey.
-    expect(c.grey).toBeGreaterThan(20);
+    // On the 14 m Plan it is too small to see whole, so the view goes to it (planted D4).
+    if (name === "down") {
+      await page.keyboard.press("2");
+      await page.evaluate(() => (window as any).__spcCompare.centerOn(690, 6275));
+      await page.keyboard.press("3");
+      await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    }
+    expect((await colours(page)).grey).toBeGreaterThan(20);
     await page.screenshot({ path: `test-results/marks-${name}.png` });
     // Back on another tab, the Plans are shown again.
     await page.locator("#tab-open").click();
@@ -98,7 +106,7 @@ test("Vergleich lists the Places of the activities pair in the sidebar", async (
   await openPair(page, APP, [resolve("samples/activities-old.pdf"), resolve("samples/activities-new.pdf")]);
   await expect(page.locator("#tab-compare")).toBeDisabled();
   await page.locator("#offset-compare").click();
-  await expect(page.locator("#marks-view")).toHaveAttribute("data-state", "done", { timeout: 90_000 });
+  await expect(page.locator("#compare-view")).toHaveAttribute("data-state", "done", { timeout: 90_000 });
   await expect(page.locator("#plans")).toBeHidden();
   await expect(page.locator("#body-compare .places-readout")).toBeVisible();
   const rows = page.locator("#body-compare .places-readout li");

@@ -3,6 +3,7 @@
 import { startEngines, type Engine } from "./engine/client";
 import { BUSY_TIMING, BusyWindow } from "./ui/busy";
 import { setUpFirstComparison } from "./ui/firstcompare";
+import { setUpCompareView } from "./ui/compareview";
 import { ComparisonHandoff } from "./ui/handoff";
 import { setUpOffsetTab } from "./ui/offsettab";
 import { setUpSetupTabs, type SetupPlan } from "./ui/setuptabs";
@@ -454,9 +455,10 @@ const offsetTab = setUpOffsetTab({
 });
 (window as unknown as { __offset: typeof offsetTab }).__offset = offsetTab;
 
-// "Vergleich": for now the temporary view of the first pass, fed by the hand-off.
+// "Vergleich": the smooth comparison view, fed by the hand-off; the sidebar keeps the temporary readout.
 (window as unknown as { __handoff: ComparisonHandoff }).__handoff = handoff;
-const comparisonView = setUpFirstComparison({ engines: () => engines, plans: () => opened, busy: busyWindow, handoff });
+const compareView = setUpCompareView({ engines: () => engines, plans: () => opened });
+const comparisonView = setUpFirstComparison({ busy: busyWindow, handoff, view: compareView });
 comparisonView.listen();
 
 function selectTab(id: TabId): void {
