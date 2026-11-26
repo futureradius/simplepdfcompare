@@ -1,6 +1,6 @@
 // The editor of one Plan's zones in the view (ADR 0002): Header and Footer as thick blue lines
 // with shaded bands, Bereiche and axis zones as shaded boxes with a name tag, their size in mm,
-// a × bubble (delete) and a ⇕ bubble (over the whole length). The clipper's controls: white
+// a × bubble (delete) and a ⇕ bubble (over the whole length; ⇔ when time runs across). The clipper's controls: white
 // square handles on the selected zone, crosshair on empty Plan, move inside, resize arrows on
 // edges, a press that moves under 4 px is a click, the amber Snap guide, Alt drags freely.
 // A left drag edits; panning is the view's business (right or middle button).
@@ -10,6 +10,7 @@ import {
   bandBoxes,
   dragZone,
   effectiveBox,
+  fullLengthGlyph,
   hitTest,
   isClick,
   lengthOf,
@@ -449,7 +450,7 @@ export class ZoneEditor implements Editor {
     const x = Math.max(r.x, 0) + 4,
       y = Math.max(r.y, 0) + 4;
     if (y > r.y + r.h - 6 || x > r.x + r.w - 6) return;
-    this.drawTag(ctx, label, x, y, axisZone ? RED : BLUE, { glyph: "×", title: "Bereich löschen", act: () => this.removeZone(z.id) }, { glyph: "⇕", title: "Über die ganze Länge", act: () => this.toggleFull(z.id), on: z.full });
+    this.drawTag(ctx, label, x, y, axisZone ? RED : BLUE, { glyph: "×", title: "Bereich löschen", act: () => this.removeZone(z.id) }, { glyph: fullLengthGlyph(this.host.axis()), title: "Über die ganze Länge", act: () => this.toggleFull(z.id), on: z.full });
     void vp;
   }
 

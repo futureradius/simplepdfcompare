@@ -49,6 +49,9 @@ export function zoneLabel(all: readonly Zone[], z: Zone): string {
 
 export const lengthOf = (page: PageMm, axis: Axis): number => (axis === "y" ? page.height : page.width);
 
+/** The symbol of the bubble that stretches a zone over the whole length: it points along the Time direction. */
+export const fullLengthGlyph = (axis: Axis): string => (axis === "y" ? "⇕" : "⇔");
+
 export const newZone = (id: number, kind: ZoneKind, box: Box): Zone => ({ id, kind, box, full: false });
 
 export const toggleFull = (z: Zone): Zone => ({ ...z, full: !z.full });

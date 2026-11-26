@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bandBoxes, copyToNewPlan, dragZone, effectiveBox, hitTest, isClick, newZone, setKind, toggleFull, zoneLabel, type PlanZones, type Zone } from "./model";
+import { bandBoxes, copyToNewPlan, dragZone, effectiveBox, fullLengthGlyph, hitTest, isClick, newZone, setKind, toggleFull, zoneLabel, type PlanZones, type Zone } from "./model";
 
 const page = { width: 1000, height: 14000 };
 const box = (x0: number, y0: number, x1: number, y1: number) => ({ x0, y0, x1, y1 });
@@ -104,5 +104,12 @@ describe("copyToNewPlan", () => {
     const n = copyToNewPlan(old, 13710, { width: 1000, height: 500 }, "y");
     expect(n.zones[0]!.box).toEqual(box(10, 300, 90, 500));
     expect(n.footer).toBeGreaterThanOrEqual(n.header);
+  });
+});
+
+describe("fullLengthGlyph", () => {
+  it("points along the Time direction", () => {
+    expect(fullLengthGlyph("y")).toBe("⇕");
+    expect(fullLengthGlyph("x")).toBe("⇔");
   });
 });
