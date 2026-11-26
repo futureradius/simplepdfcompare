@@ -151,7 +151,6 @@ test("Alt | Neu: shows the other Plan, locks nothing, keeps the direction, and n
   await page.waitForTimeout(700); // let the arrows finish sliding
   const old = await pictureHash(page);
   const sw = await box(page, "#shown-switch");
-  const swap = await box(page, "#swap-view");
   const a = await arrow(page, "a");
   await page.locator('#shown-switch button[data-value="new"]').click();
   await expect(page.locator("#shown-switch button[aria-checked='true']")).toHaveText("Neu");
@@ -159,10 +158,8 @@ test("Alt | Neu: shows the other Plan, locks nothing, keeps the direction, and n
   expect(await enabled(page)).toEqual([true, true, false, false, false]);
   await expect(page.locator('#direction-switch button[aria-checked="true"]')).toHaveText("waagerecht");
   const sw2 = await box(page, "#shown-switch");
-  const swap2 = await box(page, "#swap-view");
   const a2 = await arrow(page, "a");
   expect([sw2.x, sw2.y, sw2.width]).toEqual([sw.x, sw.y, sw.width]);
-  expect([swap2.x, swap2.y]).toEqual([swap.x, swap.y]);
   // The arrows stay with the Plan; the two samples differ by 2 % in length, so allow a few px.
   expect(Math.abs(a2.x - a.x)).toBeLessThan(15);
   expect(Math.abs(a2.y - a.y)).toBeLessThan(1);
@@ -170,38 +167,53 @@ test("Alt | Neu: shows the other Plan, locks nothing, keeps the direction, and n
   expect(await pictureHash(page)).toBe(old);
 });
 
-test("the Alt | Neu switch and the swap button sit top left, next to each other; Über stays top right", async ({ page }) => {
+test("the Alt | Neu switch sits alone top left; Über stays top right; the view has no swap button", async ({ page }) => {
   await inOpenTab(page);
   const sw = await box(page, "#shown-switch");
-  const swap = await box(page, "#swap-view");
   const viewer = await box(page, "#viewer");
   expect(sw.x - viewer.x).toBeLessThan(30);
   expect(sw.y - viewer.y).toBeLessThan(30);
-  expect(swap.x).toBeGreaterThanOrEqual(sw.x + sw.width);
-  expect(swap.x - (sw.x + sw.width)).toBeLessThan(20);
   const about = await box(page, "#about-open");
   expect(about.x).toBeGreaterThan(viewer.x + viewer.width - 120);
-  // Only one swap in the workspace, none in the sidebar.
-  await expect(page.locator("#panel [aria-label='Alt und Neu tauschen']")).toHaveCount(0);
+  await expect(page.locator("#viewer button", { hasText: "⇄" })).toHaveCount(0);
+  await expect(page.locator("#viewer [aria-label='Alt und Neu tauschen']")).toHaveCount(0);
+  // The one swap in the workspace is in the sidebar, between the two file cards.
   await expect(page.locator("#workspace [aria-label='Alt und Neu tauschen']")).toHaveCount(1);
-  // The other tabs hide the switch and the swap button.
+  await expect(page.locator("#swap-open")).toHaveText("⇄ Alt/Neu tauschen");
+  const old = await box(page, "#card-old");
+  const sp = await box(page, "#swap-open");
+  const nw = await box(page, "#card-new");
+  expect(sp.y).toBeGreaterThanOrEqual(old.y + old.height);
+  expect(sp.y + sp.height).toBeLessThanOrEqual(nw.y);
+  // The other tabs hide the switch.
   await page.locator("#open-next").click();
   await expect(page.locator("#shown-switch")).toBeHidden();
-  await expect(page.locator("#swap-view")).toBeHidden();
   await expect(page.locator("#about-open")).toBeVisible();
 });
 
-test("swap from the corner exchanges the files, locks the later tabs, and Alt shows the new Old Plan", async ({ page }) => {
+test("swap from the sidebar button exchanges the files, locks the later tabs, and Alt shows the new Old Plan", async ({ page }) => {
   await inOpenTab(page);
   await page.locator("#open-next").click();
   await page.locator("#tab-open").click();
   expect(await enabled(page)).toEqual([true, true, false, false, false]);
   const before = await pictureHash(page);
-  await page.locator("#swap-view").click();
+  const sw = await box(page, "#shown-switch");
+  const s1 = await sheet(page);
+  const a1 = await arrow(page, "a");
+  await page.waitForTimeout(700);
+  await page.locator("#swap-open").click();
   await expect(page.locator("#card-old .file-name")).toHaveText("down-new.pdf");
   await expect(page.locator("#card-new .file-name")).toHaveText("down-old.pdf");
   expect(await enabled(page)).toEqual([true, false, false, false, false]);
   await expect(page.locator("#shown-switch button[aria-checked='true']")).toHaveText("Alt");
+  // Nothing in the view moves, apart from the picture.
+  const sw2 = await box(page, "#shown-switch");
+  const s2 = await sheet(page);
+  const a2 = await arrow(page, "a");
+  expect([sw2.x, sw2.y, sw2.width]).toEqual([sw.x, sw.y, sw.width]);
+  expect(Math.abs(s2.x - s1.x)).toBeLessThan(15);
+  expect(Math.abs(s2.y - s1.y)).toBeLessThan(1);
+  expect(Math.abs(a2.y - a1.y)).toBeLessThan(1);
   // "Alt" now shows what was the New Plan; "Neu" shows what Alt showed before.
   expect(await pictureHash(page)).not.toBe(before);
   await page.locator('#shown-switch button[data-value="new"]').click();

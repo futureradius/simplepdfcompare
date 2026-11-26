@@ -137,7 +137,7 @@
       .view-controls { position: absolute; top: 12px; left: 16px; z-index: 4; display: flex; align-items: center; gap: 10px; }
       .view-controls .dswitch { width: 150px; background: rgba(255, 255, 255, 0.96); box-shadow: var(--shadow); }
       .view-controls .dswitch button { height: 28px; }
-      .view-controls .swap { width: 34px; height: 34px; box-shadow: var(--shadow); }
+      .swap-row { display: flex; justify-content: center; margin: -4px 0 8px; }
       /* The stage reserves room for the Time direction arrows on all four sides, so that
          switching the direction never moves or resizes a Plan. The sheet is the Plan's own
          box (its ratio is set from the page size), fit into the stage. */
@@ -301,6 +301,7 @@
         </div>
         <section class="tab-body" id="body-open" role="tabpanel" aria-labelledby="tab-open">
           <div class="file-card old" id="card-old"></div>
+          <div class="swap-row"><button class="btn" id="swap-open" aria-label="Alt und Neu tauschen">⇄ Alt/Neu tauschen</button></div>
           <div class="file-card new" id="card-new"></div>
           <h2 id="direction-title">In welche Richtung läuft die Zeit?</h2>
           <div class="dswitch" id="direction-switch" role="radiogroup" aria-labelledby="direction-title" data-pos="0">
@@ -323,7 +324,6 @@
             <button type="button" role="radio" data-value="old" aria-checked="true">Alt</button>
             <button type="button" role="radio" data-value="new" aria-checked="false">Neu</button>
           </div>
-          <button class="btn swap" id="swap-view" title="Alt und Neu tauschen" aria-label="Alt und Neu tauschen">⇄</button>
         </div>
         <div class="plans" id="plans" data-dir="down">
           <div class="stage"><div class="sheet" id="sheet"><canvas id="plan" width="1" height="1"></canvas><span class="tarrow a" aria-hidden="true"><svg viewBox="0 0 34 110"><path d="M17 4v94M10.5 91l6.5 15 6.5-15z" fill="currentColor" stroke="currentColor" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/></svg></span><span class="tarrow b" aria-hidden="true"><svg viewBox="0 0 34 110"><path d="M17 4v94M10.5 91l6.5 15 6.5-15z" fill="currentColor" stroke="currentColor" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/></svg></span></div></div>
