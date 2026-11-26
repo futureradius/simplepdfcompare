@@ -1,0 +1,45 @@
+# Look and work like simplepdfclipper, with the steps as tabs
+
+The same people use simplepdfcompare and simplepdfclipper on the same Plans, so the compare tool takes over the clipper's look and controls as they are. It differs in a few places, each for a stated reason. The biggest difference is the frame. The clipper stacks its steps as chapters that fold, in a sidebar 280–560 px wide. Compare puts its steps as tabs at the top of a sidebar that can take up to two thirds of the window. The setup reads left to right, like the sheets of the workbooks its users keep, and the comparison table needs the width.
+
+## Decision
+
+### Taken over from simplepdfclipper as they are
+
+- **Look:** its colours (greys, the blue accent, the warning and error colours), Segoe UI, its corner radius and shadow, light only. Compare's own colours go on top: Added red, Removed yellow, Old blue and New red in the Offset overlay. The amber Snap guide is the same in both tools.
+- **Start page:** no header bar; the name and logo sit small above the headline. Below them: a short intro, the two file boxes with the swap button, the note that the Plans stay on this computer and the tool works offline, and "Weiter". A PDF dropped anywhere fills the first empty box; two dropped at once fill both, in order. The start page only opens the files. Once passed, it is not shown again.
+- **"Über":** the clipper's pill at the top right of the Plan view, opening a 640 px window with four chapters: "Über das Projekt", "Wie geht's", "Tastenkürzel", "Lizenz & Dank". Help lives there, not in the sidebar.
+- **Busy window:** for loading the engine, opening the Plans and "Vergleichen" (about 1.5 s per Plan), with the clipper's timing: shown after 400 ms, for at least 500 ms, with the elapsed time. "Abbrechen" appears only where the work really stops. The Offset search shows a small spinner beside its candidates instead, because the tool stays usable while it runs.
+- **Page picker** (the clipper's ADR 0014), for each of the two boxes. The file is the **Document** and the chosen page is the Plan. "Seite wählen" opens by itself only for a Document with several pages; the box then shows "Seite n von m" with ◀ ▶. The Old and New Plan can come from different pages. The Info sheet of the export names the page. Comparing Plans of several pages stays out of scope.
+- **Keys:** `1` Ganzer Plan, `2` Planbreite, `3` 1:1, `F` the selected Place in "Vergleich" or the selected Bereich in "Alter Plan" and "Neuer Plan". There is no zoom bar; the keys are listed in "Über". The arrow keys depend on the tab: they nudge the Offset in "Versatz" and go to the previous or next Place in "Vergleich".
+- **Mouse:** the clipper's cursors (crosshair on empty Plan, move inside a zone, resize arrows on edges, grab while panning). A press that moves less than 4 px is a click. `Entf` deletes the selected Bereich. Space still shows the New Plan instead of panning (ADR 0003).
+- **Minimap:** the clipper's size and behaviour: at most a third of the view's height and width, at the bottom right, hidden while the whole Plan is in view, folding with ×. A click centres the view there, and dragging pans.
+- **Vorlagen** (the clipper's ADR 0015): "Vorlage: [▾] [✎]", "Name (geändert)" after a change by hand, the window to save, overwrite, rename and delete, and JSON export and import, with a numbered name for a clash.
+  - **Setup:** at the top of "Alter Plan". A Vorlage holds the Header and Footer lines, the Bereiche and the axis zones. It never holds the Offset, which is found for every pair, nor the Time direction, which is confirmed before this tab. Nothing is stretched: a longer Plan covers a longer timespan, not a larger drawing, so the zones keep their distances in mm (as ADR 0002 remembers them). The last setup is still remembered silently as well. File: `simplepdfcompare-Vorlagen.json`.
+  - **Filter:** beside the filter in "Vergleich", replacing its "+" and "×". A Vorlage holds the checked kinds of change; the Wann and Wo ranges belong to one pair and are left out. "Alle" is built in and can't be edited, deleted or used as a name, like the clipper's "Standard". File: `simplepdfcompare-Filter-Vorlagen.json`.
+- **Words:** the same German word for the same thing: Plan, Datei, Seite, Vorlage, Einrasten, Ganzer Plan, Planbreite. "Bereich" here is an area the user chose to leave out of the comparison; in the clipper it is an area chosen to keep. Both are areas the user marks for a purpose, so the word stays.
+- **Code** copied from the clipper as the starting point and then adapted, not shared as a package: snapping, the zone handles, the busy window, the sidebar, the minimap, the Vorlage dropdown and window, and the single-file build.
+
+### Where compare differs
+
+- **Tabs instead of chapters:** `Öffnen | Alter Plan | Neuer Plan | Versatz | Vergleich` at the top of a left sidebar, with their full names. The Plan view runs the full height of the window. A tab can be clicked once the one before it is confirmed; later tabs are greyed out, and going back locks nothing (ADR 0002). The clipper's chapters are open side by side, but each tab here is one question on its own view, so only one tab is open at a time.
+- **"Öffnen" tab:** the sidebar holds the two files (name, page, swap ⇄, "Andere Datei…", and a PDF dropped on a box replaces it), the Time direction and "Weiter". The view shows both Plans whole, side by side, with a swap button between them. There is no zooming or editing there, and no minimap.
+  - **Time direction:** a big arrow along both sides of each Plan shows which way time flows. Below the Plans in the sidebar is a switch, "senkrecht | waagerecht". The words themselves are the buttons, and a highlight slides between them, like the Old/New switch. On a switch the arrows slide to the new direction: on the left and right of each Plan pointing ↓, or above and below pointing →. With reduced motion turned on they fade instead. The switch is preselected from the Old Plan's page shape.
+  - **Changing a file, a page, the order or the Time direction** locks the tabs after "Öffnen" again. The Old Plan's zones stay unless the Old Plan itself changed, the New Plan's zones are copied from the Old again, and the Offset is searched anew. Visiting "Öffnen" without changing anything locks nothing.
+- **Sidebar width:** two remembered widths, one shared by the setup tabs and one for "Vergleich". The setup default and minimum is the width the five tab names need (about 400 px). The "Vergleich" default is half the window, because its table is dense. Either can be dragged until the Plan view keeps only a third of the window; there is no fixed cap like the clipper's 560 px. Double-click resets to that tab's default.
+- **Places on the minimap:** in "Vergleich" each Place is drawn as its own shape, outlined so that it is at least 3 px in every direction. A Place too small to show a shape becomes a circle 3 px across. It is red if the Place has any Added part and yellow if it is only Removed, and it follows the filter and hiding. Where Places overlap they merge into one patch. They are not clickable: they are too small to aim at. This replaces the strip of Places along the view's edge from ADR 0003. The sizes are to be checked by eye on real Plans.
+- **"Exportieren"** sits at the top of the "Vergleich" tab, not at the top right of the window.
+
+## Considered Options
+
+- **The clipper's folding chapters** in a vertical sidebar: the same as the sibling, but compare's steps replace one another rather than being worked on together, and a left-to-right row reads as the order of the setup.
+- **Tabs across the top of the window,** or **at the bottom as in Excel:** both bring back a bar the clipper dropped and take height from a 14 m Plan. At the bottom they would also crowd the ◀ ▶ bar and the minimap.
+- **The Time direction as a step of its own** (ADR 0002) or **on the start page:** it needs the Plans in view to be judged, and the start page is passed only once.
+- **The clipper's zoom bar:** the keys are enough.
+- **A minimap along the whole time axis** so that a narrow 14 m Plan gets a usable width: rejected for the clipper's rule. Most real pairs change far less than the synthetic one, and a filter thins them further.
+
+## Consequences
+
+- This changes ADR 0002: the Time direction step is gone, moved into "Öffnen". The step bar becomes the sidebar's tabs. The Old/New switch of that step goes too.
+- This changes ADR 0003: the strip of Places along the view's edge is gone, replaced by the Places on the minimap, and "Exportieren" moves into the "Vergleich" tab. The sidebar's side and width are now set here.
+- The clipper's ADR 0012 (layout), 0014 (page picker) and 0015 (Vorlagen) are the reference for the details this ADR does not repeat.

@@ -6,9 +6,14 @@ Sibling of simplepdfclipper, whose glossary defines **Plan** and **UserUnit**.
 
 ## Inputs
 
+**Document**
+The PDF file the user opens. It can have several pages; one of them is the Plan. Same
+meaning as in simplepdfclipper.
+_Avoid_: file (in docs), PDF
+
 **Plan**
-One version of a schedule as a PDF: vector graphics and text, not scanned. Same meaning
-as in simplepdfclipper.
+One version of a schedule: one page of a Document, vector graphics and text, not
+scanned. Same meaning as in simplepdfclipper.
 
 **Old Plan**
 The earlier version: the reference that the comparison starts from.
@@ -36,7 +41,8 @@ compared. It moves with the end of the Body, so each Plan has its own Footer pos
 **Ignored area**
 A part of the Body that is not compared, like the Header and Footer: usually a
 sidebar along the whole Body, sometimes a single box. It is usually in the same place in
-every version of a Plan, but not always.
+every version of a Plan, but not always. "Bereich" in the user interface (in
+simplepdfclipper a Bereich is an area kept, here one left out).
 _Avoid_: mask, exclusion, sidebar (only one kind)
 
 **Body**
