@@ -111,6 +111,28 @@ describe("comparing two Plans", () => {
     expect(r.marks.map((m) => m.box.x0)).toEqual([100 - 0.125, 100 - 0.125]);
   });
 
+  it("tells which Plan and which objects (by drawing order) each mark comes from", () => {
+    const old = [line(10, 50, 60, 50), ...label("Gleis 2", 30, 80), line(10, 90, 60, 90)];
+    const nu = [up(line(10, 53, 60, 53)), ...label("Gleis 3", 30, 80).map((g) => up(g)), up(line(10, 90, 60, 90, { colour: RED }))];
+    const r = compare(old, nu, setup());
+    const by = (k: string) => r.marks.filter((m) => `${m.kind} ${m.shape}${m.restyled ? " restyled" : ""}` === k);
+    expect(by("Removed line").map((m) => [m.plan, m.objects])).toEqual([["old", [0]]]);
+    expect(by("Added line").map((m) => [m.plan, m.objects])).toEqual([["new", [0]]]);
+    expect(by("Added word").map((m) => [m.plan, m.objects, m.why])).toEqual([["new", [7], "replaced"]]);
+    expect(by("Added line restyled").map((m) => [m.plan, m.objects, m.recoloured])).toEqual([["new", [8], true]]);
+  });
+
+  it("tells a line drawn only thicker from a recoloured one", () => {
+    const r = compare([line(10, 70, 60, 70)], [up(line(10, 70, 60, 70, { width: 0.35 }))], setup());
+    expect(r.marks.map((m) => [m.recoloured, m.widths])).toEqual([[false, [0.25, 0.35]]]);
+  });
+
+  it("lists the objects matched one to one, as pairs of drawing-order numbers", () => {
+    const old = [line(10, 50, 60, 50), line(10, 60, 60, 60)];
+    const r = compare(old, [up(old[1]!), up(line(10, 55, 60, 55)), up(old[0]!)], setup());
+    expect(r.links).toEqual([0, 2, 1, 0]);
+  });
+
   it("counts an object as ignored by the middle of its part that is compared", () => {
     // A long line starting in the Header: its compared part (y 20.5–60) lies in the Ignored area.
     const r = compare([line(10, 0, 10, 60)], [], setup([{ x0: 0, y0: 20, x1: 30, y1: 70 }]));

@@ -12,7 +12,7 @@ import { insideAny, middleOf } from "./ignored";
 import { sameInk } from "./ink";
 import { matchObjects, placeObjects, type Placed } from "./match";
 import { unionBox, type Axis, type Box, type DrawnObject } from "./objects";
-import { spansOf, textChanges, wordsOf } from "./text";
+import { spansOf, textChanges, wordsOf, type WordChange } from "./text";
 
 /** What is compared of one Plan, in its own page mm. */
 export interface PlanSetup {
@@ -46,12 +46,27 @@ export interface Mark {
   restyled: boolean;
   /** Of a word. */
   text?: string;
+  /** The Plan that draws it: the Old Plan for Removed, the New Plan for Added. */
+  plan: "old" | "new";
+  /** Its objects by their number in their Plan's drawing order: one for a line or area, the letters of a word. */
+  objects: number[];
+  /** Of a restyled mark: its colour changed (else only its line width). */
+  recoloured?: boolean;
+  /** Of a line drawn in another width: Old and New width, mm. */
+  widths?: [number, number];
+  /** Of a changed word: how it changed. */
+  why?: WordChange["why"];
 }
 
 export interface Comparison {
   /** What is compared along the Time direction, in the Old frame. */
   window: [number, number];
   marks: Mark[];
+  /**
+   * The objects matched one to one (identical, recoloured or drawn in another width), as
+   * pairs of drawing-order numbers: Old, New, Old, New ...
+   */
+  links: number[];
   counts: {
     /** Objects compared in each Plan. */
     old: number;
@@ -89,7 +104,16 @@ function withoutIgnored(placed: Placed[], ignored: readonly Box[], axis: Axis, s
   });
 }
 
-function shapeMark(p: Placed, kind: Mark["kind"], restyled: boolean): Mark {
+/** Drawing-order numbers of a Plan's objects. */
+const numbered = (objs: readonly DrawnObject[]) => new Map(objs.map((o, i) => [o, i] as const));
+
+/** How a restyled object changed: its colour, or only its line width. */
+interface Restyle {
+  recoloured: boolean;
+  widths?: [number, number];
+}
+
+function shapeMark(p: Placed, kind: Mark["kind"], no: number, restyle?: Restyle): Mark {
   const o = p.o;
   return {
     kind,
@@ -97,9 +121,14 @@ function shapeMark(p: Placed, kind: Mark["kind"], restyled: boolean): Mark {
     coords: p.coords,
     lineWidth: o.kind === "stroke" ? o.nums[0]! : 0,
     box: p.box,
-    restyled,
+    restyled: !!restyle,
+    plan: kind === "Added" ? "new" : "old",
+    objects: [no],
+    ...(restyle ? { recoloured: restyle.recoloured, ...(restyle.widths ? { widths: restyle.widths } : {}) } : {}),
   };
 }
+
+const colourOf = (o: DrawnObject) => o.style.split("|")[o.kind === "glyph" ? 3 : 1];
 
 export function compare(oldObjs: readonly DrawnObject[], newObjs: readonly DrawnObject[], setup: ComparisonSetup): Comparison {
   const { axis, offset } = setup;
@@ -116,7 +145,14 @@ export function compare(oldObjs: readonly DrawnObject[], newObjs: readonly Drawn
   const width = matchObjects(colour.oldLeft.filter(isLine), colour.newLeft.filter(isLine), (p) => `${p.coords.length}`, false);
   let oldLeft = [...colour.oldLeft.filter((p) => !isLine(p)), ...width.oldLeft],
     newLeft = [...colour.newLeft.filter((p) => !isLine(p)), ...width.newLeft];
-  const restyled = new Set<Placed>([...colour.pairs.map(([, b]) => b), ...width.pairs.map(([, b]) => b)]);
+  const restyled = new Map<Placed, Restyle>([
+    ...colour.pairs.map(([, b]) => [b, { recoloured: true }] as const),
+    ...width.pairs.map(([a, b]) => [b, { recoloured: colourOf(a.o) !== colourOf(b.o), widths: [a.o.nums[0]!, b.o.nums[0]!] as [number, number] }] as const),
+  ]);
+  const noOld = numbered(oldObjs),
+    noNew = numbered(newObjs);
+  const links: number[] = [];
+  for (const [a, b] of [...exact.pairs, ...colour.pairs, ...width.pairs]) links.push(noOld.get(a.o)!, noNew.get(b.o)!);
 
   // 4. The same ink, only cut into other pieces (ADR 0005): no change.
   const inkOld = sameInk(oldLeft, newP),
@@ -132,19 +168,30 @@ export function compare(oldObjs: readonly DrawnObject[], newObjs: readonly Drawn
   const edgeOld = sameInk(oldLeft.filter(atEdge), newP, true),
     edgeNew = sameInk(newLeft.filter(atEdge), oldP, true);
   oldLeft = oldLeft.filter((p) => !edgeOld.has(p));
-  for (const p of newLeft) if (edgeNew.has(p)) restyled.add(p);
+  for (const p of newLeft) if (edgeNew.has(p)) restyled.set(p, { recoloured: true });
   newLeft = newLeft.filter((p) => !edgeNew.has(p));
 
   const marks: Mark[] = [];
   // 6. Lines and areas left over.
-  for (const p of oldLeft) if (p.o.kind !== "glyph") marks.push(shapeMark(p, "Removed", false));
-  for (const p of newLeft) if (p.o.kind !== "glyph") marks.push(shapeMark(p, "Added", false));
-  for (const p of restyled) if (p.o.kind !== "glyph") marks.push(shapeMark(p, "Added", true));
+  for (const p of oldLeft) if (p.o.kind !== "glyph") marks.push(shapeMark(p, "Removed", noOld.get(p.o)!));
+  for (const p of newLeft) if (p.o.kind !== "glyph") marks.push(shapeMark(p, "Added", noNew.get(p.o)!));
+  for (const [p, how] of restyled) if (p.o.kind !== "glyph") marks.push(shapeMark(p, "Added", noNew.get(p.o)!, how));
   // 7. Text, per word.
   for (const c of textChanges(oldLeft, newLeft, oldP, newP))
-    marks.push({ kind: c.kind, shape: "word", coords: [], lineWidth: 0, box: c.word.box, restyled: false, text: c.word.text });
+    marks.push({
+      kind: c.kind,
+      shape: "word",
+      coords: [],
+      lineWidth: 0,
+      box: c.word.box,
+      restyled: false,
+      text: c.word.text,
+      plan: c.kind === "Added" ? "new" : "old",
+      objects: c.word.letters.map((g) => (c.kind === "Added" ? noNew : noOld).get(g.o)!),
+      why: c.why,
+    });
   // A recoloured word is Added as a whole word.
-  const recolouredLetters = [...restyled].filter((p) => p.o.kind === "glyph");
+  const recolouredLetters = [...restyled.keys()].filter((p) => p.o.kind === "glyph");
   if (recolouredLetters.length) {
     const spans = spansOf(newP),
       done = new Set<number>();
@@ -154,13 +201,25 @@ export function compare(oldObjs: readonly DrawnObject[], newObjs: readonly Drawn
       done.add(span);
       for (const w of wordsOf(spans.get(span) ?? [])) {
         if (!w.letters.some((g) => restyled.has(g))) continue;
-        marks.push({ kind: "Added", shape: "word", coords: [], lineWidth: 0, box: w.letters.map((g) => g.box).reduce(unionBox), restyled: true, text: w.text });
+        marks.push({
+          kind: "Added",
+          shape: "word",
+          coords: [],
+          lineWidth: 0,
+          box: w.letters.map((g) => g.box).reduce(unionBox),
+          restyled: true,
+          text: w.text,
+          plan: "new",
+          objects: w.letters.map((g) => noNew.get(g.o)!),
+          recoloured: w.letters.some((g) => restyled.get(g)?.recoloured !== false),
+        });
       }
     }
   }
   return {
     window,
     marks,
+    links,
     counts: {
       old: oldP.length,
       new: newP.length,
