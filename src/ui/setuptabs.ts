@@ -10,11 +10,13 @@ import { bandBoxes, copyToNewPlan, effectiveBox, lengthOf, zoneLabel, type PageM
 import { applyRemembered, loadRemembered, storeRemembered, toRemembered } from "../zones/remember";
 import { SegmentIndex } from "../zones/snap";
 import { SetupStore } from "../zones/setupstore";
+import { applySetup, loadSetups, sameSetup, SETUP_FILE_NAME, SETUP_NAMES, setupFromJson, setupOf, setupToJson, storeSetups, type NamedSetup, type SetupVorlage } from "../zones/vorlagen";
 import type { BusyWindow } from "./busy";
 import type { Direction } from "./direction";
 import { Minimap } from "./minimap";
 import type { Role, Sides } from "./openplans";
 import { PlanView, type Subject } from "./planview";
+import { PresetMenu } from "./presetmenu";
 import { ZoneEditor, type GhostZone } from "./zoneeditor";
 import { ZonePanel } from "./zonepanel";
 
@@ -86,6 +88,36 @@ export function setUpSetupTabs(deps: SetupDeps) {
 
   const axis = () => axisOf(deps.direction());
 
+  // Vorlagen at the top of "Alter Plan" (ADR 0009): the lines and zones of the Old Plan, never the
+  // Time direction or the Offset. The picked one is remembered per direction, like the setup.
+  const vorlagen = new PresetMenu<NamedSetup, SetupVorlage>({
+    prefix: "setup-vorlage",
+    rules: SETUP_NAMES,
+    plural: "Vorlagen",
+    fileName: SETUP_FILE_NAME,
+    overwriteLabel: (name) => `„${name}“ mit dem aktuellen Aufbau überschreiben`,
+    changedTitle: "Aufbau geändert. Vorlage erneut wählen, um sie wiederherzustellen.",
+    sameTitle: "Der aktuelle Aufbau entspricht schon dieser Vorlage.",
+    current() {
+      const s = setups.old;
+      return s ? { value: setupOf(s.editor.pz, axis(), lengthOf(s.page, axis())) } : { problem: "Der alte Plan ist noch nicht bereit." };
+    },
+    valueOf: (p) => p.setup,
+    make: (name, setup) => ({ name, setup }),
+    apply(v) {
+      const s = setups.old;
+      if (!v || !s) return;
+      s.editor.set(applySetup(v, axis(), s.page, () => s.editor.newId()));
+      s.editor.selected = undefined;
+      committed("old");
+    },
+    same: (current, saved) => !!saved && sameSetup(current, saved),
+    load: () => loadSetups(axis()),
+    store: (st) => storeSetups(axis(), st),
+    toJson: setupToJson,
+    fromJson: setupFromJson,
+  });
+
   /** The Old Plan's zones as hatched ghosts on the New Plan: those that lie elsewhere there. */
   function ghosts(): GhostZone[] {
     const o = setups.old,
@@ -109,6 +141,7 @@ export function setUpSetupTabs(deps: SetupDeps) {
       minimap.setZones(s.editor.boxes());
     }
     s.panel.update({ pz: s.editor.pz, selected: s.editor.selected, axis: axis(), page: s.page });
+    if (role === "old") vorlagen.render();
   }
 
   function committed(role: Role): void {
@@ -261,6 +294,10 @@ export function setUpSetupTabs(deps: SetupDeps) {
       current = role;
       s.panel.setDrawKind(drawKind);
       s.panel.mount($(`body-${role}`));
+      if (role === "old") {
+        $("body-old").querySelector("h2")?.after(vorlagen.el);
+        vorlagen.reload(); // the picked one belongs to the Time direction
+      }
       if (role === "new" && !s.edited) copyFromOld();
       const plan = deps.plans()[role]!;
       minimap.setPlan(plan.widthMm, plan.heightMm, plan.picture);

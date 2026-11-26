@@ -85,6 +85,13 @@ The part of one Body that has no counterpart in the other Body once the Offset i
 applied, because that Plan covers a longer timespan. Shown, but not compared: it holds
 no Differences.
 
+**Vorlage**
+A named setup the user saves and picks again, as in simplepdfclipper (its Preset). The
+setup Vorlage holds the Header and Footer lines and the zones of a Plan (Ausgenommen and the
+axis zones), as distances in mm, so nothing is stretched; never the Offset or the Time
+direction. The filter has its own, holding the checked kinds of change.
+_Avoid_: template, preset (in the UI)
+
 ## Result
 
 **Difference**
