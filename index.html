@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>simple pdf compare</title>
+    <!-- Logo: the "diff" icon from Lucide (ISC license), https://lucide.dev/icons/diff -->
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%232563eb' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3v14'/><path d='M5 10h14'/><path d='M5 21h14'/></svg>" />
+    <style>
+      :root {
+        --bg: #f4f5f7;
+        --surface: #ffffff;
+        --line: #e2e4e9;
+        --line-strong: #cdd1d8;
+        --text: #1d2026;
+        --muted: #6a7180;
+        --accent: #2563eb;
+        --accent-hover: #1d4fd8;
+        --accent-soft: #e8efff;
+        --warn-bg: #fff6e0;
+        --warn-line: #f0c45a;
+        --severe-bg: #fde8e8;
+        --severe-line: #e5484d;
+        --radius: 8px;
+        --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 4px 12px rgba(16, 24, 40, 0.08);
+      }
+      * { box-sizing: border-box; }
+      html, body { height: 100%; margin: 0; }
+      body {
+        font: 14px/1.45 "Segoe UI", system-ui, Arial, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        display: flex;
+        flex-direction: column;
+      }
+      button, input, select { font: inherit; color: inherit; }
+      [hidden] { display: none !important; }
+
+      /* ---- Brand and "Über" (no header bar, #50) ----------------------------- */
+      .brand { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 0 0 14px; font-weight: 600; font-size: 14px; letter-spacing: 0.1px; color: var(--muted); }
+      .brand svg { color: var(--accent); }
+      /* Top right of the window: on the start page, and over the Plan view in the workspace. */
+      #about-open {
+        position: fixed; top: 12px; right: 16px; z-index: 5;
+        height: 30px; padding: 0 12px; font-size: 13px; color: var(--muted);
+        background: rgba(255, 255, 255, 0.96); border-color: var(--line); border-radius: 15px; box-shadow: var(--shadow);
+      }
+      #about-open:hover { color: var(--text); background: #fff; }
+
+      /* ---- Buttons ----------------------------------------------------------- */
+      .btn {
+        display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+        height: 34px; padding: 0 14px;
+        border-radius: 6px; border: 1px solid var(--line-strong);
+        background: var(--surface); cursor: pointer; white-space: nowrap;
+      }
+      .btn:hover { background: #f1f3f6; }
+      .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+      .btn.primary:hover { background: var(--accent-hover); }
+      .btn.ghost { border-color: transparent; background: transparent; color: var(--muted); }
+      .btn.ghost:hover { background: #eef0f3; color: var(--text); }
+      .btn:disabled { opacity: 0.5; cursor: default; }
+      .btn:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+
+      /* Compare's own marks (ADR 0009). */
+      :root {
+        --added: #e5484d;
+        --removed: #f5c518;
+        --old-plan: #2563eb;
+        --new-plan: #e5484d;
+        --guide: #f59e0b;
+      }
+
+      /* ---- Start page ---------------------------------------------------------- */
+      #start { flex: 1; display: grid; place-items: center; padding: 24px; overflow: auto; }
+      .start-stack { width: min(860px, 100%); display: flex; flex-direction: column; gap: 18px; }
+      .intro { text-align: center; }
+      .intro h1 { font-size: 22px; margin: 0 0 6px; }
+      .intro > p { margin: 0 auto; max-width: 560px; color: var(--muted); }
+      .local { display: flex; align-items: flex-start; justify-content: center; gap: 8px; margin: 0; font-size: 13px; color: var(--muted); text-align: left; }
+      .local svg { flex: 0 0 auto; margin-top: 1px; color: var(--accent); }
+      .boxes { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 12px; align-items: stretch; }
+      .box {
+        position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+        min-height: 250px; padding: 20px 18px; text-align: center; min-width: 0;
+        background: var(--surface); border: 2px dashed var(--line-strong); border-radius: 14px; box-shadow: var(--shadow);
+        transition: border-color 0.15s, background 0.15s; cursor: pointer;
+      }
+      .box:hover, .box.over, body.dragging .box { border-color: var(--accent); }
+      .box.over { background: var(--accent-soft); }
+      .box.filled { border-style: solid; cursor: default; }
+      .box .role { font-size: 12px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase; color: var(--muted); }
+      .box.old .role { color: var(--old-plan); }
+      .box.new .role { color: var(--new-plan); }
+      .box .empty svg { color: var(--accent); }
+      .box h2 { font-size: 17px; margin: 8px 0 2px; }
+      .box p { margin: 0; color: var(--muted); }
+      .box .file-name { font-weight: 600; overflow-wrap: anywhere; word-break: break-word; max-width: 100%; }
+      .box .thumb-img { max-width: 100%; max-height: 150px; border: 1px solid var(--line); background: #fff; }
+      .box .other { margin-top: 4px; }
+      .swap { align-self: center; width: 40px; height: 40px; padding: 0; border-radius: 50%; font-size: 18px; }
+      .start-actions { display: flex; justify-content: center; }
+      .start-actions .btn { height: 40px; padding: 0 28px; }
+      #start-error { color: var(--severe-line); text-align: center; margin: 0; min-height: 1em; }
+      body.dragging #start .boxes { outline: 2px dashed var(--accent); outline-offset: 6px; border-radius: 16px; }
+      @media (max-width: 640px) { .boxes { grid-template-columns: 1fr; } .swap { justify-self: center; } }
+
+      /* ---- Workspace ------------------------------------------------------------ */
+      .app { flex: 1; min-height: 0; display: grid; grid-template-columns: var(--panel-w, 400px) 1fr; position: relative; }
+      .panel { background: var(--surface); border-right: 1px solid var(--line); overflow: hidden auto; display: flex; flex-direction: column; min-width: 0; }
+      .tabs { display: flex; border-bottom: 1px solid var(--line); flex: 0 0 auto; }
+      .tab { flex: 1 1 auto; border: 0; border-bottom: 2px solid transparent; background: transparent; padding: 11px 6px; cursor: pointer; font-size: 13px; white-space: nowrap; }
+      .tab:hover:not(:disabled) { background: #f1f3f6; }
+      .tab[aria-selected="true"] { color: var(--accent); font-weight: 600; border-bottom-color: var(--accent); }
+      .tab:disabled { color: #b4b9c4; cursor: default; }
+      .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+      .tab-body { padding: 14px 18px 18px; }
+      .tab-body[hidden] { display: none; }
+      .tab-body h2 { font-size: 14px; margin: 0 0 12px; }
+      .file-card { padding: 10px 12px; margin: 0 0 12px; border: 1px solid var(--line); border-radius: var(--radius); }
+      .file-card .role { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 4px; }
+      .file-card.old .role { color: var(--old-plan); }
+      .file-card.new .role { color: var(--new-plan); }
+      .file-card .file-name { font-weight: 600; overflow-wrap: anywhere; }
+      .file-card.over { border-color: var(--accent); background: var(--accent-soft); }
+      .file-card .btn { margin-top: 8px; }
+      .swap-row { display: flex; justify-content: center; margin: -4px 0 12px; }
+      .swap-row .btn { width: auto; padding: 0 14px; }
+      .placeholder { color: var(--muted); }
+      .panel-resize { position: absolute; top: 0; bottom: 0; left: calc(var(--panel-w, 400px) - 4px); width: 8px; z-index: 3; cursor: col-resize; touch-action: none; }
+      .panel-resize::after { content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 2px; background: transparent; transition: background 0.15s; }
+      .panel-resize:hover::after, .panel-resize:focus-visible::after, body.resizing-panel .panel-resize::after { background: var(--accent); }
+      .panel-resize:focus-visible { outline: none; }
+      body.resizing-panel { cursor: col-resize; user-select: none; }
+      .viewer { position: relative; min-width: 0; min-height: 0; overflow: hidden; background: #e7e9ee; }
+      .plans { position: absolute; inset: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); gap: 10px; align-items: stretch; padding: 56px 16px 16px; }
+      .plans .plan-frame { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 6px; }
+      .plans .plan-frame .cap { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; text-align: center; }
+      .plans .plan-frame.old .cap { color: var(--old-plan); }
+      .plans .plan-frame.new .cap { color: var(--new-plan); }
+      .plans .plan-frame .img { min-height: 0; display: flex; justify-content: center; }
+      .plans canvas { height: 100%; width: auto; max-width: 100%; object-fit: contain; background: #fff; box-shadow: 0 0 0 1px var(--line-strong), 0 1px 3px rgba(16, 24, 40, 0.12); }
+      .plans .swap { align-self: center; }
+      .viewer .placeholder-view { position: absolute; inset: 0; display: grid; place-items: center; }
+
+      /* ---- About ---------------------------------------------------------------- */
+      dialog { border: 0; border-radius: 12px; padding: 0; width: min(460px, calc(100% - 32px)); box-shadow: 0 20px 50px rgba(16, 24, 40, 0.25); color: var(--text); }
+      dialog::backdrop { background: rgba(20, 24, 32, 0.35); }
+      dialog .body { padding: 22px 24px 8px; }
+      dialog h2 { margin: 0 0 4px; font-size: 18px; }
+      dialog p { margin: 10px 0; }
+      dialog a { color: var(--accent); }
+      /* The About window: wide enough for the chapters, the key column wraps at a third (#50). */
+      dialog#about { width: min(640px, calc(100% - 32px)); }
+      dialog#about .body { max-height: calc(100vh - 140px); overflow: hidden auto; }
+      dialog#about ol { margin: 6px 0 10px; padding-left: 20px; }
+      dialog#about ul { margin: 6px 0 10px; padding-left: 20px; }
+      dialog#about li { margin: 0 0 6px; }
+      #about-howto:focus { outline: none; }
+      table.keys { border-collapse: collapse; margin: 4px 0 12px; font-size: 13px; width: 100%; }
+      table.keys td { padding: 3px 12px 3px 0; vertical-align: top; }
+      /* No nowrap: a long key description wraps instead of pushing the explanations aside. */
+      table.keys { table-layout: fixed; }
+      table.keys td:first-child { width: 30%; }
+      dialog h3 { margin: 18px 0 6px; font-size: 14px; }
+      dialog .foot { display: flex; justify-content: flex-end; padding: 12px 16px 16px; }
+      /* ---- Page picker (ADR 0014) ------------------------------------------------ */
+      .pager { display: flex; align-items: center; gap: 4px; margin: 8px 0 4px; }
+      .pager[hidden] { display: none; }
+      .pager .btn { height: 30px; padding: 0 10px; }
+      .pager .pg-nav { width: 30px; padding: 0; font-size: 11px; color: var(--muted); }
+      .pager .pg-pick { flex: 1; }
+      .pager b { font-variant-numeric: tabular-nums; }
+      dialog#pages { width: min(760px, calc(100% - 32px)); }
+      .thumbs {
+        display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px;
+        margin-top: 14px; padding: 4px; max-height: min(64vh, 640px); overflow: hidden auto;
+      }
+      .thumb {
+        display: grid; justify-items: center; gap: 6px; padding: 10px 6px 8px;
+        border: 1px solid transparent; border-radius: var(--radius); background: transparent; cursor: pointer; font: inherit; color: inherit;
+      }
+      .thumb:hover { background: #f1f3f6; }
+      .thumb:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
+      .thumb.current { border-color: var(--accent); background: var(--accent-soft); }
+      .thumb .frame { height: 220px; display: grid; place-items: center; }
+      .thumb canvas { display: block; background: #fff; box-shadow: 0 0 0 1px var(--line-strong), 0 1px 3px rgba(16, 24, 40, 0.12); }
+      .thumb:not(.ready) canvas { background: #f6f7f9; }
+      .thumb .label { font-size: 13px; color: var(--muted); }
+      .thumb .frame { position: relative; }
+      .thumb:not(.ready) .frame::after {
+        content: ""; position: absolute; left: 50%; top: 50%; width: 28px; height: 28px; margin: -14px 0 0 -14px;
+        border: 3px solid var(--line); border-top-color: var(--muted); border-radius: 50%; animation: spin 0.8s linear infinite;
+      }
+      /* ---- Busy window and spinners (ADR 0012) ------------------------------------ */
+      @keyframes spin { to { transform: rotate(360deg); } }
+      @keyframes pulse { 50% { opacity: 0.3; } }
+      dialog#busy { width: max(260px, 20vw); max-width: calc(100% - 32px); border-radius: 16px; opacity: 0; transition: opacity 0.15s; }
+      dialog#busy.shown { opacity: 1; }
+      dialog#busy::backdrop { background: rgba(20, 24, 32, 0); transition: background-color 0.15s; }
+      dialog#busy.shown::backdrop { background: rgba(20, 24, 32, 0.35); }
+      dialog#busy:focus { outline: none; }
+      .busy-body { display: grid; justify-items: center; gap: 10px; padding: 28px 22px 22px; text-align: center; }
+      .busy-spin { width: 40%; height: auto; aspect-ratio: 1; animation: spin 0.8s linear infinite; }
+      .busy-spin circle { fill: none; stroke-width: 5; }
+      .busy-spin .track { stroke: var(--accent-soft); }
+      .busy-spin .arc { stroke: var(--accent); stroke-linecap: round; stroke-dasharray: 42 126; }
+      #busy-text { margin: 6px 0 0; font-weight: 600; font-size: 15px; overflow-wrap: anywhere; }
+      #busy-bar { width: 100%; height: 6px; accent-color: var(--accent); }
+      #busy-time { margin: 0; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+      #busy-cancel { margin-top: 4px; }
+      .btn.busy::before, #snap-status.loading::before {
+        content: ""; flex: 0 0 auto; display: inline-block; width: 1em; height: 1em; border-radius: 50%;
+        border: 2px solid var(--accent-soft); border-top-color: var(--accent); animation: spin 0.8s linear infinite;
+      }
+      .btn.primary.busy::before { border-color: rgba(255, 255, 255, 0.35); border-top-color: #fff; }
+      #snap-status.loading::before { margin-right: 6px; vertical-align: -0.15em; }
+      @media (prefers-reduced-motion: reduce) {
+        .busy-spin, .btn.busy::before, #snap-status.loading::before, .thumb:not(.ready) .frame::after { animation: pulse 1.2s ease-in-out infinite; }
+      }
+      .thumb.current .label { color: var(--accent); font-weight: 600; }
+
+      dialog#about h2 { font-size: 18px; }
+    </style>
+  </head>
+  <body>
+    <button class="btn" id="about-open" title="Über das Werkzeug, Anleitung und Tastenkürzel">Über</button>
+    <input id="file-old" type="file" accept="application/pdf,.pdf" hidden />
+    <input id="file-new" type="file" accept="application/pdf,.pdf" hidden />
+
+    <main id="start">
+      <div class="start-stack">
+        <section class="intro">
+          <div class="brand">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 3v14" /><path d="M5 10h14" /><path d="M5 21h14" />
+            </svg>
+            simple pdf compare
+          </div>
+          <h1>Zwei Versionen eines Plans vergleichen</h1>
+          <p>Den alten und den neuen Plan öffnen. Das Werkzeug zeigt, was hinzugekommen ist und was weggefallen ist.</p>
+        </section>
+        <div class="boxes" id="boxes">
+          <div class="box old" id="box-old" data-role="old" tabindex="0" role="button" aria-label="Alten Plan öffnen"></div>
+          <button class="btn swap" id="swap-start" title="Alt und Neu tauschen" aria-label="Alt und Neu tauschen">⇄</button>
+          <div class="box new" id="box-new" data-role="new" tabindex="0" role="button" aria-label="Neuen Plan öffnen"></div>
+        </div>
+        <p id="start-error" role="alert"></p>
+        <div class="start-actions"><button class="btn primary" id="proceed" disabled>Weiter</button></div>
+        <p class="local">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="4" y="11" width="16" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" />
+          </svg>
+          <span>
+            Alles bleibt auf diesem Computer: Die Pläne werden nur hier im Browser geöffnet, nicht hochgeladen
+            und nirgendwohin gesendet. Das Werkzeug funktioniert auch ohne Internet.
+          </span>
+        </p>
+      </div>
+    </main>
+
+    <div class="app" id="workspace" hidden>
+      <aside class="panel" id="panel">
+        <div class="tabs" role="tablist" aria-label="Schritte">
+          <button class="tab" role="tab" id="tab-open" data-tab="open" aria-selected="true">Öffnen</button>
+          <button class="tab" role="tab" id="tab-old" data-tab="old" aria-selected="false">Alter Plan</button>
+          <button class="tab" role="tab" id="tab-new" data-tab="new" aria-selected="false" disabled>Neuer Plan</button>
+          <button class="tab" role="tab" id="tab-offset" data-tab="offset" aria-selected="false" disabled>Versatz</button>
+          <button class="tab" role="tab" id="tab-compare" data-tab="compare" aria-selected="false" disabled>Vergleich</button>
+        </div>
+        <section class="tab-body" id="body-open" role="tabpanel" aria-labelledby="tab-open">
+          <div class="file-card old" id="card-old"></div>
+          <div class="swap-row"><button class="btn" id="swap-ws" title="Alt und Neu tauschen">⇄ Tauschen</button></div>
+          <div class="file-card new" id="card-new"></div>
+        </section>
+        <section class="tab-body" id="body-old" role="tabpanel" aria-labelledby="tab-old" hidden>
+          <h2>Alter Plan</h2>
+          <p class="placeholder">Hier werden später Kopf, Fuß und Bereiche des alten Plans festgelegt.</p>
+        </section>
+      </aside>
+      <div class="panel-resize" id="panel-resize" role="separator" aria-orientation="vertical" tabindex="0" title="Breite der Seitenleiste ändern"></div>
+      <div class="viewer" id="viewer">
+        <div class="plans" id="plans">
+          <div class="plan-frame old"><div class="cap">Alter Plan</div><div class="img"><canvas id="plan-old" width="1" height="1"></canvas></div></div>
+          <button class="btn swap" id="swap-view" title="Alt und Neu tauschen" aria-label="Alt und Neu tauschen">⇄</button>
+          <div class="plan-frame new"><div class="cap">Neuer Plan</div><div class="img"><canvas id="plan-new" width="1" height="1"></canvas></div></div>
+        </div>
+      </div>
+    </div>
+
+    <dialog id="pages" aria-labelledby="pages-title">
+      <div class="body">
+        <h2 id="pages-title">Seite wählen</h2>
+        <div class="muted" id="pages-info"></div>
+        <div class="thumbs" id="pages-grid"></div>
+      </div>
+      <div class="foot"><button class="btn" id="pages-cancel">Abbrechen</button></div>
+    </dialog>
+    <dialog id="busy" closedby="none" aria-labelledby="busy-text">
+      <div class="busy-body">
+        <svg class="busy-spin" viewBox="0 0 50 50" aria-hidden="true"><circle class="track" cx="25" cy="25" r="20" /><circle class="arc" cx="25" cy="25" r="20" /></svg>
+        <p id="busy-text" role="status"></p>
+        <progress id="busy-bar" hidden></progress>
+        <p id="busy-time" aria-label="Bisherige Dauer">0:00</p>
+        <button class="btn" id="busy-cancel" hidden>Abbrechen</button>
+      </div>
+    </dialog>
+    <dialog id="about">
+      <div class="body">
+        <h2>simple pdf compare</h2>
+        <div class="muted" id="version"></div>
+        <h3>Über das Projekt</h3>
+        <p>Vergleicht zwei Fassungen eines Vektor-PDF-Plans und zeigt, was hinzugekommen (rot) und was weggefallen (gelb) ist. Läuft vollständig lokal; die Pläne verlassen diesen Computer nicht.</p>
+        <h3 id="about-howto" tabindex="-1">Wie geht's</h3>
+        <p class="muted">Die Anleitung folgt mit den nächsten Schritten. Bisher: den alten und den neuen Plan öffnen (ziehen oder anklicken) und mit „Weiter“ in die Arbeitsansicht wechseln. Hat eine Datei mehrere Seiten, die Seite wählen, die verglichen werden soll.</p>
+        <h3>Tastenkürzel</h3>
+        <p class="muted">Die Tastenkürzel folgen mit den nächsten Schritten.</p>
+        <h3>Lizenz &amp; Dank</h3>
+        <p>Quellcode: <a href="https://github.com/futureradius/simplepdfcompare" target="_blank" rel="noopener">github.com/futureradius/simplepdfcompare</a></p>
+        <p class="muted">
+          Lizenz: GNU AGPL-3.0 oder neuer.<br />
+          Verwendet <a href="https://mupdf.com/" target="_blank" rel="noopener">MuPDF</a> © Artifex Software, Inc. (AGPL-3.0).<br />
+          Logo: <a href="https://lucide.dev/icons/diff" target="_blank" rel="noopener">„diff“ von Lucide</a> (ISC-Lizenz).<br />
+          Erstellt von futureradius, entwickelt mit Claude.
+        </p>
+      </div>
+      <div class="foot"><button class="btn" id="about-close">Schließen</button></div>
+    </dialog>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>

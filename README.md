@@ -8,8 +8,18 @@ direction) and show on screen what was **Added** (red) and what was **Removed**
 Runs fully local, like its sibling [simplepdfclipper](https://github.com/futureradius/simplepdfclipper):
 no server, no upload.
 
-> Status: planning. See [`GLOSSARY.md`](GLOSSARY.md) for the domain and the
+> Status: building v1 (skeleton and start page done). See [`GLOSSARY.md`](GLOSSARY.md) for the domain and the
 > `wayfinder:map` issue for the open decisions.
+
+## Run
+
+```sh
+npm install
+npm run dev      # dev server
+npm run build    # one file: dist/index.html, opens from file:// in Edge
+npm test         # Vitest
+npm run e2e      # Playwright in Edge (needs build and samples first)
+```
 
 ## Sample Plans
 
