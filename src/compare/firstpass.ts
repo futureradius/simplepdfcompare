@@ -6,6 +6,7 @@ import { guessBody } from "./body";
 import { compare, type Comparison, type ComparisonSetup } from "./compare";
 import { axisOf, type DrawnObject, type TimeDirection } from "./objects";
 import { findOffset, type OffsetResult } from "./offset";
+import { findPlaces, type Place } from "./places";
 
 export interface PlanObjects {
   objects: readonly DrawnObject[];
@@ -24,7 +25,9 @@ export interface FirstPass {
   offset: OffsetResult;
   setup: ComparisonSetup;
   comparison: Comparison;
-  ms: { offset: number; compare: number };
+  /** The Places, formed as the comparison is shown. */
+  places: Place[];
+  ms: { offset: number; compare: number; places: number };
 }
 
 export function firstPass(input: FirstPassInput): FirstPass {
@@ -37,5 +40,8 @@ export function firstPass(input: FirstPassInput): FirstPass {
   const setup: ComparisonSetup = { axis, offset: offset.offset, old, new: nu };
   t = performance.now();
   const comparison = compare(input.old.objects, input.new.objects, setup);
-  return { timeDirection: input.timeDirection, offset, setup, comparison, ms: { offset: offsetMs, compare: performance.now() - t } };
+  const compareMs = performance.now() - t;
+  t = performance.now();
+  const places = findPlaces({ old: input.old.objects, new: input.new.objects, setup, comparison });
+  return { timeDirection: input.timeDirection, offset, setup, comparison, places, ms: { offset: offsetMs, compare: compareMs, places: performance.now() - t } };
 }
