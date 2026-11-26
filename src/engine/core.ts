@@ -6,15 +6,29 @@
 // *candidate* (thumbnails of its pages can be drawn), openPage() makes one of its pages
 // the Plan. Until then the previous Plan stays usable, so the page picker can be cancelled.
 // Later slices add the display list, overview and bands to openPage().
+//
+// The Plan's drawn objects are extracted on first use (the comparison) and kept until
+// another page becomes the Plan. The Old Plan's engine compares them with the New Plan's.
 
 import type * as MuPDF from "mupdf";
+import { firstPass as runFirstPass, type FirstPass, type PlanObjects } from "../compare/firstpass";
+import type { TimeDirection } from "../compare/objects";
+import { extractObjects } from "./extract";
 import type { DocumentInfo, PageBoxName, PlanInfo, Preview, ThumbnailRequest } from "./protocol";
+
+const PT_TO_MM = 25.4 / 72;
 
 let mupdf: typeof MuPDF | undefined;
 /** The Document the Plan comes from. */
 let current: MuPDF.Document | undefined;
 /** A Document just opened, whose page has not been chosen yet. */
 let candidate: MuPDF.Document | undefined;
+/** The page of `current` that is the Plan. */
+let planPage = -1;
+/** The Plan's drawn objects, once extracted. */
+let objects: PlanObjectsInfo | undefined;
+
+export type PlanObjectsInfo = PlanObjects & { extractMs: number };
 
 const BOXES: PageBoxName[] = ["MediaBox", "CropBox", "BleedBox", "TrimBox", "ArtBox"];
 
@@ -85,6 +99,8 @@ export function openPage(index: number): PlanInfo {
       current = candidate;
       candidate = undefined;
     }
+    planPage = index;
+    objects = undefined;
     return { pageCount, pageIndex: index, widthPt: x1 - x0, heightPt: y1 - y0, boxes, userUnit, rotate };
   } finally {
     page.destroy();
@@ -115,4 +131,28 @@ export function renderThumbnail(t: ThumbnailRequest): Preview {
   } finally {
     page.destroy();
   }
+}
+
+/** The Plan's drawn objects in page mm, extracted on first use. */
+export function planObjects(): PlanObjectsInfo {
+  if (objects) return objects;
+  if (!current || planPage < 0) throw new Error("no Plan open");
+  const page = current.loadPage(planPage);
+  try {
+    const t = performance.now();
+    const [x0, y0, x1, y1] = page.getBounds();
+    const extracted = extractObjects(lib(), page);
+    objects = { objects: extracted, pageMm: [(x1 - x0) * PT_TO_MM, (y1 - y0) * PT_TO_MM], extractMs: performance.now() - t };
+    return objects;
+  } finally {
+    page.destroy();
+  }
+}
+
+export type FirstPassInfo = FirstPass & { extractMs: number };
+
+/** Compares this engine's Plan, as the Old Plan, with the New Plan's objects (first pass). */
+export function firstPass(newPlan: PlanObjects, timeDirection: TimeDirection): FirstPassInfo {
+  const old = planObjects();
+  return { ...runFirstPass({ timeDirection, old, new: newPlan }), extractMs: old.extractMs };
 }
