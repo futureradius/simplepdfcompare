@@ -174,7 +174,8 @@ test("Weiter leads to the workspace shell, which is not left again", async ({ pa
   await page.locator("#swap-view").click();
   await expect(page.locator("#card-old")).toContainText("down-new.pdf");
   // "Alter Plan" shows its placeholder.
-  await page.locator("#tab-old").click();
+  await expect(page.locator("#tab-old")).toBeDisabled();
+  await page.locator("#open-next").click();
   await expect(page.locator("#body-old")).toBeVisible();
   await expect(page.locator("#body-open")).toBeHidden();
   // "Über" opens the About window with its chapters.

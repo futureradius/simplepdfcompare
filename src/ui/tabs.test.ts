@@ -38,7 +38,7 @@ describe("tab rules", () => {
 describe("signatureChanged", () => {
   const base: OpenSignature = { old: { file: "a.pdf", page: 0 }, new: { file: "b.pdf", page: 0 }, direction: "down" };
   it("is false for the same state", () => {
-    expect(signatureChanged(base, { ...base, old: { ...base.old } })).toBe(false);
+    expect(signatureChanged(base, { ...base, old: { file: "a.pdf", page: 0 } })).toBe(false);
   });
   it("is true for another file, page, order or direction", () => {
     expect(signatureChanged(base, { ...base, new: { file: "c.pdf", page: 0 } })).toBe(true);
