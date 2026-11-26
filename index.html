@@ -255,6 +255,29 @@
       table.keys td:first-child { width: 30%; }
       dialog h3 { margin: 18px 0 6px; font-size: 14px; }
       dialog .foot { display: flex; justify-content: flex-end; padding: 12px 16px 16px; }
+      /* ---- Vorlage dropdown and window (ADR 0009, from the clipper's ADR 0015) ---- */
+      .preset-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; margin: 0 0 12px; }
+      .preset-row label { font-size: 12px; color: var(--muted); }
+      .preset-row .input { border: 1px solid var(--line-strong); border-radius: 6px; background: #fff; }
+      .preset-row .input:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+      .preset-row select { width: 100%; border: 0; background: transparent; padding: 6px; outline: none; font: inherit; }
+      .preset-row .btn { width: 34px; padding: 0; }
+      dialog.preset-dialog { width: min(520px, calc(100% - 32px)); }
+      dialog.preset-dialog .foot { gap: 8px; }
+      .preset-list { list-style: none; margin: 14px 0 0; padding: 0; border-top: 1px solid var(--line); max-height: min(40vh, 320px); overflow: hidden auto; }
+      .preset-list[hidden] { display: none; }
+      .preset-list li { display: flex; align-items: center; gap: 6px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+      .preset-list .name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+      .preset-list li.current span.name { font-weight: 600; color: var(--accent); }
+      .preset-list input.name { border: 1px solid var(--accent); border-radius: 6px; padding: 5px 8px; outline: none; font: inherit; }
+      .preset-list .btn { height: 28px; padding: 0 10px; font-size: 13px; }
+      .preset-new { display: grid; gap: 8px; margin-top: 16px; }
+      .preset-new input { border: 1px solid var(--line-strong); border-radius: 6px; padding: 6px 8px; outline: none; font: inherit; }
+      .preset-new input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+      .preset-new .btn { white-space: normal; height: auto; min-height: 34px; }
+      dialog.preset-dialog .muted { color: var(--muted); }
+      dialog.preset-dialog p[hidden] { display: none; }
+      dialog.preset-dialog p.warn { color: var(--severe-line); }
       /* ---- Page picker (ADR 0014) ------------------------------------------------ */
       .pager { display: flex; align-items: center; gap: 4px; margin: 8px 0 4px; }
       .pager[hidden] { display: none; }
