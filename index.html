@@ -187,8 +187,9 @@
 
       /* ---- Zone view (Alter Plan, Neuer Plan) and the minimap (ADR 0009) ------------ */
       .zone-view { position: absolute; inset: 0; overflow: hidden; display: none; background: #e9e9ec; }
-      .app[data-tab="old"] .zone-view, .app[data-tab="new"] .zone-view { display: block; }
-      .app[data-tab="old"] .plans, .app[data-tab="new"] .plans { visibility: hidden; }
+      .app[data-tab="old"] .zone-view, .app[data-tab="new"] .zone-view, .app[data-tab="offset"] .zone-view { display: block; }
+      .app[data-tab="old"] .plans, .app[data-tab="new"] .plans, .app[data-tab="offset"] .plans { visibility: hidden; }
+      .app[data-tab="offset"] .minimap, .app[data-tab="offset"] .minimap-expand { display: none; }
       .zone-view canvas#zone-canvas { display: block; touch-action: none; }
       #snap-status { position: absolute; left: 16px; bottom: 14px; padding: 3px 10px; border-radius: 999px; background: rgba(255, 255, 255, 0.95); box-shadow: var(--shadow); font-size: 12.5px; }
       #snap-status:empty { display: none; }
@@ -233,6 +234,27 @@
       .zone-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 18px; }
       .zone-actions .btn.primary { height: 38px; padding: 0 24px; }
       .zone-hint { font-size: 12.5px; color: var(--muted); margin-top: 14px; }
+
+      /* ---- "Versatz" (src/ui/offsettab.ts) ----------------------------------------- */
+      #body-offset p { margin: 0 0 10px; }
+      #body-offset h3 { font-size: 13px; margin: 18px 0 6px; }
+      #body-offset .zone-hint { margin: 6px 0; }
+      .offset-big { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; }
+      .offset-from, .offset-status { color: var(--muted); font-size: 12.5px; }
+      .offset-status:empty { display: none; }
+      .offset-status.loading::before { content: ""; display: inline-block; width: 1em; height: 1em; margin-right: 6px; vertical-align: -0.15em; border-radius: 50%; border: 2px solid var(--accent-soft); border-top-color: var(--accent); animation: spin 0.8s linear infinite; }
+      .offset-cands { display: flex; flex-direction: column; gap: 6px; }
+      .offset-cands .cand { display: grid; grid-template-columns: 1fr auto; gap: 4px 8px; align-items: center; text-align: left; padding: 7px 10px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--surface); cursor: pointer; }
+      .offset-cands .cand:hover { background: #f1f3f6; }
+      .offset-cands .cand.on { border-color: var(--accent); background: var(--accent-soft); }
+      .offset-cands .cand .muted { font-size: 12px; color: var(--muted); }
+      .offset-cands .bar { grid-column: 1 / -1; height: 4px; border-radius: 2px; background: var(--accent); opacity: 0.55; }
+      .offset-typed { display: flex; align-items: center; gap: 6px; }
+      .offset-typed input { width: 8em; height: 30px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: 6px; font-variant-numeric: tabular-nums; }
+      .offset-nudges, .offset-jumps { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+      .offset-nudges .btn, .offset-jumps .btn { height: 28px; padding: 0 10px; }
+      .offset-error { color: #b42318; margin: 10px 0 0; }
+      .offset-error:empty { display: none; }
 
       /* ---- About ---------------------------------------------------------------- */
       dialog { border: 0; border-radius: 12px; padding: 0; width: min(460px, calc(100% - 32px)); box-shadow: 0 20px 50px rgba(16, 24, 40, 0.25); color: var(--text); }
@@ -330,7 +352,7 @@
       .btn.primary.busy::before { border-color: rgba(255, 255, 255, 0.35); border-top-color: #fff; }
       #snap-status.loading::before { margin-right: 6px; vertical-align: -0.15em; }
       @media (prefers-reduced-motion: reduce) {
-        .busy-spin, .btn.busy::before, #snap-status.loading::before, .thumb:not(.ready) .frame::after { animation: pulse 1.2s ease-in-out infinite; }
+        .busy-spin, .btn.busy::before, #snap-status.loading::before, .offset-status.loading::before, .thumb:not(.ready) .frame::after { animation: pulse 1.2s ease-in-out infinite; }
       }
       .thumb.current .label { color: var(--accent); font-weight: 600; }
 
@@ -397,11 +419,9 @@
         <!-- Filled by src/ui/zonepanel.ts: Kopf, Fuß and Bereiche of the Old and the New Plan. -->
         <section class="tab-body zone-panel" id="body-old" data-role="old" role="tabpanel" aria-labelledby="tab-old" hidden></section>
         <section class="tab-body zone-panel" id="body-new" data-role="new" role="tabpanel" aria-labelledby="tab-new" hidden></section>
-        <section class="tab-body" id="body-offset" role="tabpanel" aria-labelledby="tab-offset" hidden>
-          <h2>Versatz</h2>
-          <p class="placeholder">Der Versatz zwischen den beiden Plänen folgt im nächsten Schritt.</p>
-        </section>
-        <!-- First thin pass (?vergleich): filled by src/ui/firstcompare.ts. -->
+        <!-- Filled by src/ui/offsettab.ts. -->
+        <section class="tab-body" id="body-offset" role="tabpanel" aria-labelledby="tab-offset" hidden></section>
+        <!-- Filled by src/ui/firstcompare.ts, the temporary view of the result. -->
         <section class="tab-body" id="body-compare" role="tabpanel" aria-labelledby="tab-compare" hidden></section>
       </aside>
       <div class="panel-resize" id="panel-resize" role="separator" aria-orientation="vertical" tabindex="0" title="Breite der Seitenleiste ändern"></div>

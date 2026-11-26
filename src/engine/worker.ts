@@ -4,6 +4,10 @@ import type { Request, Response } from "./protocol";
 
 const scope = self as unknown as DedicatedWorkerGlobalScope;
 
+/** Requests the UI asked to stop (the Offset search checks between its pieces). */
+const cancelled = new Set<number>();
+const yieldToQueue = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
 scope.onmessage = async (ev: MessageEvent<Request>) => {
   const req = ev.data;
   try {
@@ -42,9 +46,23 @@ scope.onmessage = async (ev: MessageEvent<Request>) => {
       case "planObjects":
         result = core.planObjects();
         break;
-      case "firstPass":
-        result = core.firstPass(req.newPlan, req.timeDirection);
+      case "findOffset": {
+        const { op: _op, id, ...input } = req;
+        try {
+          result = await core.findOffset(input, { pause: yieldToQueue, cancelled: () => cancelled.has(id) });
+        } finally {
+          cancelled.delete(id);
+        }
         break;
+      }
+      case "cancel":
+        cancelled.add(req.target);
+        break;
+      case "compare": {
+        const { op: _op, id: _id, ...input } = req;
+        result = core.runComparison(input);
+        break;
+      }
       case "renderThumbnail": {
         const t = core.renderThumbnail(req.thumb);
         scope.postMessage({ id: req.id, ok: true, result: t } satisfies Response, [t.pixels.buffer]);

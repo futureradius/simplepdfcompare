@@ -3,7 +3,9 @@
 import { startEngines, type Engine } from "./engine/client";
 import { BUSY_TIMING, BusyWindow } from "./ui/busy";
 import { setUpFirstComparison } from "./ui/firstcompare";
-import { setUpSetupTabs } from "./ui/setuptabs";
+import { ComparisonHandoff } from "./ui/handoff";
+import { setUpOffsetTab } from "./ui/offsettab";
+import { setUpSetupTabs, type SetupPlan } from "./ui/setuptabs";
 import { dropTargets, isPdf, needsPagePicker, swapped, type Role, type Sides } from "./ui/openplans";
 import { PagePicker, type PageSize } from "./ui/pagepicker";
 import { DIRECTION_LABEL, preselectedDirection, type Direction } from "./ui/direction";
@@ -77,6 +79,8 @@ let reach = initialReach();
 let currentTab: TabId = "open";
 let lastSignature: OpenSignature | undefined;
 let lastOldPlan: string | undefined;
+/** "Vergleichen" hands its result to the "Vergleich" tab through this (src/ui/handoff.ts). */
+const handoff = new ComparisonHandoff();
 const PT_TO_MM = 25.4 / 72;
 const de = (v: number) => v.toLocaleString("de-DE", { maximumFractionDigits: 0 });
 
@@ -297,7 +301,10 @@ function syncOpenDecision(): void {
     new: opened.new && { file: opened.new.fileName, page: opened.new.page },
     direction,
   };
-  if (lastSignature && signatureChanged(lastSignature, sig)) reach = lockAfterOpen(reach);
+  if (lastSignature && signatureChanged(lastSignature, sig)) {
+    reach = lockAfterOpen(reach);
+    handoff.clear();
+  }
   lastSignature = sig;
 }
 
@@ -417,6 +424,7 @@ $("proceed").addEventListener("click", () => {
 
 const panelResize = setUpPanelResize($("workspace"), $("panel-resize"));
 
+
 // "Alter Plan" and "Neuer Plan": the zoomable views with Kopf, Fuß and the Bereiche.
 const setupTabs = setUpSetupTabs({
   engines: () => engines,
@@ -430,14 +438,39 @@ const setupTabs = setUpSetupTabs({
 });
 (window as unknown as { __spc: typeof setupTabs }).__spc = setupTabs;
 
+// "Versatz": both Plans on top of each other; the search runs only while the tab is shown.
+const offsetTab = setUpOffsetTab({
+  engines: () => engines,
+  plans: () => opened as Sides<SetupPlan | undefined>,
+  direction: () => direction,
+  view: setupTabs.view,
+  setupOf: (role) => setupTabs.zonesOf(role),
+  busy: busyWindow,
+  handoff,
+  confirmed: () => {
+    reach = confirmTab(reach, "offset");
+    selectTab("compare");
+  },
+});
+(window as unknown as { __offset: typeof offsetTab }).__offset = offsetTab;
+
+// "Vergleich": for now the temporary view of the first pass, fed by the hand-off.
+const comparisonView = setUpFirstComparison({ engines: () => engines, plans: () => opened, busy: busyWindow, handoff });
+comparisonView.listen();
+
 function selectTab(id: TabId): void {
   if (!isTabEnabled(id, reach)) return;
+  const left = currentTab;
   currentTab = id;
   panelResize.setKind(panelKindFor(id));
   renderTabs();
+  if (left === "offset" && id !== "offset") offsetTab.leave();
+  if (left === "compare" && id !== "compare") comparisonView.leave();
   // The view is visible now, so it can measure itself.
   if (id === "old" || id === "new") setupTabs.enter(id);
   else setupTabs.leave();
+  if (id === "offset") offsetTab.enter();
+  if (id === "compare") comparisonView.enter();
 }
 for (const id of TABS) $(`tab-${id}`).addEventListener("click", () => selectTab(id));
 
@@ -459,9 +492,10 @@ $("open-next").addEventListener("click", async () => {
 // Keys of the setup tabs: 1, 2, 3, F, Entf.
 const typing = (t: EventTarget | null) => t instanceof HTMLElement && !!t.closest("input, textarea, select, dialog[open]");
 document.addEventListener("keydown", (e) => {
-  if (currentTab !== "old" && currentTab !== "new") return;
+  if (currentTab !== "old" && currentTab !== "new" && currentTab !== "offset") return;
   if (typing(e.target) || busyWindow.active || picker.isOpen) return;
-  setupTabs.key(e);
+  if (currentTab === "offset") offsetTab.key(e);
+  else setupTabs.key(e);
 });
 $("zone-canvas").addEventListener("pointerdown", () => (document.activeElement as HTMLElement | null)?.blur?.());
 
@@ -478,9 +512,6 @@ for (const b of document.querySelectorAll<HTMLButtonElement>("#shown-switch butt
     renderView();
   });
 }
-
-// The first thin pass of the comparison, behind ?vergleich (until the setup tabs exist).
-setUpFirstComparison({ engines: () => engines, plans: () => opened, busy: busyWindow });
 
 render();
 document.body.dataset.ready = "1";

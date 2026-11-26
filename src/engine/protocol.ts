@@ -1,7 +1,7 @@
 // Messages between the UI and an engine (worker or in-thread fallback). One engine per Plan.
 
-import type { PlanObjects } from "../compare/firstpass";
-import type { Axis, TimeDirection } from "../compare/objects";
+import type { Axis } from "../compare/objects";
+import type { ComparisonRunInput, OffsetSearchInput } from "./core";
 
 export type PageBoxName = "MediaBox" | "CropBox" | "BleedBox" | "TrimBox" | "ArtBox";
 
@@ -55,7 +55,9 @@ export type Request =
   | { id: number; op: "snapSegments" }
   | { id: number; op: "extractObjects" }
   | { id: number; op: "planObjects" }
-  | { id: number; op: "firstPass"; newPlan: PlanObjects; timeDirection: TimeDirection };
+  | ({ id: number; op: "findOffset" } & OffsetSearchInput)
+  | { id: number; op: "cancel"; target: number }
+  | ({ id: number; op: "compare" } & ComparisonRunInput);
 
 /** A Request without its id (distributes over the union). */
 export type RequestBody = Request extends infer R ? (R extends Request ? Omit<R, "id"> : never) : never;

@@ -3,6 +3,7 @@
 // detected Header and Footer; the New Plan gets the Old Plan's zones copied (until it is edited
 // by hand). Wires the view, the editor, the minimap, the keys and the sidebar to the engines.
 
+import type { PlanSetupZones } from "../compare/input";
 import { axisOf, type Box } from "../compare/objects";
 import type { BodyHints } from "../engine/core";
 import type { Engine } from "../engine/client";
@@ -241,6 +242,15 @@ export function setUpSetupTabs(deps: SetupDeps) {
 
   return {
     drawKind: () => drawKind,
+
+    /** The Plan view, which "Versatz" shares. */
+    view,
+
+    /** A Plan's setup in the current Time direction, for the comparison (undefined before "Weiter" on "Öffnen"). */
+    zonesOf(role: Role): PlanSetupZones | undefined {
+      const s = setups[role];
+      return s && { page: s.page, zones: s.editor.pz };
+    },
 
     /**
      * Makes both Plans ready (reads their drawing for Header and Footer, with the busy window).

@@ -30,13 +30,27 @@ export interface Editor {
   draw(ctx: CanvasRenderingContext2D, vp: ViewPort): void;
 }
 
-/** One Plan to show: its overview picture, a way to render parts of it, and its editor. */
-export interface Subject {
+/** A picture of a Plan, and a way to render parts of it sharp. */
+export interface Source {
   widthMm: number;
   heightMm: number;
   overview: CanvasImageSource & { width: number; height: number };
   render(rect: Box, pxPerMm: number): Promise<ImageBitmap>;
+}
+
+/**
+ * A second Plan laid over the subject and multiplied with it (white stays white, ink stays ink),
+ * so that both show at once: "Versatz" lays the New Plan over the Old one. `shift` is where its
+ * page lies in the subject's frame, mm; it may change at any time (call PlanView.changed()).
+ */
+export interface Partner extends Source {
+  shift(): Point;
+}
+
+/** One Plan to show: its overview picture, a way to render parts of it, and its editor. */
+export interface Subject extends Source {
   editor: Editor;
+  partner?: Partner;
 }
 
 interface Layer {
@@ -47,6 +61,8 @@ interface Layer {
 
 interface SubjectState {
   layers: Layer[];
+  /** The partner's sharp pictures, each in the partner's own page mm. */
+  partnerLayers: Layer[];
   view?: { cx: number; cy: number; zoom: number };
 }
 
@@ -114,7 +130,7 @@ export class PlanView {
     this.subject = s;
     this.drag = undefined;
     let st = this.states.get(s);
-    if (!st) this.states.set(s, (st = { layers: [] }));
+    if (!st) this.states.set(s, (st = { layers: [], partnerLayers: [] }));
     this.measure();
     if (st.view) ({ cx: this.cx, cy: this.cy, zoom: this.zoom } = st.view);
     else this.fitPlan();
@@ -124,9 +140,14 @@ export class PlanView {
   /** Forgets a Plan that is no longer shown (a new file was opened). */
   forget(s: Subject): void {
     const st = this.states.get(s);
-    for (const l of st?.layers ?? []) l.bitmap.close();
+    for (const l of [...(st?.layers ?? []), ...(st?.partnerLayers ?? [])]) l.bitmap.close();
     this.states.delete(s);
     if (this.subject === s) this.subject = undefined;
+  }
+
+  /** What the subject shows changed (the partner's shift): redraws, and renders what is now uncovered once the view rests. */
+  changed(): void {
+    this.viewUpdated();
   }
 
   /** Redraws on the next frame. */
@@ -311,12 +332,29 @@ export class PlanView {
       this.renderAgain = true;
       return;
     }
+    this.rendering = true;
+    try {
+      await this.renderPlane(subject, subject, st.layers, { x: 0, y: 0 });
+      const partner = subject.partner;
+      if (partner && this.states.has(subject)) await this.renderPlane(subject, partner, st.partnerLayers, partner.shift());
+    } finally {
+      this.rendering = false;
+    }
+    if (this.renderAgain) {
+      this.renderAgain = false;
+      void this.renderSharp();
+    }
+  }
+
+  /** Renders the part of one Plan that the view shows; the Plan's page lies at `shift` in the view's frame. */
+  private async renderPlane(subject: Subject, src: Source, layers: Layer[], shift: Point): Promise<void> {
     const want = this.zoom * this.dpr;
-    const overview = subject.overview.width / subject.widthMm;
+    const overview = src.overview.width / src.widthMm;
     if (want <= overview * 1.01) return; // the overview is sharp enough
-    const page: Box = { x0: 0, y0: 0, x1: subject.widthMm, y1: subject.heightMm };
-    const need = intersect(this.visible(), page);
-    if (!need || st.layers.some((l) => l.pxPerMm >= want * 0.99 && covers(l.rect, need))) return;
+    const page: Box = { x0: 0, y0: 0, x1: src.widthMm, y1: src.heightMm };
+    const vis = this.visible();
+    const need = intersect({ x0: vis.x0 - shift.x, y0: vis.y0 - shift.y, x1: vis.x1 - shift.x, y1: vis.y1 - shift.y }, page);
+    if (!need || layers.some((l) => l.pxPerMm >= want * 0.99 && covers(l.rect, need))) return;
     // A margin around the view keeps small pans sharp; shrink it if the picture would be huge.
     let margin = 0.25;
     let rect = intersect(grow(need, margin), page)!;
@@ -325,25 +363,18 @@ export class PlanView {
       rect = intersect(grow(need, margin), page)!;
     }
     const pxPerMm = Math.min(want, Math.sqrt(MAX_RENDER_PIXELS / area(rect)));
-    this.rendering = true;
     try {
-      const bitmap = await subject.render(rect, pxPerMm);
+      const bitmap = await src.render(rect, pxPerMm);
       if (!this.states.has(subject)) bitmap.close();
       else {
         // The actual picture size (pixel counts are rounded), so nothing shifts.
-        st.layers.push({ bitmap, rect, pxPerMm: bitmap.width / (rect.x1 - rect.x0) });
-        const pixels = () => st.layers.reduce((n, l) => n + l.bitmap.width * l.bitmap.height, 0);
-        while (st.layers.length > KEEP_LAYERS && pixels() > KEEP_PIXELS) st.layers.shift()!.bitmap.close();
+        layers.push({ bitmap, rect, pxPerMm: bitmap.width / (rect.x1 - rect.x0) });
+        const pixels = () => layers.reduce((n, l) => n + l.bitmap.width * l.bitmap.height, 0);
+        while (layers.length > KEEP_LAYERS && pixels() > KEEP_PIXELS) layers.shift()!.bitmap.close();
         this.requestDraw();
       }
     } catch (err) {
       console.warn("render failed", err);
-    } finally {
-      this.rendering = false;
-    }
-    if (this.renderAgain) {
-      this.renderAgain = false;
-      void this.renderSharp();
     }
   }
 
@@ -357,21 +388,54 @@ export class PlanView {
     if (!s || !st) return;
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "high";
-    const tl = this.toScreen(0, 0);
-    ctx.fillStyle = "#fff";
-    ctx.fillRect(tl.x, tl.y, s.widthMm * this.zoom, s.heightMm * this.zoom);
-    const vis = this.visible();
-    const base: Layer = { bitmap: s.overview as unknown as ImageBitmap, rect: { x0: 0, y0: 0, x1: s.widthMm, y1: s.heightMm }, pxPerMm: s.overview.width / s.widthMm };
-    // The overview first, then sharper layers on top (older first, so the newest wins).
-    for (const l of [base, ...[...st.layers].sort((a, b) => a.pxPerMm - b.pxPerMm)]) this.drawLayer(l, vis);
+    this.drawPlane(ctx, s, st.layers, { x: 0, y: 0 });
+    if (s.partner) {
+      // The partner is drawn on its own (white page, ink), then multiplied onto the picture.
+      const off = this.offscreen();
+      const octx = off.getContext("2d")!;
+      octx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+      octx.clearRect(0, 0, this.cssW, this.cssH);
+      octx.imageSmoothingEnabled = true;
+      octx.imageSmoothingQuality = "high";
+      this.drawPlane(octx, s.partner, st.partnerLayers, s.partner.shift());
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.globalCompositeOperation = "multiply";
+      ctx.drawImage(off, 0, 0);
+      ctx.restore();
+    }
     s.editor.draw(ctx, this.port);
   }
 
-  private drawLayer(l: Layer, vis: Box): void {
-    const part = intersect(l.rect, vis);
+  private overlayCanvas: HTMLCanvasElement | undefined;
+
+  /** A canvas of the view's size to draw the partner on. */
+  private offscreen(): HTMLCanvasElement {
+    const c = (this.overlayCanvas ??= document.createElement("canvas"));
+    if (c.width !== this.canvas.width || c.height !== this.canvas.height) {
+      c.width = this.canvas.width;
+      c.height = this.canvas.height;
+    }
+    return c;
+  }
+
+  /** One Plan: its white page, its overview, and its sharper layers (older first, so the newest wins). */
+  private drawPlane(ctx: CanvasRenderingContext2D, src: Source, layers: Layer[], shift: Point): void {
+    const tl = this.toScreen(shift.x, shift.y);
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(tl.x, tl.y, src.widthMm * this.zoom, src.heightMm * this.zoom);
+    const vis = this.visible();
+    const own: Box = { x0: vis.x0 - shift.x, y0: vis.y0 - shift.y, x1: vis.x1 - shift.x, y1: vis.y1 - shift.y };
+    const base: Layer = { bitmap: src.overview as unknown as ImageBitmap, rect: { x0: 0, y0: 0, x1: src.widthMm, y1: src.heightMm }, pxPerMm: src.overview.width / src.widthMm };
+    for (const l of [base, ...[...layers].sort((a, b) => a.pxPerMm - b.pxPerMm)]) this.drawLayer(ctx, l, own, shift);
+  }
+
+  /** `own`: the visible area in the Plan's own mm; `shift`: where the Plan's page lies in the view's frame. */
+  private drawLayer(ctx: CanvasRenderingContext2D, l: Layer, own: Box, shift: Point): void {
+    const part = intersect(l.rect, own);
     if (!part) return;
-    const d = this.toScreen(part.x0, part.y0);
-    this.ctx.drawImage(
+    const d = this.toScreen(part.x0 + shift.x, part.y0 + shift.y);
+    ctx.drawImage(
       l.bitmap,
       (part.x0 - l.rect.x0) * l.pxPerMm,
       (part.y0 - l.rect.y0) * l.pxPerMm,

@@ -5,9 +5,9 @@
 import wasmGzBase64 from "virtual:mupdf-wasm";
 import EngineWorker from "./worker?worker&inline";
 import type { DocumentInfo, PlanInfo, Preview, RegionRequest, RequestBody, Response, ThumbnailRequest } from "./protocol";
-import type { BodyHints, FirstPassInfo, PlanObjectsInfo } from "./core";
-import type { PlanObjects } from "../compare/firstpass";
-import type { Axis, TimeDirection } from "../compare/objects";
+import type { BodyHints, ComparisonRunInput, ComparisonRunOutput, OffsetSearchInput, PlanObjectsInfo } from "./core";
+import type { OffsetResult } from "../compare/offset";
+import type { Axis } from "../compare/objects";
 import type { Segments } from "../zones/snap";
 
 export interface Engine {
@@ -27,8 +27,14 @@ export interface Engine {
   extractObjects(): Promise<{ count: number; extractMs: number }>;
   /** The Plan's drawn objects in page mm (extracted on first use). */
   planObjects(): Promise<PlanObjectsInfo>;
-  /** Compares this engine's Plan, as the Old Plan, with the New Plan's objects. */
-  firstPass(newPlan: PlanObjects, timeDirection: TimeDirection): Promise<FirstPassInfo>;
+  /**
+   * Searches the Offset of this engine's Plan, as the Old Plan, against the New Plan's objects. The
+   * worker stays free for other requests meanwhile; aborting the signal stops it (the promise
+   * then rejects with an AbortError).
+   */
+  findOffset(input: OffsetSearchInput, signal?: AbortSignal): Promise<OffsetResult>;
+  /** Compares this engine's Plan, as the Old Plan, with the New Plan's objects under the user's setup, and forms the Places. */
+  compare(input: ComparisonRunInput): Promise<ComparisonRunOutput>;
   terminate(): void;
 }
 
@@ -69,9 +75,10 @@ function workerEngine(wasm: ArrayBuffer, timeoutMs: number): Promise<Engine> {
     else p.reject(new Error(ev.data.error));
   };
 
-  const call = <T>(req: RequestBody, transfer: Transferable[] = []): Promise<T> =>
+  const call = <T>(req: RequestBody, transfer: Transferable[] = [], started?: (id: number) => void): Promise<T> =>
     new Promise<T>((resolve, reject) => {
       const id = nextId++;
+      started?.(id);
       pending.set(id, { resolve: resolve as (v: unknown) => void, reject });
       worker.postMessage({ ...req, id }, transfer);
     });
@@ -99,7 +106,17 @@ function workerEngine(wasm: ArrayBuffer, timeoutMs: number): Promise<Engine> {
           snapSegments: () => call<Segments>({ op: "snapSegments" }),
           extractObjects: () => call<{ count: number; extractMs: number }>({ op: "extractObjects" }),
           planObjects: () => call<PlanObjectsInfo>({ op: "planObjects" }),
-          firstPass: (newPlan, timeDirection) => call<FirstPassInfo>({ op: "firstPass", newPlan, timeDirection }),
+          findOffset: (input, signal) => {
+            if (signal?.aborted) return Promise.reject(new DOMException("aborted", "AbortError"));
+            const done = call<OffsetResult>({ op: "findOffset", ...input }, [], (id) =>
+              signal?.addEventListener("abort", () => void call<void>({ op: "cancel", target: id }), { once: true }),
+            );
+            return Promise.race([
+              done,
+              new Promise<never>((_, reject) => signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true })),
+            ]);
+          },
+          compare: (input) => call<ComparisonRunOutput>({ op: "compare", ...input }),
           terminate: () => worker.terminate(),
         });
       },

@@ -11,9 +11,12 @@
 // another page becomes the Plan. The Old Plan's engine compares them with the New Plan's.
 
 import type * as MuPDF from "mupdf";
-import { firstPass as runFirstPass, type FirstPass, type PlanObjects } from "../compare/firstpass";
+import type { PlanObjects } from "../compare/firstpass";
 import { guessBody, linesAcross } from "../compare/body";
-import type { Axis, TimeDirection } from "../compare/objects";
+import { compare, type Comparison, type ComparisonSetup } from "../compare/compare";
+import type { Axis, Box } from "../compare/objects";
+import { findOffsetAsync, type OffsetControl, type OffsetResult } from "../compare/offset";
+import { findPlaces, type AxisZones, type Place } from "../compare/places";
 import { buildSegments, type Segments } from "../zones/snap";
 import { extractObjects } from "./extract";
 import type { DocumentInfo, PageBoxName, PlanInfo, Preview, RegionRequest, ThumbnailRequest } from "./protocol";
@@ -210,10 +213,42 @@ export function planObjects(): PlanObjectsInfo {
   }
 }
 
-export type FirstPassInfo = FirstPass & { extractMs: number };
+/** What the Offset search needs from the New Plan and the setup (the Old Plan is this engine's own). */
+export interface OffsetSearchInput {
+  newPlan: PlanObjects;
+  axis: Axis;
+  /** Each Plan's Body along the Time direction, and the Ausgenommen boxes, in its own page mm. */
+  bodyOld: [number, number];
+  bodyNew: [number, number];
+  ignoredOld?: Box[];
+  ignoredNew?: Box[];
+}
 
-/** Compares this engine's Plan, as the Old Plan, with the New Plan's objects (first pass). */
-export function firstPass(newPlan: PlanObjects, timeDirection: TimeDirection): FirstPassInfo {
-  const old = planObjects();
-  return { ...runFirstPass({ timeDirection, old, new: newPlan }), extractMs: old.extractMs };
+/** Searches the Offset of this engine's Plan, as the Old Plan, against the New Plan's objects. In pieces, so it can be stopped. */
+export function findOffset(input: OffsetSearchInput, ctl: OffsetControl): Promise<OffsetResult> {
+  const { newPlan, ...opts } = input;
+  return findOffsetAsync(planObjects().objects, newPlan.objects, opts, ctl);
+}
+
+export interface ComparisonRunInput {
+  newPlan: PlanObjects;
+  setup: ComparisonSetup;
+  axisZones: { old: AxisZones; new: AxisZones };
+}
+
+export interface ComparisonRunOutput {
+  comparison: Comparison;
+  places: Place[];
+  ms: { compare: number; places: number };
+}
+
+/** Compares this engine's Plan, as the Old Plan, with the New Plan's objects under the user's setup, and forms the Places. */
+export function runComparison(input: ComparisonRunInput): ComparisonRunOutput {
+  const old = planObjects().objects;
+  let t = performance.now();
+  const comparison = compare(old, input.newPlan.objects, input.setup);
+  const compareMs = performance.now() - t;
+  t = performance.now();
+  const places = findPlaces({ old, new: input.newPlan.objects, setup: input.setup, comparison, axisZones: input.axisZones });
+  return { comparison, places, ms: { compare: compareMs, places: performance.now() - t } };
 }
