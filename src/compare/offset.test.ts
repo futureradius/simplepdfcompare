@@ -24,7 +24,7 @@ describe("finding the Offset", () => {
       });
       expect(r.candidates[0]!.offset).toBeCloseTo(gt.offsetMm, 2);
       expect(r.offset).toBe(r.candidates[0]!.offset);
-    });
+    }, 30_000); // reads a 14 m sample Plan with MuPDF: can pass 5 s while the whole suite runs in parallel
   }
 
   it("lists other candidates after the best, with fewer votes and at least 1 mm apart", () => {
