@@ -125,8 +125,6 @@
       .file-card .file-name { font-weight: 600; overflow-wrap: anywhere; }
       .file-card.over { border-color: var(--accent); background: var(--accent-soft); }
       .file-card .btn { margin-top: 8px; }
-      .swap-row { display: flex; justify-content: center; margin: -4px 0 12px; }
-      .swap-row .btn { width: auto; padding: 0 14px; }
       .placeholder { color: var(--muted); }
       .panel-resize { position: absolute; top: 0; bottom: 0; left: calc(var(--panel-w, 400px) - 4px); width: 8px; z-index: 3; cursor: col-resize; touch-action: none; }
       .panel-resize::after { content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 2px; background: transparent; transition: background 0.15s; }
@@ -271,7 +269,6 @@
         </div>
         <section class="tab-body" id="body-open" role="tabpanel" aria-labelledby="tab-open">
           <div class="file-card old" id="card-old"></div>
-          <div class="swap-row"><button class="btn" id="swap-ws" title="Alt und Neu tauschen">⇄ Tauschen</button></div>
           <div class="file-card new" id="card-new"></div>
         </section>
         <section class="tab-body" id="body-old" role="tabpanel" aria-labelledby="tab-old" hidden>

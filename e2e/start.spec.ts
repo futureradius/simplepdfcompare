@@ -170,8 +170,8 @@ test("Weiter leads to the workspace shell, which is not left again", async ({ pa
   expect(view.y).toBe(0);
   expect(Math.round(view.height)).toBe(900);
   await page.screenshot({ path: "test-results/workspace.png" });
-  // Swap in the workspace.
-  await page.locator("#swap-ws").click();
+  // Swap in the workspace, with the button between the two Plans.
+  await page.locator("#swap-view").click();
   await expect(page.locator("#card-old")).toContainText("down-new.pdf");
   // "Alter Plan" shows its placeholder.
   await page.locator("#tab-old").click();

@@ -269,7 +269,7 @@ function render(): void {
   }
   renderView();
   $<HTMLButtonElement>("proceed").disabled = !(opened.old && opened.new) || working;
-  for (const id of ["swap-start", "swap-ws", "swap-view"]) $<HTMLButtonElement>(id).disabled = working;
+  for (const id of ["swap-start", "swap-view"]) $<HTMLButtonElement>(id).disabled = working;
 }
 
 // ---- File choosers, drag and drop --------------------------------------------------
@@ -322,7 +322,7 @@ window.addEventListener("drop", (e) => {
 });
 
 // ---- Swap, Weiter, tabs -------------------------------------------------------------
-for (const id of ["swap-start", "swap-ws", "swap-view"]) $(id).addEventListener("click", swap);
+for (const id of ["swap-start", "swap-view"]) $(id).addEventListener("click", swap);
 
 $("proceed").addEventListener("click", () => {
   if (!opened.old || !opened.new) return;
