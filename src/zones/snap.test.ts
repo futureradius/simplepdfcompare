@@ -55,6 +55,21 @@ describe("snapBox", () => {
   });
 });
 
+describe("snapBox and the visible part of the Plan", () => {
+  // A tall box beside a line that lies far off screen: only what the user sees may attract.
+  const idx = index([stroke(100, 5000, 100, 5200)]);
+  const tall = { x0: 40, y0: 0, x1: 101, y1: 9000 };
+  it("ignores lines outside the visible area", () => {
+    const r = snapBox(tall, "e", idx, 3, { x0: 0, y0: 0, x1: 500, y1: 800 });
+    expect(r.box.x1).toBe(101);
+    expect(r.guides).toEqual([]);
+  });
+  it("uses lines inside it", () => {
+    const r = snapBox(tall, "e", idx, 3, { x0: 0, y0: 4900, x1: 500, y1: 5500 });
+    expect(r.box.x1).toBe(100);
+  });
+});
+
 describe("snapLine", () => {
   it("jumps to the nearest line across the Plan within the tolerance", () => {
     expect(snapLine([100, 200, 300], 203, 5)).toBe(200);

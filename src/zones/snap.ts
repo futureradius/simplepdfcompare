@@ -110,11 +110,14 @@ export function snapLine(targets: readonly number[], v: number, tol: number): nu
 }
 
 /** Snaps the edges `handle` moves (all four sides for "move": the nearer one per axis wins). */
-export function snapBox(b: Box, handle: Handle, idx: SegmentIndex, tol: number): { box: Box; guides: Guide[] } {
+export function snapBox(b: Box, handle: Handle, idx: SegmentIndex, tol: number, visible?: Box): { box: Box; guides: Guide[] } {
   let { x0, y0, x1, y1 } = b;
   const guides: Guide[] = [];
-  const v = (x: number) => snapEdge(idx, "x", x, y0, y1, tol);
-  const hz = (y: number) => snapEdge(idx, "y", y, x0, x1, tol);
+  // Only what the user sees attracts: the part of the edge on screen is what must run alongside.
+  const span = (lo: number, hi: number, vlo: number | undefined, vhi: number | undefined): [number, number] =>
+    vlo === undefined || vhi === undefined || Math.max(lo, vlo) > Math.min(hi, vhi) ? [lo, hi] : [Math.max(lo, vlo), Math.min(hi, vhi)];
+  const v = (x: number) => snapEdge(idx, "x", x, ...span(y0, y1, visible?.y0, visible?.y1), tol);
+  const hz = (y: number) => snapEdge(idx, "y", y, ...span(x0, x1, visible?.x0, visible?.x1), tol);
   if (handle === "move") {
     const pick = (g0: Guide | null, g1: Guide | null, e0: number, e1: number) => {
       const d0 = g0 ? g0.pos - e0 : Infinity,

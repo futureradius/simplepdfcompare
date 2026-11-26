@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bandBoxes, copyToNewPlan, dragZone, effectiveBox, hitTest, isClick, newZone, toggleFull, type PlanZones } from "./model";
+import { bandBoxes, copyToNewPlan, dragZone, effectiveBox, hitTest, isClick, newZone, toggleFull, zoneLabel, type PlanZones } from "./model";
 
 const page = { width: 1000, height: 14000 };
 const box = (x0: number, y0: number, x1: number, y1: number) => ({ x0, y0, x1, y1 });
@@ -41,6 +41,13 @@ describe("full-length zones (the ⇕ bubble)", () => {
     const full = toggleFull(z);
     const moved = dragZone(effectiveBox(full, "y", page), "move", { x: 0, y: 0 }, { x: 30, y: 400 }, page, "y", box(100, 500, 200, 800));
     expect(moved).toEqual(box(130, 500, 230, 800));
+  });
+});
+
+describe("zoneLabel", () => {
+  const zs = [newZone(5, "area", box(0, 0, 1, 1)), newZone(6, "time", box(0, 0, 1, 1)), newZone(9, "area", box(0, 0, 1, 1))];
+  it("numbers the Bereiche in order and names an axis zone by its kind", () => {
+    expect(zs.map((z) => zoneLabel(zs, z))).toEqual(["Bereich 1", "Zeitachse", "Bereich 2"]);
   });
 });
 

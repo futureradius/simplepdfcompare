@@ -39,6 +39,12 @@ export interface PlanZones {
 
 export const KIND_NAME: Record<ZoneKind, string> = { area: "Bereich", time: "Zeitachse", path: "Wegachse", rows: "Vorgänge" };
 
+/** "Bereich 1", "Bereich 2" ... in the order drawn; an axis zone is named by its kind. */
+export function zoneLabel(all: readonly Zone[], z: Zone): string {
+  if (z.kind !== "area") return KIND_NAME[z.kind];
+  return `${KIND_NAME.area} ${all.filter((o) => o.kind === "area").indexOf(z) + 1}`;
+}
+
 export const lengthOf = (page: PageMm, axis: Axis): number => (axis === "y" ? page.height : page.width);
 
 export const newZone = (id: number, kind: ZoneKind, box: Box): Zone => ({ id, kind, box, full: false });

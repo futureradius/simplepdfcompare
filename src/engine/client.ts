@@ -4,10 +4,11 @@
 
 import wasmGzBase64 from "virtual:mupdf-wasm";
 import EngineWorker from "./worker?worker&inline";
-import type { DocumentInfo, PlanInfo, Preview, RequestBody, Response, ThumbnailRequest } from "./protocol";
-import type { FirstPassInfo, PlanObjectsInfo } from "./core";
+import type { DocumentInfo, PlanInfo, Preview, RegionRequest, RequestBody, Response, ThumbnailRequest } from "./protocol";
+import type { BodyHints, FirstPassInfo, PlanObjectsInfo } from "./core";
 import type { PlanObjects } from "../compare/firstpass";
-import type { TimeDirection } from "../compare/objects";
+import type { Axis, TimeDirection } from "../compare/objects";
+import type { Segments } from "../zones/snap";
 
 export interface Engine {
   /** Opens a file as a candidate; the current Plan stays until openPage. */
@@ -16,6 +17,12 @@ export interface Engine {
   /** Makes a page of the Document the Plan. */
   openPage(page: number): Promise<PlanInfo>;
   renderThumbnail(thumb: ThumbnailRequest): Promise<Preview>;
+  /** A part of the Plan (page mm) as a picture, for the zoomable view. */
+  renderRegion(region: RegionRequest): Promise<Preview>;
+  /** First guess for Header and Footer, and the lines across the Plan they snap to. */
+  bodyHints(axis: Axis): Promise<BodyHints>;
+  /** The straight lines zone edges snap to; built in the worker on first use. */
+  snapSegments(): Promise<Segments>;
   /** Extracts the Plan's drawn objects and keeps them in the worker. */
   extractObjects(): Promise<{ count: number; extractMs: number }>;
   /** The Plan's drawn objects in page mm (extracted on first use). */
@@ -87,6 +94,9 @@ function workerEngine(wasm: ArrayBuffer, timeoutMs: number): Promise<Engine> {
           discardDocument: () => call<void>({ op: "discardDocument" }),
           openPage: (page) => call<PlanInfo>({ op: "openPage", page }),
           renderThumbnail: (thumb) => call<Preview>({ op: "renderThumbnail", thumb }),
+          renderRegion: (region) => call<Preview>({ op: "renderRegion", region }),
+          bodyHints: (axis) => call<BodyHints>({ op: "bodyHints", axis }),
+          snapSegments: () => call<Segments>({ op: "snapSegments" }),
           extractObjects: () => call<{ count: number; extractMs: number }>({ op: "extractObjects" }),
           planObjects: () => call<PlanObjectsInfo>({ op: "planObjects" }),
           firstPass: (newPlan, timeDirection) => call<FirstPassInfo>({ op: "firstPass", newPlan, timeDirection }),
