@@ -173,6 +173,15 @@
       .open-actions { display: flex; justify-content: flex-end; margin-top: 18px; }
       .open-actions .btn { height: 38px; padding: 0 24px; }
       .viewer .placeholder-view { position: absolute; inset: 0; display: grid; place-items: center; }
+      /* First thin pass (?vergleich): both Plans in one picture with the marks, scrolled. */
+      .marks-view { position: absolute; inset: 0; overflow: auto; padding: 56px 16px 16px; }
+      .marks-view canvas { display: block; margin: 0 auto; background: #fff; box-shadow: 0 0 0 1px var(--line-strong); }
+      .marks-legend { list-style: none; padding: 0; margin: 8px 0 12px; }
+      .marks-legend li { display: flex; align-items: center; gap: 8px; margin: 0 0 4px; }
+      .marks-legend .sw { width: 14px; height: 14px; border-radius: 3px; flex: 0 0 auto; }
+      .marks-facts { margin: 0 0 12px; display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; }
+      .marks-facts dt { color: var(--muted); }
+      .marks-facts dd { margin: 0; font-variant-numeric: tabular-nums; }
 
       /* ---- About ---------------------------------------------------------------- */
       dialog { border: 0; border-radius: 12px; padding: 0; width: min(460px, calc(100% - 32px)); box-shadow: 0 20px 50px rgba(16, 24, 40, 0.25); color: var(--text); }
@@ -315,6 +324,8 @@
           <h2>Alter Plan</h2>
           <p class="placeholder">Hier werden später Kopf, Fuß und Bereiche des alten Plans festgelegt.</p>
         </section>
+        <!-- First thin pass (?vergleich): filled by src/ui/firstcompare.ts. -->
+        <section class="tab-body" id="body-compare" role="tabpanel" aria-labelledby="tab-compare" hidden></section>
       </aside>
       <div class="panel-resize" id="panel-resize" role="separator" aria-orientation="vertical" tabindex="0" title="Breite der Seitenleiste ändern"></div>
       <div class="viewer" id="viewer">
@@ -328,6 +339,7 @@
         <div class="plans" id="plans" data-dir="down">
           <div class="stage"><div class="sheet" id="sheet"><canvas id="plan" width="1" height="1"></canvas><span class="tarrow a" aria-hidden="true"><svg viewBox="0 0 34 110"><path d="M17 4v94M10.5 91l6.5 15 6.5-15z" fill="currentColor" stroke="currentColor" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/></svg></span><span class="tarrow b" aria-hidden="true"><svg viewBox="0 0 34 110"><path d="M17 4v94M10.5 91l6.5 15 6.5-15z" fill="currentColor" stroke="currentColor" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/></svg></span></div></div>
         </div>
+        <div class="marks-view" id="marks-view" hidden><canvas id="marks-canvas" width="1" height="1"></canvas></div>
       </div>
     </div>
 

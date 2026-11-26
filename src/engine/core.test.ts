@@ -5,10 +5,15 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import * as core from "./core";
 import { makeMultiPageDocument, MULTIPAGE_PAGES } from "../testing/multipage";
+import { objectsOf, pair } from "../testing/groundtruth";
 
 const PT_TO_MM = 25.4 / 72;
 const bytes = makeMultiPageDocument();
 const buffer = () => bytes.slice().buffer;
+const fileBuffer = (path: string) => {
+  const b = readFileSync(path);
+  return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer;
+};
 
 beforeAll(async () => {
   const require = createRequire(import.meta.url);
@@ -63,5 +68,33 @@ describe("engine core", () => {
   it.skipIf(!existsSync("samples/down-old.pdf"))("opens a synthetic Plan", () => {
     core.openDocument(readFileSync("samples/down-old.pdf").buffer as ArrayBuffer);
     expect(core.openPage(0).pageCount).toBe(1);
+  });
+
+  it("gives the Plan's drawn objects and its page size in mm", () => {
+    const gt = pair("right");
+    core.openDocument(fileBuffer(gt.old.file));
+    core.openPage(0);
+    const plan = core.planObjects();
+    expect(plan.pageMm.map(Math.round)).toEqual(gt.old.pageMm);
+    expect(plan.objects.length).toBe(objectsOf(gt.old.file).length);
+  });
+
+  it("forgets the objects when another page becomes the Plan", () => {
+    core.openDocument(buffer());
+    core.openPage(0);
+    const first = core.planObjects().objects;
+    core.openPage(1);
+    expect(core.planObjects().objects).not.toBe(first);
+    expect(core.planObjects().pageMm.map(Math.round)).toEqual([420, 297]);
+  });
+
+  it("compares the Plan, as the Old Plan, with the New Plan's objects in a first pass", () => {
+    const gt = pair("right");
+    core.openDocument(fileBuffer(gt.old.file));
+    core.openPage(0);
+    const r = core.firstPass({ objects: objectsOf(gt.new.file), pageMm: gt.new.pageMm }, "right");
+    expect(r.offset.offset).toBeCloseTo(gt.offsetMm, 2);
+    expect(r.comparison.marks.some((m) => m.kind === "Added")).toBe(true);
+    expect(r.comparison.marks.some((m) => m.kind === "Removed")).toBe(true);
   });
 });

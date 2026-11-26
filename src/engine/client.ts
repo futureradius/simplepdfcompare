@@ -5,6 +5,9 @@
 import wasmGzBase64 from "virtual:mupdf-wasm";
 import EngineWorker from "./worker?worker&inline";
 import type { DocumentInfo, PlanInfo, Preview, RequestBody, Response, ThumbnailRequest } from "./protocol";
+import type { FirstPassInfo, PlanObjectsInfo } from "./core";
+import type { PlanObjects } from "../compare/firstpass";
+import type { TimeDirection } from "../compare/objects";
 
 export interface Engine {
   /** Opens a file as a candidate; the current Plan stays until openPage. */
@@ -13,6 +16,12 @@ export interface Engine {
   /** Makes a page of the Document the Plan. */
   openPage(page: number): Promise<PlanInfo>;
   renderThumbnail(thumb: ThumbnailRequest): Promise<Preview>;
+  /** Extracts the Plan's drawn objects and keeps them in the worker. */
+  extractObjects(): Promise<{ count: number; extractMs: number }>;
+  /** The Plan's drawn objects in page mm (extracted on first use). */
+  planObjects(): Promise<PlanObjectsInfo>;
+  /** Compares this engine's Plan, as the Old Plan, with the New Plan's objects. */
+  firstPass(newPlan: PlanObjects, timeDirection: TimeDirection): Promise<FirstPassInfo>;
   terminate(): void;
 }
 
@@ -78,6 +87,9 @@ function workerEngine(wasm: ArrayBuffer, timeoutMs: number): Promise<Engine> {
           discardDocument: () => call<void>({ op: "discardDocument" }),
           openPage: (page) => call<PlanInfo>({ op: "openPage", page }),
           renderThumbnail: (thumb) => call<Preview>({ op: "renderThumbnail", thumb }),
+          extractObjects: () => call<{ count: number; extractMs: number }>({ op: "extractObjects" }),
+          planObjects: () => call<PlanObjectsInfo>({ op: "planObjects" }),
+          firstPass: (newPlan, timeDirection) => call<FirstPassInfo>({ op: "firstPass", newPlan, timeDirection }),
           terminate: () => worker.terminate(),
         });
       },

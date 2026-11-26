@@ -21,6 +21,11 @@ npm test         # Vitest
 npm run e2e      # Playwright in Edge (needs build and samples first)
 ```
 
+Until the setup tabs are built, open `dist/index.html?vergleich` to try the comparison:
+open both Plans, "Weiter", then the "Vergleich" tab compares them with the Offset found,
+the guessed Header and Footer and no Ignored areas, and draws Added red, Removed yellow
+and the Unchanged part grey on one picture of both Plans.
+
 ## Sample Plans
 
 Real Plans are confidential, so development runs against synthetic pairs:

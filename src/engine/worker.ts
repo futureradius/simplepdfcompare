@@ -21,6 +21,17 @@ scope.onmessage = async (ev: MessageEvent<Request>) => {
       case "openPage":
         result = core.openPage(req.page);
         break;
+      case "extractObjects": {
+        const { objects, extractMs } = core.planObjects();
+        result = { count: objects.length, extractMs };
+        break;
+      }
+      case "planObjects":
+        result = core.planObjects();
+        break;
+      case "firstPass":
+        result = core.firstPass(req.newPlan, req.timeDirection);
+        break;
       case "renderThumbnail": {
         const t = core.renderThumbnail(req.thumb);
         scope.postMessage({ id: req.id, ok: true, result: t } satisfies Response, [t.pixels.buffer]);

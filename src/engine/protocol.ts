@@ -1,5 +1,8 @@
 // Messages between the UI and an engine (worker or in-thread fallback). One engine per Plan.
 
+import type { PlanObjects } from "../compare/firstpass";
+import type { TimeDirection } from "../compare/objects";
+
 export type PageBoxName = "MediaBox" | "CropBox" | "BleedBox" | "TrimBox" | "ArtBox";
 
 /** A Document as opened: its pages, before one is chosen as the Plan. */
@@ -40,7 +43,10 @@ export type Request =
   | { id: number; op: "openDocument"; bytes: ArrayBuffer }
   | { id: number; op: "discardDocument" }
   | { id: number; op: "openPage"; page: number }
-  | { id: number; op: "renderThumbnail"; thumb: ThumbnailRequest };
+  | { id: number; op: "renderThumbnail"; thumb: ThumbnailRequest }
+  | { id: number; op: "extractObjects" }
+  | { id: number; op: "planObjects" }
+  | { id: number; op: "firstPass"; newPlan: PlanObjects; timeDirection: TimeDirection };
 
 /** A Request without its id (distributes over the union). */
 export type RequestBody = Request extends infer R ? (R extends Request ? Omit<R, "id"> : never) : never;
