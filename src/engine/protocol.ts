@@ -1,7 +1,7 @@
 // Messages between the UI and an engine (worker or in-thread fallback). One engine per Plan.
 
 import type { PlanObjects } from "../compare/firstpass";
-import type { TimeDirection } from "../compare/objects";
+import type { Axis, TimeDirection } from "../compare/objects";
 
 export type PageBoxName = "MediaBox" | "CropBox" | "BleedBox" | "TrimBox" | "ArtBox";
 
@@ -38,12 +38,21 @@ export interface ThumbnailRequest {
   maxHeightPx: number;
 }
 
+/** A part of the Plan as a picture: `rect` in page mm, drawn at `pxPerMm`. */
+export interface RegionRequest {
+  rect: { x0: number; y0: number; x1: number; y1: number };
+  pxPerMm: number;
+}
+
 export type Request =
   | { id: number; op: "init"; wasmBinary: ArrayBuffer }
   | { id: number; op: "openDocument"; bytes: ArrayBuffer }
   | { id: number; op: "discardDocument" }
   | { id: number; op: "openPage"; page: number }
   | { id: number; op: "renderThumbnail"; thumb: ThumbnailRequest }
+  | { id: number; op: "renderRegion"; region: RegionRequest }
+  | { id: number; op: "bodyHints"; axis: Axis }
+  | { id: number; op: "snapSegments" }
   | { id: number; op: "extractObjects" }
   | { id: number; op: "planObjects" }
   | { id: number; op: "firstPass"; newPlan: PlanObjects; timeDirection: TimeDirection };

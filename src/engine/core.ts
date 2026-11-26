@@ -12,9 +12,19 @@
 
 import type * as MuPDF from "mupdf";
 import { firstPass as runFirstPass, type FirstPass, type PlanObjects } from "../compare/firstpass";
-import type { TimeDirection } from "../compare/objects";
+import { guessBody, linesAcross } from "../compare/body";
+import type { Axis, TimeDirection } from "../compare/objects";
+import { buildSegments, type Segments } from "../zones/snap";
 import { extractObjects } from "./extract";
-import type { DocumentInfo, PageBoxName, PlanInfo, Preview, ThumbnailRequest } from "./protocol";
+import type { DocumentInfo, PageBoxName, PlanInfo, Preview, RegionRequest, ThumbnailRequest } from "./protocol";
+
+/** What the setup tabs need from a Plan's drawing, along the Time direction. */
+export interface BodyHints {
+  /** Where the Header ends and the Footer starts, as first guessed. */
+  body: [number, number];
+  /** Lines across half of the Plan or more: where the Header and Footer lines snap to. */
+  across: number[];
+}
 
 const PT_TO_MM = 25.4 / 72;
 
@@ -101,6 +111,8 @@ export function openPage(index: number): PlanInfo {
     }
     planPage = index;
     objects = undefined;
+    list?.destroy();
+    list = undefined;
     return { pageCount, pageIndex: index, widthPt: x1 - x0, heightPt: y1 - y0, boxes, userUnit, rotate };
   } finally {
     page.destroy();
@@ -131,6 +143,55 @@ export function renderThumbnail(t: ThumbnailRequest): Preview {
   } finally {
     page.destroy();
   }
+}
+
+/** The Plan's display list, kept so that every picture of a region is drawn from it (ADR 0004). */
+let list: MuPDF.DisplayList | undefined;
+
+/** A part of the Plan (page mm) as a picture at `pxPerMm`. */
+export function renderRegion(r: RegionRequest): Preview {
+  const m = lib();
+  if (!current || planPage < 0) throw new Error("no Plan open");
+  if (!list) {
+    const page = current.loadPage(planPage);
+    try {
+      list = page.toDisplayList();
+    } finally {
+      page.destroy();
+    }
+  }
+  const { rect } = r;
+  const widthPx = Math.max(1, Math.round((rect.x1 - rect.x0) * r.pxPerMm));
+  const heightPx = Math.max(1, Math.round((rect.y1 - rect.y0) * r.pxPerMm));
+  // px per pt, and the page's own origin (the bounds may not start at 0).
+  const s = r.pxPerMm * PT_TO_MM;
+  const [bx, by] = list.getBounds();
+  const pix = new m.Pixmap(m.ColorSpace.DeviceRGB, [0, 0, widthPx, heightPx], true);
+  pix.clear(255);
+  const dev = new m.DrawDevice([s, 0, 0, s, -(bx! + rect.x0 / PT_TO_MM) * s, -(by! + rect.y0 / PT_TO_MM) * s], pix);
+  try {
+    list.run(dev, m.Matrix.identity);
+    dev.close();
+  } finally {
+    dev.destroy();
+  }
+  const pixels = pix.getPixels().slice();
+  pix.destroy();
+  return { pixels, widthPx, heightPx };
+}
+
+/**
+ * The first guess for the Header and the Footer (lines across the whole Plan), and the
+ * lines across half of it that Header and Footer lines snap to, along the Time direction.
+ */
+export function bodyHints(axis: Axis): BodyHints {
+  const { objects: objs, pageMm } = planObjects();
+  return { body: guessBody(objs, pageMm, axis), across: linesAcross(objs, pageMm, axis, 0.5) };
+}
+
+/** The straight lines of the drawing that zone edges snap to (built on first use). */
+export function snapSegments(): Segments {
+  return buildSegments(planObjects().objects);
 }
 
 /** The Plan's drawn objects in page mm, extracted on first use. */

@@ -21,6 +21,19 @@ scope.onmessage = async (ev: MessageEvent<Request>) => {
       case "openPage":
         result = core.openPage(req.page);
         break;
+      case "renderRegion": {
+        const t = core.renderRegion(req.region);
+        scope.postMessage({ id: req.id, ok: true, result: t } satisfies Response, [t.pixels.buffer]);
+        return;
+      }
+      case "bodyHints":
+        result = core.bodyHints(req.axis);
+        break;
+      case "snapSegments": {
+        const s = core.snapSegments();
+        scope.postMessage({ id: req.id, ok: true, result: s } satisfies Response, [s.h.buffer, s.v.buffer]);
+        return;
+      }
       case "extractObjects": {
         const { objects, extractMs } = core.planObjects();
         result = { count: objects.length, extractMs };
