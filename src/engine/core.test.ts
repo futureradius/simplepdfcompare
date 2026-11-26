@@ -124,4 +124,33 @@ describe("engine core", () => {
     const none = core.runComparison({ newPlan: { objects: objectsOf(gt.new.file), pageMm: gt.new.pageMm }, setup: { ...setup, old: { ...setup.old, ignored: [all] }, new: { ...setup.new, ignored: [all] } }, axisZones: { old: {}, new: {} } });
     expect(none.comparison.marks).toEqual([]);
   });
+
+  it("prepares the comparison view: the whole Plan at the overview scale, and its bands", () => {
+    const gt = pair("down");
+    core.openDocument(fileBuffer(gt.old.file));
+    core.openPage(0);
+    const v = core.prepareView("y");
+    expect(v.pxPerMm).toBe(0.5);
+    expect(Math.abs(v.overview.widthPx - gt.old.pageMm[0]! * 0.5)).toBeLessThan(1);
+    expect(Math.abs(v.overview.heightPx - gt.old.pageMm[1]! * 0.5)).toBeLessThan(1);
+    expect(v.bands).toBe(14);
+  });
+
+  it("a region drawn through the bands looks like the one drawn from the whole display list", () => {
+    const gt = pair("down");
+    core.openDocument(fileBuffer(gt.old.file));
+    core.openPage(0);
+    // Across a band edge (1 m): two bands are walked.
+    const region = { rect: { x0: 100, y0: 900, x1: 400, y1: 1100 }, pxPerMm: 2 };
+    const whole = core.renderRegion(region);
+    const v = core.prepareView("y");
+    expect(v.bands).toBe(14);
+    const banded = core.renderRegion(region);
+    expect(banded.widthPx).toBe(whole.widthPx);
+    let differ = 0;
+    for (let i = 0; i < whole.pixels.length; i++) if (Math.abs(whole.pixels[i]! - banded.pixels[i]!) > 16) differ++;
+    expect(differ / whole.pixels.length).toBeLessThan(0.001);
+    expect(banded.pixels.some((v, i) => i % 4 === 0 && v < 200)).toBe(true); // not blank
+    expect(core.lastRegionBands()).toBe(2);
+  });
 });
