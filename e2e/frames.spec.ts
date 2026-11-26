@@ -10,6 +10,8 @@ const APP = pathToFileURL(resolve("dist/index.html")).href;
 const PAIR = [resolve("samples/down-old.pdf"), resolve("samples/down-new.pdf")];
 
 test.skip(!process.env.FRAMES, "only with FRAMES=1");
+// FRAMES_DPR=1.5 measures a laptop screen (more pixels per frame).
+test.use({ deviceScaleFactor: Number(process.env.FRAMES_DPR || 1) });
 
 async function compared(page: Page) {
   await page.setViewportSize({ width: 1600, height: 1000 });
@@ -114,7 +116,7 @@ test("frame times while panning and zooming the 14 m Plan", async ({ page }) => 
   const oneToOne = 96 / 25.4;
   const motions: Motion[] = [
     { name: "pan, whole Plan", from: [W / 2, H / 2, whole], to: [W / 2 + 200, H / 2 + 2000, whole], frames: 120 },
-    { name: "pan, Planbreite (0.97 px/mm), through marks", from: [W / 2, 500, width], to: [W / 2, H - 500, width], frames: 240 },
+    { name: "pan, Planbreite (about 1 px/mm), the whole length", from: [W / 2, 500, width], to: [W / 2, H - 500, width], frames: 240 },
     { name: "pan, 1:1 (3.78 px/mm), along D4", from: [690, 5600, oneToOne], to: [690, 7000, oneToOne], frames: 180 },
     { name: "pan, 4:1 (15 px/mm)", from: [690, 6100, oneToOne * 4], to: [760, 6500, oneToOne * 4], frames: 180 },
     { name: "zoom in, whole Plan to 1:1", from: [690, 6275, whole], to: [690, 6275, oneToOne], frames: 180 },
