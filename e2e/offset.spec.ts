@@ -211,7 +211,7 @@ test("Vergleichen runs the comparison and opens Vergleich with a result that use
   await searchDone(page);
   await page.locator("#offset-compare").click();
   await expect(page.locator("#tab-compare")).toHaveAttribute("aria-selected", "true", { timeout: 90_000 });
-  await expect(page.locator("#marks-view")).toHaveAttribute("data-state", "done", { timeout: 90_000 });
+  await expect(page.locator("#compare-view")).toHaveAttribute("data-state", "done", { timeout: 90_000 });
   await expect(page.locator("#body-compare")).toContainText("560,00 mm");
   const r = await page.evaluate(() => {
     const h = (window as any).__handoff.latest();
@@ -226,14 +226,14 @@ test("Vergleichen runs the comparison and opens Vergleich with a result that use
   await page.locator("#tab-offset").click();
   await page.locator('[data-nudge="10"]').click();
   await page.locator("#offset-compare").click();
-  await expect(page.locator("#marks-view")).toHaveAttribute("data-offset", "570.000", { timeout: 90_000 });
+  await expect(page.locator("#compare-view")).toHaveAttribute("data-offset", "570.000", { timeout: 90_000 });
 });
 
 test("Vergleichen with an Ausgenommen box over a planted change leaves that Difference out", async ({ page }) => {
   await toVersatz(page);
   await searchDone(page);
   await page.locator("#offset-compare").click();
-  await expect(page.locator("#marks-view")).toHaveAttribute("data-state", "done", { timeout: 90_000 });
+  await expect(page.locator("#compare-view")).toHaveAttribute("data-state", "done", { timeout: 90_000 });
   const before = await hand(page);
   const d1 = (b: { x0: number; y0: number; x1: number; y1: number }) => ({ cx: (b.x0 + b.x1) / 2, cy: (b.y0 + b.y1) / 2 });
   const inD1 = (m: { box: { x0: number; y0: number; x1: number; y1: number }; plan: string }) => {
@@ -265,7 +265,7 @@ test("Vergleichen with an Ausgenommen box over a planted change leaves that Diff
   await searchDone(page);
   await page.locator("#offset-compare").click();
   await expect(page.locator("#body-compare")).toContainText("1 alt / 1 neu", { timeout: 90_000 });
-  await expect(page.locator("#marks-view")).toHaveAttribute("data-state", "done");
+  await expect(page.locator("#compare-view")).toHaveAttribute("data-state", "done");
   const after = await hand(page);
   expect(after.setup.old.ignored).toHaveLength(1);
   expect(after.setup.new.ignored).toHaveLength(1);

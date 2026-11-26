@@ -1,49 +1,26 @@
-// The temporary "Vergleich" view (until the smooth comparison view replaces it): it listens
-// for the ComparisonResult that "Vergleichen" hands over (src/ui/handoff.ts) and shows both
-// Plans in one picture with the marks, and the facts and the Places in the sidebar.
+// The "Vergleich" tab: it listens for the ComparisonResult that "Vergleichen" hands over
+// (src/ui/handoff.ts) and shows it in the comparison view (src/ui/compareview.ts). The
+// sidebar keeps the temporary facts and the readout of the Places until the list of Places
+// replaces them.
 
 import type { Place } from "../compare/places";
 import { kindText, umText, wannText, wasText, woText } from "../compare/wording";
-import type { ComparisonSetup, Mark } from "../compare/compare";
 import type { ComparisonResult } from "../compare/result";
-import type { Engine } from "../engine/client";
 import type { BusyWindow } from "./busy";
-import { markFrame, type MarkFrame } from "./markframe";
-import { drawMarks, MARK_COLOURS } from "./marks";
+import { LEGEND_COLOURS, type CompareView } from "./compareview";
 import type { ComparisonHandoff } from "./handoff";
-import type { Role, Sides } from "./openplans";
-
-export interface ComparedPlan {
-  /** The page of the Document that is the Plan, 0-based. */
-  page: number;
-  widthMm: number;
-  heightMm: number;
-}
 
 export interface FirstComparisonDeps {
-  engines: () => Sides<Engine>;
-  plans: () => Sides<ComparedPlan | undefined>;
   busy: BusyWindow;
   handoff: ComparisonHandoff;
+  /** The view that draws the comparison. */
+  view: CompareView;
 }
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const mm = (v: number) => v.toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const seconds = (ms: number) => `${(ms / 1000).toLocaleString("de-DE", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} s`;
 const count = (n: number) => n.toLocaleString("de-DE");
-
-async function picture(engine: Engine, plan: ComparedPlan, frame: MarkFrame): Promise<HTMLCanvasElement> {
-  const t = await engine.renderThumbnail({
-    page: plan.page,
-    maxWidthPx: Math.max(1, Math.round(plan.widthMm * frame.pxPerMm)),
-    maxHeightPx: Math.max(1, Math.round(plan.heightMm * frame.pxPerMm)),
-  });
-  const c = document.createElement("canvas");
-  c.width = t.widthPx;
-  c.height = t.heightPx;
-  c.getContext("2d")!.putImageData(new ImageData(t.pixels as Uint8ClampedArray<ArrayBuffer>, t.widthPx, t.heightPx), 0, 0);
-  return c;
-}
 
 function showFacts(rows: [string, string][], note: string): void {
   const body = $("body-compare");
@@ -65,9 +42,9 @@ function showFacts(rows: [string, string][], note: string): void {
   const legend = document.createElement("ul");
   legend.className = "marks-legend";
   for (const [colour, text] of [
-    [MARK_COLOURS.Added, "Hinzugefügt: nur im neuen Plan"],
-    [MARK_COLOURS.Removed, "Entfernt: nur im alten Plan"],
-    [MARK_COLOURS.Unchanged, "Unverändert: Teil, den beide Pläne zeichnen"],
+    [LEGEND_COLOURS.added, "Hinzugefügt: nur im neuen Plan"],
+    [LEGEND_COLOURS.removed, "Entfernt: nur im alten Plan"],
+    [LEGEND_COLOURS.unchanged, "Unverändert: Teil, den beide Pläne zeichnen"],
   ] as const) {
     const li = document.createElement("li"),
       sw = document.createElement("span");
@@ -76,7 +53,10 @@ function showFacts(rows: [string, string][], note: string): void {
     li.append(sw, text);
     legend.append(li);
   }
-  body.append(h, p, dl, legend);
+  const keys = document.createElement("p");
+  keys.className = "placeholder";
+  keys.textContent = "Leertaste: neuer Plan ohne Markierungen, Strg + Leertaste: alter Plan. 1 ganzer Plan, 2 Planbreite, 3 1:1.";
+  body.append(h, p, dl, legend, keys);
 }
 
 /**
@@ -103,31 +83,26 @@ function showPlaces(places: readonly Place[]): void {
 }
 
 export function setUpFirstComparison(deps: FirstComparisonDeps) {
-  const view = $("marks-view"),
-    canvas = $<HTMLCanvasElement>("marks-canvas"),
+  const viewEl = $("compare-view"),
     plansView = $("plans");
   let shown = false;
-  /** The result the picture and the sidebar show now. */
+  /** The result the view and the sidebar show now. */
   let drawn: ComparisonResult | undefined;
   let drawing = false;
 
   async function show(r: ComparisonResult): Promise<void> {
-    const plans = deps.plans(),
-      engines = deps.engines();
-    if (drawing || !plans.old || !plans.new) return;
+    if (drawing) return;
     drawing = true;
-    view.dataset.state = "running";
+    viewEl.dataset.state = "running";
     await deps.busy.start("Vergleich wird angezeigt…");
     try {
       const started = performance.now();
-      const old = plans.old,
-        nu = plans.new;
-      const frame = markFrame({ old: [old.widthMm, old.heightMm], new: [nu.widthMm, nu.heightMm] }, r.setup.axis, r.setup.offset);
-      const pictures = await Promise.all((["old", "new"] as Role[]).map((role) => picture(engines[role], plans[role]!, frame)));
-      draw(frame, pictures as [HTMLCanvasElement, HTMLCanvasElement], r.comparison.marks, r.setup);
+      // The view makes both Plans ready (bands and overview) only now, as it is shown.
+      await deps.view.show(r);
+      if (shown) deps.view.enter();
       const { counts } = r.comparison;
-      Object.assign(view.dataset, {
-        state: "done",
+      Object.assign(viewEl.dataset, {
+        state: "drawn",
         added: String(counts.added),
         removed: String(counts.removed),
         offset: r.setup.offset.toFixed(3),
@@ -148,60 +123,39 @@ export function setUpFirstComparison(deps: FirstComparisonDeps) {
           ["Abgleich", seconds(r.ms.compare)],
           ["Stellen bilden", seconds(r.ms.places)],
           ["Übertragen", seconds(r.ms.transfer)],
-          ["Bild zeichnen", seconds(performance.now() - started)],
+          ["Ansicht vorbereiten", seconds(performance.now() - started)],
         ],
-        "Vorläufige Ansicht: Sie zeigt das Ergebnis des Vergleichs mit Ihren Einstellungen.",
+        "Vorläufige Seitenleiste: Sie zeigt das Ergebnis des Vergleichs mit Ihren Einstellungen.",
       );
       showPlaces(r.places);
       drawn = r;
     } catch (e) {
-      view.dataset.state = "error";
+      viewEl.dataset.state = "error";
       showFacts([], `Der Vergleich konnte nicht gezeigt werden: ${String(e)}`);
     } finally {
       drawing = false;
       await deps.busy.end();
+      // Done once the busy window is gone: the keys work from here.
+      if (viewEl.dataset.state === "drawn") viewEl.dataset.state = "done";
     }
-  }
-
-  /** Draws the Old Plan whole and the New Plan's Body on it (its Header and Footer stay put). */
-  function draw(frame: MarkFrame, [old, nu]: [HTMLCanvasElement, HTMLCanvasElement], marks: readonly Mark[], setup: ComparisonSetup): void {
-    canvas.width = frame.widthPx;
-    canvas.height = frame.heightPx;
-    const ctx = canvas.getContext("2d")!;
-    ctx.fillStyle = "#fff";
-    ctx.fillRect(0, 0, frame.widthPx, frame.heightPx);
-    ctx.drawImage(old, ...frame.place.old);
-    ctx.save();
-    const s = frame.pxPerMm,
-      [b0, b1] = setup.new.body.map((v) => v + setup.offset);
-    const clip = new Path2D();
-    if (setup.axis === "y") clip.rect(0, (b0! - frame.y0) * s, frame.widthPx, (b1! - b0!) * s);
-    else clip.rect((b0! - frame.x0) * s, 0, (b1! - b0!) * s, frame.heightPx);
-    ctx.clip(clip);
-    ctx.globalCompositeOperation = "darken";
-    ctx.drawImage(nu, ...frame.place.new);
-    ctx.restore();
-    // A white veil, so the marks stand out.
-    ctx.fillStyle = "rgba(255,255,255,0.6)";
-    ctx.fillRect(0, 0, frame.widthPx, frame.heightPx);
-    drawMarks(ctx, marks, frame);
-    canvas.style.width = `${frame.widthPx}px`;
   }
 
   return {
     /** The "Vergleich" tab is shown: draws the latest result (once). */
     enter(): void {
       shown = true;
-      view.hidden = false;
+      viewEl.hidden = false;
       plansView.hidden = true;
+      deps.view.enter();
       const r = deps.handoff.latest();
       if (r && r !== drawn) void show(r);
     },
     /** Another tab is shown. */
     leave(): void {
       shown = false;
-      view.hidden = true;
+      viewEl.hidden = true;
       plansView.hidden = false;
+      deps.view.leave();
     },
     /** Hears a new result while the tab is already shown (it is drawn at once). */
     listen(): () => void {
