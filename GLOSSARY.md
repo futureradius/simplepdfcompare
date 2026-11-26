@@ -90,3 +90,22 @@ _Avoid_: deleted, old
 The part of a Difference that both Plans draw in the same place, such as the common
 stretch of a hatched stripe that was extended. Shown in a neutral grey.
 _Avoid_: overlap, kept
+
+## Comparison
+
+**Place**
+Differences that lie together (touching or a few mm apart) and are looked at as one;
+"Stelle" in the user interface. A Place that only lost drawing and one that only gained
+the same drawing elsewhere are one Place: something moved.
+_Avoid_: issue, item, hit
+
+**Kind of change**
+What happened at a Place, read from its drawing: later, earlier, longer, shorter, moved
+across, text changed, new, gone, recoloured, or other (Später, Früher, Verlängert,
+Verkürzt, Quer verschoben, Text geändert, Neu, Entfallen, Umgefärbt, Sonstiges).
+_Avoid_: category, type
+
+**Hidden Place**
+A Place the user marked as no real change: left out of the plan, the list and the
+export until shown again. Unlike an Ignored area, it was compared.
+_Avoid_: deleted, ignored
