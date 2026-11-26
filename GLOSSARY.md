@@ -120,6 +120,7 @@ Activity's shape, never from its label or leader.
 _Avoid_: category, type
 
 **Hidden Place**
-A Place the user marked as no real change: left out of the plan, the list and the
-export until shown again. Unlike an Ignored area, it was compared.
+A Place the user marked as no real change: left out of the plan and the list until
+shown again, but kept in the export, marked as hidden. Unlike an Ignored area, it was
+compared.
 _Avoid_: deleted, ignored
