@@ -3,6 +3,7 @@
 import { startEngines, type Engine } from "./engine/client";
 import { BUSY_TIMING, BusyWindow } from "./ui/busy";
 import { setUpFirstComparison } from "./ui/firstcompare";
+import { setUpSetupTabs } from "./ui/setuptabs";
 import { dropTargets, isPdf, needsPagePicker, swapped, type Role, type Sides } from "./ui/openplans";
 import { PagePicker, type PageSize } from "./ui/pagepicker";
 import { DIRECTION_LABEL, preselectedDirection, type Direction } from "./ui/direction";
@@ -63,9 +64,12 @@ interface Opened {
   widthMm: number;
   heightMm: number;
   picture: HTMLCanvasElement;
+  /** Unique per opened Plan: a new file or page is a new Plan even under the same name. */
+  id: number;
 }
 let opened: Sides<Opened | undefined> = { old: undefined, new: undefined };
 let working = false;
+let planSeq = 0;
 /** The Time direction; preselected from the Old Plan's page shape, then the user's to switch. */
 let direction: Direction = "down";
 /** The furthest tab that can be clicked (ADR 0002: confirmed tabs unlock the next one). */
@@ -106,6 +110,7 @@ async function showPage(role: Role, doc: { fileName: string; pages: PageSize[] }
       widthMm: info.widthPt * PT_TO_MM,
       heightMm: info.heightPt * PT_TO_MM,
       picture,
+      id: ++planSeq,
     };
     $("start-error").textContent = "";
   } catch (e) {
@@ -412,20 +417,62 @@ $("proceed").addEventListener("click", () => {
 
 const panelResize = setUpPanelResize($("workspace"), $("panel-resize"));
 
+// "Alter Plan" and "Neuer Plan": the zoomable views with Kopf, Fuß and the Bereiche.
+const setupTabs = setUpSetupTabs({
+  engines: () => engines,
+  plans: () => opened,
+  direction: () => direction,
+  busy: busyWindow,
+  next: (role) => {
+    reach = confirmTab(reach, role);
+    selectTab(role === "old" ? "new" : "offset");
+  },
+});
+(window as unknown as { __spc: typeof setupTabs }).__spc = setupTabs;
+
 function selectTab(id: TabId): void {
   if (!isTabEnabled(id, reach)) return;
   currentTab = id;
   panelResize.setKind(panelKindFor(id));
   renderTabs();
+  // The view is visible now, so it can measure itself.
+  if (id === "old" || id === "new") setupTabs.enter(id);
+  else setupTabs.leave();
 }
 for (const id of TABS) $(`tab-${id}`).addEventListener("click", () => selectTab(id));
 
-// "Weiter" confirms "Öffnen" and opens the next tab.
-$("open-next").addEventListener("click", () => {
+// "Weiter" confirms "Öffnen" and opens the next tab, once both Plans are read for Header and Footer.
+$("open-next").addEventListener("click", async () => {
   if (!opened.old || !opened.new || working) return;
+  working = true;
+  render();
+  try {
+    await setupTabs.prepare();
+  } finally {
+    working = false;
+    render();
+  }
   reach = confirmTab(reach, "open");
   selectTab("old");
 });
+
+// Keys of the setup tabs: 1, 2, 3, F, Entf; Space held pans with the left button.
+const typing = (t: EventTarget | null) => t instanceof HTMLElement && !!t.closest("input, textarea, select, dialog[open]");
+document.addEventListener("keydown", (e) => {
+  if (currentTab !== "old" && currentTab !== "new") return;
+  if (typing(e.target) || busyWindow.active || picker.isOpen) return;
+  if (e.key === " " && !(e.target instanceof HTMLButtonElement)) {
+    e.preventDefault();
+    setupTabs.setSpace(true);
+    return;
+  }
+  setupTabs.key(e);
+});
+document.addEventListener("keyup", (e) => {
+  if (e.key === " ") setupTabs.setSpace(false);
+});
+window.addEventListener("blur", () => setupTabs.setSpace(false));
+$("zone-canvas").addEventListener("pointerdown", () => (document.activeElement as HTMLElement | null)?.blur?.());
 
 for (const b of document.querySelectorAll<HTMLButtonElement>("#direction-switch button")) {
   b.textContent = DIRECTION_LABEL[b.dataset.value as Direction];
