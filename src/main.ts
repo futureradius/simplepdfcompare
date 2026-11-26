@@ -2,6 +2,7 @@
 
 import { startEngines, type Engine } from "./engine/client";
 import { BUSY_TIMING, BusyWindow } from "./ui/busy";
+import { setUpFirstComparison } from "./ui/firstcompare";
 import { dropTargets, isPdf, needsPagePicker, swapped, type Role, type Sides } from "./ui/openplans";
 import { PagePicker, type PageSize } from "./ui/pagepicker";
 import { DIRECTION_LABEL, preselectedDirection, type Direction } from "./ui/direction";
@@ -439,6 +440,9 @@ for (const b of document.querySelectorAll<HTMLButtonElement>("#shown-switch butt
     renderView();
   });
 }
+
+// The first thin pass of the comparison, behind ?vergleich (until the setup tabs exist).
+setUpFirstComparison({ engines: () => engines, plans: () => opened, busy: busyWindow });
 
 render();
 document.body.dataset.ready = "1";
