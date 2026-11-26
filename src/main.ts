@@ -1,0 +1,349 @@
+// simplepdfcompare: start page (open the Old and the New Plan) and the workspace shell.
+
+import { startEngines, type Engine } from "./engine/client";
+import { BUSY_TIMING, BusyWindow } from "./ui/busy";
+import { dropTargets, isPdf, needsPagePicker, swapped, type Role, type Sides } from "./ui/openplans";
+import { PagePicker, type PageSize } from "./ui/pagepicker";
+import { setUpPanelResize } from "./ui/sidebar";
+
+const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+const ROLES: Role[] = ["old", "new"];
+const ROLE_NAME: Record<Role, string> = { old: "Alter Plan", new: "Neuer Plan" };
+/** The picture of a Plan in the boxes and the view: the whole page, fit into this box. */
+const PICTURE_MAX = { width: 1200, height: 1600 };
+
+$("version").textContent = `Version ${__APP_VERSION__} vom ${__BUILD_DATE__.split("-").reverse().join(".")}`;
+
+// ---- About -------------------------------------------------------------------
+const about = $<HTMLDialogElement>("about");
+$("about-open").addEventListener("click", () => {
+  about.showModal();
+  about.querySelector(".body")!.scrollTop = 0;
+});
+$("about-close").addEventListener("click", () => about.close());
+
+// ---- Busy window (clipper ADR 0012) ---------------------------------------------
+// Tests set `__busyDelayMs` to see the window even for fast jobs.
+const busyDelay = (window as unknown as { __busyDelayMs?: number }).__busyDelayMs;
+const busyWindow = new BusyWindow(
+  {
+    dialog: $<HTMLDialogElement>("busy"),
+    text: $("busy-text"),
+    time: $("busy-time"),
+    bar: $<HTMLProgressElement>("busy-bar"),
+    cancel: $<HTMLButtonElement>("busy-cancel"),
+  },
+  busyDelay === undefined ? BUSY_TIMING : { ...BUSY_TIMING, delayMs: busyDelay },
+);
+
+// ---- Engines: one worker per Plan (ADR 0004) --------------------------------------
+await busyWindow.start("PDF-Engine wird geladen…");
+let engines: Sides<Engine>;
+try {
+  const [a, b] = await startEngines();
+  engines = { old: a, new: b };
+} catch (e) {
+  await busyWindow.end();
+  $("start-error").textContent = `Die PDF-Engine konnte nicht geladen werden: ${String(e)}`;
+  throw e;
+}
+void busyWindow.end();
+document.body.dataset.engine = "worker";
+
+// ---- State ---------------------------------------------------------------------
+/** One opened Plan: the Document's file, its pages and the chosen one (the Plan). */
+interface Opened {
+  fileName: string;
+  pages: PageSize[];
+  /** The chosen page, 0-based. */
+  page: number;
+  widthMm: number;
+  heightMm: number;
+  picture: HTMLCanvasElement;
+}
+let opened: Sides<Opened | undefined> = { old: undefined, new: undefined };
+let working = false;
+const PT_TO_MM = 25.4 / 72;
+const de = (v: number) => v.toLocaleString("de-DE", { maximumFractionDigits: 0 });
+
+const picker = new PagePicker(
+  { dialog: $<HTMLDialogElement>("pages"), info: $("pages-info"), grid: $("pages-grid"), cancel: $<HTMLButtonElement>("pages-cancel") },
+  // Set per call below: the picker belongs to the box being filled.
+  (page, w, h) => pickerEngine!.renderThumbnail({ page, maxWidthPx: w, maxHeightPx: h }),
+);
+let pickerEngine: Engine | undefined;
+
+// ---- Opening a file into a box --------------------------------------------------
+async function makePicture(engine: Engine, page: number): Promise<HTMLCanvasElement> {
+  const t = await engine.renderThumbnail({ page, maxWidthPx: PICTURE_MAX.width, maxHeightPx: PICTURE_MAX.height });
+  const canvas = document.createElement("canvas");
+  canvas.width = t.widthPx;
+  canvas.height = t.heightPx;
+  canvas.getContext("2d")!.putImageData(new ImageData(t.pixels as Uint8ClampedArray<ArrayBuffer>, t.widthPx, t.heightPx), 0, 0);
+  return canvas;
+}
+
+/** Makes a page of the box's Document the Plan, with the busy window running. */
+async function showPage(role: Role, doc: { fileName: string; pages: PageSize[] }, index: number): Promise<void> {
+  await busyWindow.start(doc.pages.length > 1 ? `Seite ${index + 1} wird geöffnet…` : "Plan wird geöffnet…");
+  try {
+    const info = await engines[role].openPage(index);
+    const picture = await makePicture(engines[role], index);
+    opened[role] = {
+      fileName: doc.fileName,
+      pages: doc.pages,
+      page: index,
+      widthMm: info.widthPt * PT_TO_MM,
+      heightMm: info.heightPt * PT_TO_MM,
+      picture,
+    };
+    $("start-error").textContent = "";
+  } catch (e) {
+    $("start-error").textContent = `${doc.pages.length > 1 ? `Seite ${index + 1}` : "Der Plan"} konnte nicht geöffnet werden: ${String(e)}`;
+  } finally {
+    await busyWindow.end();
+  }
+  render();
+}
+
+/** Opens a file into a box: straight away if it has one page, else after the page picker. */
+async function openFile(role: Role, file: File): Promise<void> {
+  if (working) return;
+  working = true;
+  render();
+  try {
+    await busyWindow.start("Plan wird geöffnet…");
+    $("start-error").textContent = "";
+    let pages: PageSize[];
+    try {
+      pages = (await engines[role].openDocument(await file.arrayBuffer())).pages;
+      if (pages.length === 0) throw new Error("keine Seiten");
+    } catch (e) {
+      await busyWindow.end();
+      $("start-error").textContent = `„${file.name}“ konnte nicht geöffnet werden: ${String(e)}`;
+      return;
+    }
+    const doc = { fileName: file.name, pages };
+    if (!needsPagePicker(pages.length)) {
+      await busyWindow.end();
+      return await showPage(role, doc, 0);
+    }
+    await busyWindow.end();
+    pickerEngine = engines[role];
+    const index = await picker.pick(pages, file.name);
+    if (index === undefined) {
+      await engines[role].discardDocument();
+      return;
+    }
+    await showPage(role, doc, index);
+  } finally {
+    working = false;
+    render();
+  }
+}
+
+async function changePage(role: Role, index: number): Promise<void> {
+  const o = opened[role];
+  if (!o || working || index < 0 || index >= o.pages.length) return;
+  working = true;
+  render();
+  try {
+    await showPage(role, o, index);
+  } finally {
+    working = false;
+    render();
+  }
+}
+
+async function pickPage(role: Role): Promise<void> {
+  const o = opened[role];
+  if (!o || working || picker.isOpen) return;
+  pickerEngine = engines[role];
+  const index = await picker.pick(o.pages, o.fileName, o.page);
+  if (index !== undefined && index !== o.page) await changePage(role, index);
+}
+
+/** Opens several files in order, each into its box. */
+async function openFiles(files: File[], targets: Role[]): Promise<void> {
+  for (let i = 0; i < targets.length; i++) await openFile(targets[i]!, files[i]!);
+}
+
+function swap(): void {
+  if (working) return;
+  engines = swapped(engines);
+  opened = swapped(opened);
+  render();
+}
+
+// ---- Rendering the boxes, the cards and the view -----------------------------------
+function el<K extends keyof HTMLElementTagNameMap>(tag: K, className = "", text = ""): HTMLElementTagNameMap[K] {
+  const e = document.createElement(tag);
+  if (className) e.className = className;
+  if (text) e.textContent = text;
+  return e;
+}
+
+function copyPicture(src: HTMLCanvasElement, className: string): HTMLCanvasElement {
+  const c = el("canvas", className);
+  c.width = src.width;
+  c.height = src.height;
+  c.getContext("2d")!.drawImage(src, 0, 0);
+  return c;
+}
+
+function button(label: string, onClick: () => void, opts: { title?: string; className?: string; disabled?: boolean } = {}): HTMLButtonElement {
+  const b = el("button", `btn ${opts.className ?? ""}`.trim(), label);
+  b.type = "button";
+  if (opts.title) {
+    b.title = opts.title;
+    b.setAttribute("aria-label", opts.title);
+  }
+  b.disabled = !!opts.disabled;
+  b.addEventListener("click", (e) => {
+    e.stopPropagation();
+    onClick();
+  });
+  return b;
+}
+
+function pager(role: Role, o: Opened): HTMLElement {
+  const p = el("div", "pager");
+  p.dataset.pager = role;
+  const pick = button("", () => void pickPage(role), { title: "Seite wählen", className: "pg-pick", disabled: working });
+  pick.append("Seite ", Object.assign(el("b"), { textContent: String(o.page + 1) }), ` von ${o.pages.length}`);
+  p.append(
+    button("◀", () => void changePage(role, o.page - 1), { title: "Vorherige Seite", className: "pg-nav", disabled: working || o.page === 0 }),
+    pick,
+    button("▶", () => void changePage(role, o.page + 1), { title: "Nächste Seite", className: "pg-nav", disabled: working || o.page === o.pages.length - 1 }),
+  );
+  return p;
+}
+
+const planSize = (o: Opened) => `${de(o.widthMm)} × ${de(o.heightMm)} mm`;
+
+function renderBox(role: Role): void {
+  const box = $(`box-${role}`);
+  const o = opened[role];
+  box.classList.toggle("filled", !!o);
+  box.replaceChildren();
+  box.append(el("div", "role", ROLE_NAME[role]));
+  if (!o) {
+    const empty = el("div", "empty");
+    empty.innerHTML =
+      '<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /><path d="M12 18v-6" /><path d="m9 15 3-3 3 3" /></svg>';
+    empty.append(el("h2", "", "PDF hierher ziehen"), el("p", "", "oder anklicken"));
+    box.append(empty);
+    return;
+  }
+  box.append(copyPicture(o.picture, "thumb-img"), el("div", "file-name", o.fileName), el("div", "muted", planSize(o)));
+  if (o.pages.length > 1) box.append(pager(role, o));
+  box.append(button("Andere Datei…", () => chooseFile(role), { className: "other ghost", disabled: working }));
+}
+
+function renderCard(role: Role): void {
+  const card = $(`card-${role}`);
+  const o = opened[role];
+  card.dataset.role = role;
+  card.replaceChildren(el("div", "role", ROLE_NAME[role]));
+  if (!o) return;
+  card.append(el("div", "file-name", o.fileName), el("div", "muted", planSize(o)));
+  if (o.pages.length > 1) card.append(pager(role, o));
+  card.append(button("Andere Datei…", () => chooseFile(role), { disabled: working }));
+}
+
+function renderView(): void {
+  for (const role of ROLES) {
+    const canvas = $<HTMLCanvasElement>(`plan-${role}`);
+    const o = opened[role];
+    if (!o) continue;
+    canvas.width = o.picture.width;
+    canvas.height = o.picture.height;
+    canvas.getContext("2d")!.drawImage(o.picture, 0, 0);
+  }
+}
+
+function render(): void {
+  for (const role of ROLES) {
+    renderBox(role);
+    renderCard(role);
+  }
+  renderView();
+  $<HTMLButtonElement>("proceed").disabled = !(opened.old && opened.new) || working;
+  for (const id of ["swap-start", "swap-view"]) $<HTMLButtonElement>(id).disabled = working;
+}
+
+// ---- File choosers, drag and drop --------------------------------------------------
+function chooseFile(role: Role): void {
+  if (working) return;
+  $<HTMLInputElement>(`file-${role}`).click();
+}
+for (const role of ROLES) {
+  const input = $<HTMLInputElement>(`file-${role}`);
+  input.addEventListener("change", () => {
+    const file = input.files?.[0];
+    input.value = ""; // allow re-opening the same file
+    if (file) void openFile(role, file);
+  });
+  const box = $(`box-${role}`);
+  box.addEventListener("click", () => {
+    if (!opened[role]) chooseFile(role);
+  });
+  box.addEventListener("keydown", (e) => {
+    if ((e.key === "Enter" || e.key === " ") && e.target === box && !opened[role]) {
+      e.preventDefault();
+      chooseFile(role);
+    }
+  });
+}
+
+let dragDepth = 0;
+window.addEventListener("dragenter", (e) => {
+  if (!e.dataTransfer?.types.includes("Files")) return;
+  dragDepth++;
+  document.body.classList.add("dragging");
+});
+window.addEventListener("dragleave", () => {
+  if (--dragDepth <= 0) document.body.classList.remove("dragging");
+});
+window.addEventListener("dragover", (e) => e.preventDefault());
+window.addEventListener("drop", (e) => {
+  e.preventDefault();
+  dragDepth = 0;
+  document.body.classList.remove("dragging");
+  if (busyWindow.active || working || picker.isOpen) return;
+  const files = [...(e.dataTransfer?.files ?? [])].filter(isPdf);
+  if (files.length === 0) {
+    if (!$("start").hidden) $("start-error").textContent = "Bitte eine PDF-Datei ablegen.";
+    return;
+  }
+  const onBox = (e.target as Element | null)?.closest<HTMLElement>("[data-role]")?.dataset.role as Role | undefined;
+  const targets = dropTargets({ old: !!opened.old, new: !!opened.new }, files.length, onBox);
+  void openFiles(files, targets);
+});
+
+// ---- Swap, Weiter, tabs -------------------------------------------------------------
+for (const id of ["swap-start", "swap-view"]) $(id).addEventListener("click", swap);
+
+$("proceed").addEventListener("click", () => {
+  if (!opened.old || !opened.new) return;
+  // The start page is passed once and not shown again.
+  $("start").hidden = true;
+  $("workspace").hidden = false;
+  render();
+});
+
+setUpPanelResize($("workspace"), $("panel-resize"));
+
+for (const tab of document.querySelectorAll<HTMLButtonElement>(".tab")) {
+  tab.addEventListener("click", () => {
+    for (const t of document.querySelectorAll<HTMLButtonElement>(".tab")) {
+      const on = t === tab;
+      t.setAttribute("aria-selected", String(on));
+      const body = document.getElementById(`body-${t.dataset.tab}`);
+      if (body) body.hidden = !on;
+    }
+  });
+}
+
+render();
+document.body.dataset.ready = "1";
