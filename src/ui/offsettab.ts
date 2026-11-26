@@ -90,6 +90,9 @@ export function setUpOffsetTab(deps: OffsetDeps) {
     async (_key, signal) => {
       const { setup } = comparisonInput(axis(), 0, deps.setupOf("old")!, deps.setupOf("new")!);
       const nu = await newPlanObjects();
+      // Tests set `__offsetSearchDelayMs` to watch a search that takes long.
+      const slow = (window as unknown as { __offsetSearchDelayMs?: number }).__offsetSearchDelayMs;
+      if (slow) await new Promise((r) => setTimeout(r, slow));
       if (signal.aborted) throw new DOMException("aborted", "AbortError");
       return deps.engines().old.findOffset(
         {

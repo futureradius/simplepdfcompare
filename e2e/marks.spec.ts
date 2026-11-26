@@ -1,5 +1,5 @@
-// The first thin pass: behind the URL flag ?vergleich the "Vergleich" tab compares the two
-// Plans (detected Offset, default Header and Footer) and draws the marks.
+// The temporary "Vergleich" view: after the setup tabs and "Vergleichen" on "Versatz" it draws
+// the marks of the comparison (default Header and Footer, the Offset found) and lists the Places.
 import { test, expect, type Page } from "@playwright/test";
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
@@ -28,6 +28,12 @@ async function openPair(page: Page, url: string, paths: readonly string[]) {
   }, files);
   await expect(page.locator("#proceed")).toBeEnabled({ timeout: 60_000 });
   await page.locator("#proceed").click();
+  await page.locator("#open-next").click();
+  await expect(page.locator("#tab-old")).toHaveAttribute("aria-selected", "true", { timeout: 60_000 });
+  await page.locator("#body-old [data-action=next]").click();
+  await page.locator("#body-new [data-action=next]").click();
+  await expect(page.locator("#tab-offset")).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator("#offset-status")).toHaveAttribute("data-state", "done", { timeout: 60_000 });
 }
 
 /** How many pixels of the marks canvas have each mark colour. */
@@ -51,7 +57,7 @@ for (const [name, offset] of [
   ["down", "560,00"],
   ["right", "36,00"],
 ] as const) {
-  test(`?vergleich: the ${name} pair is compared and its marks are drawn`, async ({ page }) => {
+  test(`Vergleichen: the ${name} pair is compared and its marks are drawn`, async ({ page }) => {
     const errors: string[] = [],
       external: string[] = [];
     page.on("pageerror", (e) => errors.push(e.message));
@@ -61,9 +67,9 @@ for (const [name, offset] of [
       external.push(url);
       return route.abort();
     });
-    await openPair(page, `${APP}?vergleich`, PAIRS[name]);
-    await expect(page.locator("#tab-compare")).toBeEnabled();
-    await page.locator("#tab-compare").click();
+    await openPair(page, APP, PAIRS[name]);
+    await expect(page.locator("#tab-compare")).toBeDisabled();
+    await page.locator("#offset-compare").click();
     const view = page.locator("#marks-view");
     await expect(view).toHaveAttribute("data-state", "done", { timeout: 90_000 });
     await expect(page.locator("#plans")).toBeHidden();
@@ -87,11 +93,11 @@ for (const [name, offset] of [
 
 // A temporary readout of the Places (slice "Places, their names and kinds of change"), until
 // the real list replaces it: one row per Place with its name, main kind, Wann and Wo.
-test("?vergleich lists the Places of the activities pair in the sidebar", async ({ page }) => {
+test("Vergleich lists the Places of the activities pair in the sidebar", async ({ page }) => {
   const gt = JSON.parse(readFileSync("samples/ground-truth.json", "utf8")).pairs.find((p: { name: string }) => p.name === "activities");
-  await openPair(page, `${APP}?vergleich`, [resolve("samples/activities-old.pdf"), resolve("samples/activities-new.pdf")]);
-  await expect(page.locator("#tab-compare")).toBeEnabled();
-  await page.locator("#tab-compare").click();
+  await openPair(page, APP, [resolve("samples/activities-old.pdf"), resolve("samples/activities-new.pdf")]);
+  await expect(page.locator("#tab-compare")).toBeDisabled();
+  await page.locator("#offset-compare").click();
   await expect(page.locator("#marks-view")).toHaveAttribute("data-state", "done", { timeout: 90_000 });
   await expect(page.locator("#plans")).toBeHidden();
   await expect(page.locator("#body-compare .places-readout")).toBeVisible();
@@ -105,7 +111,7 @@ test("?vergleich lists the Places of the activities pair in the sidebar", async 
   await page.screenshot({ path: "test-results/places-activities.png" });
 });
 
-test("without the flag the Vergleich tab stays locked", async ({ page }) => {
+test("the Vergleich tab stays locked until Vergleichen has run", async ({ page }) => {
   await openPair(page, APP, PAIRS.right);
   await expect(page.locator("#tab-compare")).toBeDisabled();
 });

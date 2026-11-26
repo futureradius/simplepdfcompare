@@ -16,13 +16,22 @@ export const OLD_INK = "#1478e6";
 export const NEW_INK = "#e1003c";
 const SNAP_COLOUR = "#f59e0b";
 
-/** The picture with its black ink in `colour` and its white left white (each channel: the larger of the two). */
+/**
+ * The picture as grey ink in `colour`: coloured ink becomes grey first (only how dark it is
+ * counts), then black ink takes the colour and white stays white (each channel: the larger of the two).
+ */
 export function tinted(draw: (ctx: CanvasRenderingContext2D) => void, width: number, height: number, colour: string): HTMLCanvasElement {
+  const raw = document.createElement("canvas");
+  raw.width = width;
+  raw.height = height;
+  draw(raw.getContext("2d")!);
   const c = document.createElement("canvas");
   c.width = width;
   c.height = height;
   const ctx = c.getContext("2d")!;
-  draw(ctx);
+  ctx.filter = "grayscale(1)";
+  ctx.drawImage(raw, 0, 0);
+  ctx.filter = "none";
   ctx.globalCompositeOperation = "lighten";
   ctx.fillStyle = colour;
   ctx.fillRect(0, 0, width, height);

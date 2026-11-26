@@ -455,6 +455,7 @@ const offsetTab = setUpOffsetTab({
 (window as unknown as { __offset: typeof offsetTab }).__offset = offsetTab;
 
 // "Vergleich": for now the temporary view of the first pass, fed by the hand-off.
+(window as unknown as { __handoff: ComparisonHandoff }).__handoff = handoff;
 const comparisonView = setUpFirstComparison({ engines: () => engines, plans: () => opened, busy: busyWindow, handoff });
 comparisonView.listen();
 
