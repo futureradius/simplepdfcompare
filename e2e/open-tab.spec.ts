@@ -45,12 +45,22 @@ async function inOpenTab(page: Page, pair: [string, string] = [OLD, NEW]) {
   await expect(page.locator("#workspace")).toBeVisible();
 }
 
+
 const enabled = async (page: Page) => page.locator(".tab").evaluateAll((tabs) => tabs.map((t) => !(t as HTMLButtonElement).disabled));
-const arrow = async (page: Page, role: "old" | "new", which: "a" | "b") => (await page.locator(`#sheet-${role} .tarrow.${which}`).boundingBox())!;
-const sheet = async (page: Page, role: "old" | "new") => (await page.locator(`#sheet-${role}`).boundingBox())!;
+const arrow = async (page: Page, which: "a" | "b") => (await page.locator(`#sheet .tarrow.${which}`).boundingBox())!;
+const sheet = async (page: Page) => (await page.locator("#sheet").boundingBox())!;
+const box = async (page: Page, sel: string) => (await page.locator(sel).boundingBox())!;
 const shot = async (page: Page, name: string) => {
   if (SHOTS) await page.screenshot({ path: join(SHOTS, name) });
 };
+/** A hash of the picture on the canvas, to tell the Old from the New Plan. */
+const pictureHash = (page: Page) =>
+  page.locator("#plan").evaluate((c: HTMLCanvasElement) => {
+    const d = c.getContext("2d")!.getImageData(0, 0, c.width, c.height).data;
+    let h = 0;
+    for (let i = 0; i < d.length; i += 97) h = (h * 31 + d[i]!) | 0;
+    return `${c.width}x${c.height}:${h}`;
+  });
 
 test("tabs: later ones stay greyed out until Weiter confirms Öffnen; going back locks nothing", async ({ page }) => {
   await inOpenTab(page);
@@ -58,16 +68,16 @@ test("tabs: later ones stay greyed out until Weiter confirms Öffnen; going back
   await page.locator("#open-next").click();
   await expect(page.locator("#tab-old")).toHaveAttribute("aria-selected", "true");
   expect(await enabled(page)).toEqual([true, true, false, false, false]);
-  // Visiting "Öffnen" again without a change locks nothing.
   await page.locator("#tab-open").click();
   await expect(page.locator("#body-open")).toBeVisible();
   expect(await enabled(page)).toEqual([true, true, false, false, false]);
 });
 
-test("Time direction: preselected from the Old Plan's page shape", async ({ page }) => {
+test("Time direction: preselected from the Old Plan's page shape, and no hint line under the switch", async ({ page }) => {
   await inOpenTab(page);
   await expect(page.locator('#direction-switch button[aria-checked="true"]')).toHaveText("senkrecht");
   await expect(page.locator("#plans")).toHaveAttribute("data-dir", "down");
+  await expect(page.locator(".hint")).toHaveCount(0);
   await page.goto(APP);
   await expect(page.locator("body")).toHaveAttribute("data-ready", "1", { timeout: 60_000 });
   await drop(page, "body", [RIGHT_OLD, RIGHT_NEW]);
@@ -77,77 +87,125 @@ test("Time direction: preselected from the Old Plan's page shape", async ({ page
   await expect(page.locator("#plans")).toHaveAttribute("data-dir", "right");
 });
 
-test("Time direction: the switch slides its highlight and the arrows move beside and above the Plans", async ({ page }) => {
+test("Time direction: the highlight slides and the one pair of arrows moves beside and above the Plan", async ({ page }) => {
   await inOpenTab(page);
-  const down = page.locator('#direction-switch button[data-dir="down"]');
-  const right = page.locator('#direction-switch button[data-dir="right"]');
-  // Down: arrows on the left and right of each Plan, vertically centred.
-  for (const role of ["old", "new"] as const) {
-    const s = await sheet(page, role);
-    const a = await arrow(page, role, "a");
-    const b = await arrow(page, role, "b");
-    expect(a.x + a.width).toBeLessThanOrEqual(s.x + 1);
-    expect(b.x).toBeGreaterThanOrEqual(s.x + s.width - 1);
-    expect(a.height).toBeGreaterThan(a.width);
-  }
-  const hlBefore = (await page.locator("#direction-switch .hl").boundingBox())!;
-  const planBefore = await sheet(page, "old");
-  await shot(page, "open-down.png");
+  const right = page.locator('#direction-switch button[data-value="right"]');
+  const s = await sheet(page);
+  const a = await arrow(page, "a");
+  const b = await arrow(page, "b");
+  expect(a.x + a.width).toBeLessThanOrEqual(s.x + 1);
+  expect(b.x).toBeGreaterThanOrEqual(s.x + s.width - 1);
+  expect(a.height).toBeGreaterThan(a.width);
+  const hlBefore = await box(page, "#direction-switch .hl");
+  await shot(page, "open-senkrecht-alt.png");
   await right.click();
   await expect(right).toHaveAttribute("aria-checked", "true");
-  await expect(down).toHaveAttribute("aria-checked", "false");
   await expect(page.locator("#plans")).toHaveAttribute("data-dir", "right");
-  // Let the slide finish; then arrows sit above and below, pointing right (wider than tall).
   await page.waitForTimeout(700);
-  for (const role of ["old", "new"] as const) {
-    const s = await sheet(page, role);
-    const a = await arrow(page, role, "a");
-    const b = await arrow(page, role, "b");
-    expect(a.y + a.height).toBeLessThanOrEqual(s.y + 1);
-    expect(b.y).toBeGreaterThanOrEqual(s.y + s.height - 1);
-    expect(a.width).toBeGreaterThan(a.height);
-  }
-  const hlAfter = (await page.locator("#direction-switch .hl").boundingBox())!;
+  const a2 = await arrow(page, "a");
+  const b2 = await arrow(page, "b");
+  expect(a2.y + a2.height).toBeLessThanOrEqual(s.y + 1);
+  expect(b2.y).toBeGreaterThanOrEqual(s.y + s.height - 1);
+  expect(a2.width).toBeGreaterThan(a2.height);
+  const hlAfter = await box(page, "#direction-switch .hl");
   expect(hlAfter.x).toBeGreaterThan(hlBefore.x + hlBefore.width / 2);
-  // Nothing jumped: the Plan kept its place and size.
-  const planAfter = await sheet(page, "old");
-  expect(Math.abs(planAfter.x - planBefore.x)).toBeLessThan(1);
-  expect(Math.abs(planAfter.width - planBefore.width)).toBeLessThan(1);
-  await shot(page, "open-right.png");
+  const s2 = await sheet(page);
+  expect(Math.abs(s2.x - s.x)).toBeLessThan(1);
+  expect(Math.abs(s2.width - s.width)).toBeLessThan(1);
+  await page.locator('#shown-switch button[data-value="new"]').click();
+  await shot(page, "open-waagerecht-neu.png");
+});
+
+test("arrows are thin: a 3 px line and a head under 20 px wide", async ({ page }) => {
+  await inOpenTab(page);
+  const info = await page.locator("#sheet .tarrow.a path").evaluate((p) => {
+    const bb = (p as SVGGraphicsElement).getBBox();
+    return { stroke: getComputedStyle(p).strokeWidth, bboxWidth: bb.width };
+  });
+  expect(info.stroke).toBe("3px");
+  expect(info.bboxWidth).toBeLessThan(20);
 });
 
 test("Time direction: with reduced motion the arrows fade instead of sliding", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await inOpenTab(page);
-  await page.locator('#direction-switch button[data-dir="right"]').click();
-  // Mid-switch the arrows are faded out and have not moved yet.
+  await page.locator('#direction-switch button[data-value="right"]').click();
   await expect(page.locator("#plans")).toHaveClass(/fading/);
-  expect(await page.locator("#sheet-old .tarrow.a").evaluate((e) => getComputedStyle(e).transitionProperty)).toBe("opacity");
+  expect(await page.locator("#sheet .tarrow.a").evaluate((e) => getComputedStyle(e).transitionProperty)).toBe("opacity");
   await expect(page.locator("#plans")).toHaveAttribute("data-dir", "right");
   await expect(page.locator("#plans")).not.toHaveClass(/fading/);
   await page.waitForTimeout(300);
-  expect(await page.locator("#sheet-old .tarrow.a").evaluate((e) => getComputedStyle(e).opacity)).not.toBe("0");
-  const s = await sheet(page, "old");
-  const a = await arrow(page, "old", "a");
+  expect(await page.locator("#sheet .tarrow.a").evaluate((e) => getComputedStyle(e).opacity)).not.toBe("0");
+  const s = await sheet(page);
+  const a = await arrow(page, "a");
   expect(a.y + a.height).toBeLessThanOrEqual(s.y + 1);
 });
 
-test("swap: the view has the only swap button, between the Plans, and it exchanges the order and locks the later tabs", async ({ page }) => {
+test("Alt | Neu: shows the other Plan, locks nothing, keeps the direction, and nothing jumps", async ({ page }) => {
   await inOpenTab(page);
-  await expect(page.locator("#panel button", { hasText: "⇄" })).toHaveCount(0);
-  await expect(page.locator("#panel [aria-label='Alt und Neu tauschen']")).toHaveCount(0);
+  await page.locator('#direction-switch button[data-value="right"]').click();
   await page.locator("#open-next").click();
   await page.locator("#tab-open").click();
   expect(await enabled(page)).toEqual([true, true, false, false, false]);
-  const swap = (await page.locator("#swap-view").boundingBox())!;
-  const o = await sheet(page, "old");
-  const n = await sheet(page, "new");
-  expect(swap.x).toBeGreaterThan(o.x + o.width);
-  expect(swap.x + swap.width).toBeLessThan(n.x);
+  await expect(page.locator("#shown-switch button[aria-checked='true']")).toHaveText("Alt");
+  await page.waitForTimeout(700); // let the arrows finish sliding
+  const old = await pictureHash(page);
+  const sw = await box(page, "#shown-switch");
+  const swap = await box(page, "#swap-view");
+  const a = await arrow(page, "a");
+  await page.locator('#shown-switch button[data-value="new"]').click();
+  await expect(page.locator("#shown-switch button[aria-checked='true']")).toHaveText("Neu");
+  expect(await pictureHash(page)).not.toBe(old);
+  expect(await enabled(page)).toEqual([true, true, false, false, false]);
+  await expect(page.locator('#direction-switch button[aria-checked="true"]')).toHaveText("waagerecht");
+  const sw2 = await box(page, "#shown-switch");
+  const swap2 = await box(page, "#swap-view");
+  const a2 = await arrow(page, "a");
+  expect([sw2.x, sw2.y, sw2.width]).toEqual([sw.x, sw.y, sw.width]);
+  expect([swap2.x, swap2.y]).toEqual([swap.x, swap.y]);
+  // The arrows stay with the Plan; the two samples differ by 2 % in length, so allow a few px.
+  expect(Math.abs(a2.x - a.x)).toBeLessThan(15);
+  expect(Math.abs(a2.y - a.y)).toBeLessThan(1);
+  await page.locator('#shown-switch button[data-value="old"]').click();
+  expect(await pictureHash(page)).toBe(old);
+});
+
+test("the Alt | Neu switch and the swap button sit top left, next to each other; Über stays top right", async ({ page }) => {
+  await inOpenTab(page);
+  const sw = await box(page, "#shown-switch");
+  const swap = await box(page, "#swap-view");
+  const viewer = await box(page, "#viewer");
+  expect(sw.x - viewer.x).toBeLessThan(30);
+  expect(sw.y - viewer.y).toBeLessThan(30);
+  expect(swap.x).toBeGreaterThanOrEqual(sw.x + sw.width);
+  expect(swap.x - (sw.x + sw.width)).toBeLessThan(20);
+  const about = await box(page, "#about-open");
+  expect(about.x).toBeGreaterThan(viewer.x + viewer.width - 120);
+  // Only one swap in the workspace, none in the sidebar.
+  await expect(page.locator("#panel [aria-label='Alt und Neu tauschen']")).toHaveCount(0);
+  await expect(page.locator("#workspace [aria-label='Alt und Neu tauschen']")).toHaveCount(1);
+  // The other tabs hide the switch and the swap button.
+  await page.locator("#open-next").click();
+  await expect(page.locator("#shown-switch")).toBeHidden();
+  await expect(page.locator("#swap-view")).toBeHidden();
+  await expect(page.locator("#about-open")).toBeVisible();
+});
+
+test("swap from the corner exchanges the files, locks the later tabs, and Alt shows the new Old Plan", async ({ page }) => {
+  await inOpenTab(page);
+  await page.locator("#open-next").click();
+  await page.locator("#tab-open").click();
+  expect(await enabled(page)).toEqual([true, true, false, false, false]);
+  const before = await pictureHash(page);
   await page.locator("#swap-view").click();
   await expect(page.locator("#card-old .file-name")).toHaveText("down-new.pdf");
   await expect(page.locator("#card-new .file-name")).toHaveText("down-old.pdf");
   expect(await enabled(page)).toEqual([true, false, false, false, false]);
+  await expect(page.locator("#shown-switch button[aria-checked='true']")).toHaveText("Alt");
+  // "Alt" now shows what was the New Plan; "Neu" shows what Alt showed before.
+  expect(await pictureHash(page)).not.toBe(before);
+  await page.locator('#shown-switch button[data-value="new"]').click();
+  expect(await pictureHash(page)).toBe(before);
 });
 
 test("changing the direction, a file or a page locks the later tabs again", async ({ page }) => {
@@ -158,15 +216,13 @@ test("changing the direction, a file or a page locks the later tabs again", asyn
     expect(await enabled(page)).toEqual([true, true, false, false, false]);
   };
   await confirm();
-  await page.locator('#direction-switch button[data-dir="right"]').click();
+  await page.locator('#direction-switch button[data-value="right"]').click();
   expect(await enabled(page)).toEqual([true, false, false, false, false]);
   await confirm();
-  // Dropping a PDF on a file card replaces that file.
   await drop(page, "#card-new", [RIGHT_NEW]);
   await expect(page.locator("#card-new .file-name")).toHaveText("right-new.pdf");
   expect(await enabled(page)).toEqual([true, false, false, false, false]);
   await confirm();
-  // Picking the same file again changes nothing... but another page of a Document does.
   await drop(page, "#card-old", [THREE]);
   await page.locator("#pages-grid .thumb").first().click();
   await expect(page.locator("#card-old .pager")).toContainText("Seite 1 von 3");
@@ -219,17 +275,16 @@ test("sidebar width: 400 px by default and minimum, draggable to two thirds, dou
   expect(await width()).toBe(416);
 });
 
-test("Öffnen view: both Plans whole side by side, no minimap, the sidebar lists both files", async ({ page }) => {
+test("Öffnen view: one Plan whole in the view, the sidebar lists both files", async ({ page }) => {
   await inOpenTab(page);
   await expect(page.locator("#card-old")).toContainText("down-old.pdf");
   await expect(page.locator("#card-old")).toContainText("Andere Datei…");
   await expect(page.locator("#card-new")).toContainText("down-new.pdf");
-  const o = await sheet(page, "old");
-  const n = await sheet(page, "new");
-  expect(o.x + o.width).toBeLessThan(n.x);
-  expect(Math.abs(o.width - n.width)).toBeLessThan(2);
-  const view = (await page.locator("#viewer").boundingBox())!;
-  expect(o.y).toBeGreaterThanOrEqual(view.y);
-  expect(o.y + o.height).toBeLessThanOrEqual(view.y + view.height);
+  await expect(page.locator("#plan")).toHaveCount(1);
+  const s = await sheet(page);
+  const view = await box(page, "#viewer");
+  expect(s.y).toBeGreaterThanOrEqual(view.y);
+  expect(s.y + s.height).toBeLessThanOrEqual(view.y + view.height);
+  expect(s.x + s.width).toBeLessThanOrEqual(view.x + view.width);
   await shot(page, "open-tab.png");
 });

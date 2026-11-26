@@ -206,7 +206,7 @@ test("both synthetic pairs open from file:// with no network", async ({ page }) 
     await expect(page.locator("#proceed")).toBeEnabled({ timeout: 60_000 });
     await page.locator("#proceed").click();
     await expect(page.locator("#workspace")).toBeVisible();
-    const dims = await page.evaluate(() => ["plan-old", "plan-new"].map((id) => (document.getElementById(id) as HTMLCanvasElement).width));
+    const dims = await page.evaluate(() => ["plan"].map((id) => (document.getElementById(id) as HTMLCanvasElement).width));
     expect(dims.every((w) => w > 10)).toBe(true);
   }
   expect(external).toEqual([]);

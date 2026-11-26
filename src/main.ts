@@ -260,16 +260,20 @@ function renderCard(role: Role): void {
   card.append(button("Andere Datei…", () => chooseFile(role), { disabled: working }));
 }
 
+/** Which Plan the view shows: only a view choice, it locks nothing and changes no direction. */
+let shown: Role = "old";
+
 function renderView(): void {
-  for (const role of ROLES) {
-    const canvas = $<HTMLCanvasElement>(`plan-${role}`);
-    const o = opened[role];
-    if (!o) continue;
-    canvas.width = o.picture.width;
-    canvas.height = o.picture.height;
-    canvas.getContext("2d")!.drawImage(o.picture, 0, 0);
-    $(`sheet-${role}`).style.setProperty("--ratio", String(o.widthMm / o.heightMm));
-  }
+  const sw = $("shown-switch");
+  sw.dataset.pos = shown === "old" ? "0" : "1";
+  for (const b of sw.querySelectorAll<HTMLButtonElement>("button")) b.setAttribute("aria-checked", String(b.dataset.value === shown));
+  const o = opened[shown];
+  if (!o) return;
+  const canvas = $<HTMLCanvasElement>("plan");
+  canvas.width = o.picture.width;
+  canvas.height = o.picture.height;
+  canvas.getContext("2d")!.drawImage(o.picture, 0, 0);
+  $("sheet").style.setProperty("--ratio", String(o.widthMm / o.heightMm));
 }
 
 /**
@@ -293,13 +297,8 @@ function syncOpenDecision(): void {
 
 function renderDirection(): void {
   const sw = $("direction-switch");
-  sw.dataset.dir = direction;
-  for (const b of sw.querySelectorAll<HTMLButtonElement>("button")) b.setAttribute("aria-checked", String(b.dataset.dir === direction));
-  const o = opened.old;
-  const shape = o ? (o.heightMm > o.widthMm ? "hochkant" : "quer") : undefined;
-  $("direction-hint").textContent = shape
-    ? `Der alte Plan ist ${shape}; in der gewählten Richtung verschiebt sich der Plan zwischen zwei Ständen. Die Pfeile an den Plänen zeigen sie.`
-    : "";
+  sw.dataset.pos = direction === "down" ? "0" : "1";
+  for (const b of sw.querySelectorAll<HTMLButtonElement>("button")) b.setAttribute("aria-checked", String(b.dataset.value === direction));
   // The arrows slide to the new direction; with reduced motion they fade instead.
   const plans = $("plans");
   if (plans.dataset.dir === direction) return;
@@ -428,10 +427,16 @@ $("open-next").addEventListener("click", () => {
 });
 
 for (const b of document.querySelectorAll<HTMLButtonElement>("#direction-switch button")) {
-  b.textContent = DIRECTION_LABEL[b.dataset.dir as Direction];
+  b.textContent = DIRECTION_LABEL[b.dataset.value as Direction];
   b.addEventListener("click", () => {
-    direction = b.dataset.dir as Direction;
+    direction = b.dataset.value as Direction;
     render();
+  });
+}
+for (const b of document.querySelectorAll<HTMLButtonElement>("#shown-switch button")) {
+  b.addEventListener("click", () => {
+    shown = b.dataset.value as Role;
+    renderView();
   });
 }
 
