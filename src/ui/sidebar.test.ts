@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clampPanelWidth, PANEL_DEFAULT, PANEL_MIN, readPanelWidth } from "./sidebar";
+import { clampPanelWidth, defaultPanelWidth, PANEL_DEFAULT, PANEL_MIN, panelKindFor, readPanelWidth } from "./sidebar";
 
 describe("clampPanelWidth", () => {
   it("never goes below the width the five tab names need", () => {
@@ -18,6 +18,25 @@ describe("clampPanelWidth", () => {
 
   it("falls back to the default for nonsense", () => {
     expect(clampPanelWidth(NaN, 1920)).toBe(PANEL_DEFAULT);
+  });
+});
+
+describe("two widths", () => {
+  it("Vergleich has its own width, the other tabs share one", () => {
+    expect(panelKindFor("open")).toBe("setup");
+    expect(panelKindFor("old")).toBe("setup");
+    expect(panelKindFor("new")).toBe("setup");
+    expect(panelKindFor("offset")).toBe("setup");
+    expect(panelKindFor("compare")).toBe("compare");
+  });
+
+  it("the setup default is the width the tab names need", () => {
+    expect(defaultPanelWidth("setup", 1920)).toBe(400);
+  });
+
+  it("the Vergleich default is half the window, never under the minimum", () => {
+    expect(defaultPanelWidth("compare", 1920)).toBe(960);
+    expect(defaultPanelWidth("compare", 600)).toBe(400);
   });
 });
 

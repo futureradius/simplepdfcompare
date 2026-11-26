@@ -132,14 +132,46 @@
       .panel-resize:focus-visible { outline: none; }
       body.resizing-panel { cursor: col-resize; user-select: none; }
       .viewer { position: relative; min-width: 0; min-height: 0; overflow: hidden; background: #e7e9ee; }
-      .plans { position: absolute; inset: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); gap: 10px; align-items: stretch; padding: 56px 16px 16px; }
-      .plans .plan-frame { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 6px; }
-      .plans .plan-frame .cap { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; text-align: center; }
-      .plans .plan-frame.old .cap { color: var(--old-plan); }
-      .plans .plan-frame.new .cap { color: var(--new-plan); }
-      .plans .plan-frame .img { min-height: 0; display: flex; justify-content: center; }
-      .plans canvas { height: 100%; width: auto; max-width: 100%; object-fit: contain; background: #fff; box-shadow: 0 0 0 1px var(--line-strong), 0 1px 3px rgba(16, 24, 40, 0.12); }
-      .plans .swap { align-self: center; }
+      .plans { position: absolute; inset: 0; display: grid; grid-template-rows: minmax(0, 1fr); padding: 56px 16px 16px; }
+      /* Top left of the Plan view: which Plan is shown, and the one swap button. Fixed in place. */
+      .view-controls { position: absolute; top: 12px; left: 16px; z-index: 4; display: flex; align-items: center; gap: 10px; }
+      .view-controls .dswitch { width: 150px; background: rgba(255, 255, 255, 0.96); box-shadow: var(--shadow); }
+      .view-controls .dswitch button { height: 28px; }
+      .swap-row { display: flex; justify-content: center; margin: -4px 0 8px; }
+      /* The stage reserves room for the Time direction arrows on all four sides, so that
+         switching the direction never moves or resizes a Plan. The sheet is the Plan's own
+         box (its ratio is set from the page size), fit into the stage. */
+      .plans .stage { min-height: 0; container-type: size; display: grid; place-items: center; padding: 52px; }
+      .plans .sheet { --ratio: 0.7; position: relative; width: min(100cqw, 100cqh * var(--ratio)); height: min(100cqh, 100cqw / var(--ratio)); }
+      .plans canvas { display: block; width: 100%; height: 100%; background: #fff; box-shadow: 0 0 0 1px var(--line-strong), 0 1px 3px rgba(16, 24, 40, 0.12); }
+      /* Time direction arrows: one pair per Plan. "senkrecht": left and right, pointing down.
+         "waagerecht": above and below, pointing right. The arrows slide and turn between. */
+      .tarrow { position: absolute; width: 34px; height: 110px; color: var(--accent); opacity: 0.85; pointer-events: none;
+        transform: translate(-50%, -50%) rotate(0deg); transition: left 0.4s ease, top 0.4s ease, transform 0.4s ease, opacity 0.2s; }
+      .tarrow svg { display: block; width: 100%; height: 100%; }
+      .plans[data-dir="down"] .tarrow.a { left: -30px; top: 50%; }
+      .plans[data-dir="down"] .tarrow.b { left: calc(100% + 30px); top: 50%; }
+      .plans[data-dir="right"] .tarrow { transform: translate(-50%, -50%) rotate(-90deg); left: 50%; }
+      .plans[data-dir="right"] .tarrow.a { top: -30px; }
+      .plans[data-dir="right"] .tarrow.b { top: calc(100% + 30px); }
+      @media (prefers-reduced-motion: reduce) {
+        .tarrow { transition: opacity 0.15s; }
+        .plans.fading .tarrow { opacity: 0; }
+      }
+      /* Only "Öffnen" works with both Plans side by side; the other tabs get their own views later. */
+      .app:not([data-tab="open"]) .view-controls, .app:not([data-tab="open"]) .tarrow { visibility: hidden; }
+
+      /* Time direction switch: the words are the buttons, a highlight slides between them. */
+      #direction-title { margin-top: 20px; }
+      .dswitch { position: relative; display: grid; grid-template-columns: 1fr 1fr; padding: 3px; border: 1px solid var(--line-strong); border-radius: 999px; background: #f1f3f6; }
+      .dswitch .hl { position: absolute; top: 3px; bottom: 3px; left: 3px; width: calc(50% - 3px); border-radius: 999px; background: var(--surface); box-shadow: 0 1px 3px rgba(16, 24, 40, 0.2); transition: transform 0.25s ease; }
+      .dswitch[data-pos="1"] .hl { transform: translateX(100%); }
+      .dswitch button { position: relative; height: 34px; border: 0; border-radius: 999px; background: transparent; cursor: pointer; color: var(--muted); }
+      .dswitch button[aria-checked="true"] { color: var(--accent); font-weight: 600; }
+      .dswitch button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+      @media (prefers-reduced-motion: reduce) { .dswitch .hl { transition: none; } }
+      .open-actions { display: flex; justify-content: flex-end; margin-top: 18px; }
+      .open-actions .btn { height: 38px; padding: 0 24px; }
       .viewer .placeholder-view { position: absolute; inset: 0; display: grid; place-items: center; }
 
       /* ---- About ---------------------------------------------------------------- */
@@ -262,14 +294,22 @@
       <aside class="panel" id="panel">
         <div class="tabs" role="tablist" aria-label="Schritte">
           <button class="tab" role="tab" id="tab-open" data-tab="open" aria-selected="true">Öffnen</button>
-          <button class="tab" role="tab" id="tab-old" data-tab="old" aria-selected="false">Alter Plan</button>
+          <button class="tab" role="tab" id="tab-old" data-tab="old" aria-selected="false" disabled>Alter Plan</button>
           <button class="tab" role="tab" id="tab-new" data-tab="new" aria-selected="false" disabled>Neuer Plan</button>
           <button class="tab" role="tab" id="tab-offset" data-tab="offset" aria-selected="false" disabled>Versatz</button>
           <button class="tab" role="tab" id="tab-compare" data-tab="compare" aria-selected="false" disabled>Vergleich</button>
         </div>
         <section class="tab-body" id="body-open" role="tabpanel" aria-labelledby="tab-open">
           <div class="file-card old" id="card-old"></div>
+          <div class="swap-row"><button class="btn" id="swap-open" aria-label="Alt und Neu tauschen">⇄ Alt/Neu tauschen</button></div>
           <div class="file-card new" id="card-new"></div>
+          <h2 id="direction-title">In welche Richtung läuft die Zeit?</h2>
+          <div class="dswitch" id="direction-switch" role="radiogroup" aria-labelledby="direction-title" data-pos="0">
+            <span class="hl" aria-hidden="true"></span>
+            <button type="button" role="radio" data-value="down" aria-checked="true">senkrecht</button>
+            <button type="button" role="radio" data-value="right" aria-checked="false">waagerecht</button>
+          </div>
+          <div class="open-actions"><button class="btn primary" id="open-next">Weiter</button></div>
         </section>
         <section class="tab-body" id="body-old" role="tabpanel" aria-labelledby="tab-old" hidden>
           <h2>Alter Plan</h2>
@@ -278,10 +318,15 @@
       </aside>
       <div class="panel-resize" id="panel-resize" role="separator" aria-orientation="vertical" tabindex="0" title="Breite der Seitenleiste ändern"></div>
       <div class="viewer" id="viewer">
-        <div class="plans" id="plans">
-          <div class="plan-frame old"><div class="cap">Alter Plan</div><div class="img"><canvas id="plan-old" width="1" height="1"></canvas></div></div>
-          <button class="btn swap" id="swap-view" title="Alt und Neu tauschen" aria-label="Alt und Neu tauschen">⇄</button>
-          <div class="plan-frame new"><div class="cap">Neuer Plan</div><div class="img"><canvas id="plan-new" width="1" height="1"></canvas></div></div>
+        <div class="view-controls" id="view-controls">
+          <div class="dswitch" id="shown-switch" role="radiogroup" aria-label="Welcher Plan wird gezeigt" data-pos="0">
+            <span class="hl" aria-hidden="true"></span>
+            <button type="button" role="radio" data-value="old" aria-checked="true">Alt</button>
+            <button type="button" role="radio" data-value="new" aria-checked="false">Neu</button>
+          </div>
+        </div>
+        <div class="plans" id="plans" data-dir="down">
+          <div class="stage"><div class="sheet" id="sheet"><canvas id="plan" width="1" height="1"></canvas><span class="tarrow a" aria-hidden="true"><svg viewBox="0 0 34 110"><path d="M17 4v94M10.5 91l6.5 15 6.5-15z" fill="currentColor" stroke="currentColor" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/></svg></span><span class="tarrow b" aria-hidden="true"><svg viewBox="0 0 34 110"><path d="M17 4v94M10.5 91l6.5 15 6.5-15z" fill="currentColor" stroke="currentColor" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/></svg></span></div></div>
         </div>
       </div>
     </div>

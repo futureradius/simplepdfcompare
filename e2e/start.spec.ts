@@ -170,11 +170,12 @@ test("Weiter leads to the workspace shell, which is not left again", async ({ pa
   expect(view.y).toBe(0);
   expect(Math.round(view.height)).toBe(900);
   await page.screenshot({ path: "test-results/workspace.png" });
-  // Swap in the workspace, with the button between the two Plans.
-  await page.locator("#swap-view").click();
+  // Swap in the workspace, with the button in the sidebar between the two files.
+  await page.locator("#swap-open").click();
   await expect(page.locator("#card-old")).toContainText("down-new.pdf");
   // "Alter Plan" shows its placeholder.
-  await page.locator("#tab-old").click();
+  await expect(page.locator("#tab-old")).toBeDisabled();
+  await page.locator("#open-next").click();
   await expect(page.locator("#body-old")).toBeVisible();
   await expect(page.locator("#body-open")).toBeHidden();
   // "Über" opens the About window with its chapters.
@@ -205,7 +206,7 @@ test("both synthetic pairs open from file:// with no network", async ({ page }) 
     await expect(page.locator("#proceed")).toBeEnabled({ timeout: 60_000 });
     await page.locator("#proceed").click();
     await expect(page.locator("#workspace")).toBeVisible();
-    const dims = await page.evaluate(() => ["plan-old", "plan-new"].map((id) => (document.getElementById(id) as HTMLCanvasElement).width));
+    const dims = await page.evaluate(() => ["plan"].map((id) => (document.getElementById(id) as HTMLCanvasElement).width));
     expect(dims.every((w) => w > 10)).toBe(true);
   }
   expect(external).toEqual([]);

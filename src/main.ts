@@ -4,7 +4,9 @@ import { startEngines, type Engine } from "./engine/client";
 import { BUSY_TIMING, BusyWindow } from "./ui/busy";
 import { dropTargets, isPdf, needsPagePicker, swapped, type Role, type Sides } from "./ui/openplans";
 import { PagePicker, type PageSize } from "./ui/pagepicker";
-import { setUpPanelResize } from "./ui/sidebar";
+import { DIRECTION_LABEL, preselectedDirection, type Direction } from "./ui/direction";
+import { panelKindFor, setUpPanelResize } from "./ui/sidebar";
+import { confirmTab, initialReach, isTabEnabled, lockAfterOpen, signatureChanged, TABS, type OpenSignature, type TabId } from "./ui/tabs";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const ROLES: Role[] = ["old", "new"];
@@ -63,6 +65,13 @@ interface Opened {
 }
 let opened: Sides<Opened | undefined> = { old: undefined, new: undefined };
 let working = false;
+/** The Time direction; preselected from the Old Plan's page shape, then the user's to switch. */
+let direction: Direction = "down";
+/** The furthest tab that can be clicked (ADR 0002: confirmed tabs unlock the next one). */
+let reach = initialReach();
+let currentTab: TabId = "open";
+let lastSignature: OpenSignature | undefined;
+let lastOldPlan: string | undefined;
 const PT_TO_MM = 25.4 / 72;
 const de = (v: number) => v.toLocaleString("de-DE", { maximumFractionDigits: 0 });
 
@@ -251,25 +260,82 @@ function renderCard(role: Role): void {
   card.append(button("Andere Datei…", () => chooseFile(role), { disabled: working }));
 }
 
+/** Which Plan the view shows: only a view choice, it locks nothing and changes no direction. */
+let shown: Role = "old";
+
 function renderView(): void {
-  for (const role of ROLES) {
-    const canvas = $<HTMLCanvasElement>(`plan-${role}`);
-    const o = opened[role];
-    if (!o) continue;
-    canvas.width = o.picture.width;
-    canvas.height = o.picture.height;
-    canvas.getContext("2d")!.drawImage(o.picture, 0, 0);
+  const sw = $("shown-switch");
+  sw.dataset.pos = shown === "old" ? "0" : "1";
+  for (const b of sw.querySelectorAll<HTMLButtonElement>("button")) b.setAttribute("aria-checked", String(b.dataset.value === shown));
+  const o = opened[shown];
+  if (!o) return;
+  const canvas = $<HTMLCanvasElement>("plan");
+  canvas.width = o.picture.width;
+  canvas.height = o.picture.height;
+  canvas.getContext("2d")!.drawImage(o.picture, 0, 0);
+  $("sheet").style.setProperty("--ratio", String(o.widthMm / o.heightMm));
+}
+
+/**
+ * Keeps the rules that follow from what "Öffnen" decided: a new Old Plan (file, page or
+ * order) preselects the Time direction again, and any change to a file, a page, the order
+ * or the direction locks the tabs after "Öffnen". Visiting without a change locks nothing.
+ */
+function syncOpenDecision(): void {
+  const o = opened.old;
+  const oldPlan = o ? `${o.fileName}#${o.page}` : undefined;
+  if (o && oldPlan !== lastOldPlan) direction = preselectedDirection(o.widthMm, o.heightMm);
+  lastOldPlan = oldPlan;
+  const sig: OpenSignature = {
+    old: opened.old && { file: opened.old.fileName, page: opened.old.page },
+    new: opened.new && { file: opened.new.fileName, page: opened.new.page },
+    direction,
+  };
+  if (lastSignature && signatureChanged(lastSignature, sig)) reach = lockAfterOpen(reach);
+  lastSignature = sig;
+}
+
+function renderDirection(): void {
+  const sw = $("direction-switch");
+  sw.dataset.pos = direction === "down" ? "0" : "1";
+  for (const b of sw.querySelectorAll<HTMLButtonElement>("button")) b.setAttribute("aria-checked", String(b.dataset.value === direction));
+  // The arrows slide to the new direction; with reduced motion they fade instead.
+  const plans = $("plans");
+  if (plans.dataset.dir === direction) return;
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    plans.classList.add("fading");
+    setTimeout(() => {
+      plans.dataset.dir = direction;
+      plans.classList.remove("fading");
+    }, 160);
+  } else {
+    plans.dataset.dir = direction;
   }
 }
 
+function renderTabs(): void {
+  for (const id of TABS) {
+    const tab = $<HTMLButtonElement>(`tab-${id}`);
+    tab.disabled = !isTabEnabled(id, reach);
+    tab.setAttribute("aria-selected", String(id === currentTab));
+    const body = document.getElementById(`body-${id}`);
+    if (body) body.hidden = id !== currentTab;
+  }
+  $("workspace").dataset.tab = currentTab;
+}
+
 function render(): void {
+  syncOpenDecision();
+  renderDirection();
+  renderTabs();
   for (const role of ROLES) {
     renderBox(role);
     renderCard(role);
   }
   renderView();
   $<HTMLButtonElement>("proceed").disabled = !(opened.old && opened.new) || working;
-  for (const id of ["swap-start", "swap-view"]) $<HTMLButtonElement>(id).disabled = working;
+  $<HTMLButtonElement>("open-next").disabled = !(opened.old && opened.new) || working;
+  for (const id of ["swap-start", "swap-open"]) $<HTMLButtonElement>(id).disabled = working;
 }
 
 // ---- File choosers, drag and drop --------------------------------------------------
@@ -295,6 +361,17 @@ for (const role of ROLES) {
     }
   });
 }
+
+// A PDF over a file card in "Öffnen" highlights it: dropped there, it replaces that file.
+document.addEventListener("dragover", (e) => {
+  const over = (e.target as Element | null)?.closest<HTMLElement>(".file-card");
+  for (const c of document.querySelectorAll(".file-card.over")) if (c !== over) c.classList.remove("over");
+  over?.classList.add("over");
+});
+document.addEventListener("drop", () => document.querySelectorAll(".file-card.over").forEach((c) => c.classList.remove("over")));
+window.addEventListener("dragleave", (e) => {
+  if (!e.relatedTarget) document.querySelectorAll(".file-card.over").forEach((c) => c.classList.remove("over"));
+});
 
 let dragDepth = 0;
 window.addEventListener("dragenter", (e) => {
@@ -322,7 +399,7 @@ window.addEventListener("drop", (e) => {
 });
 
 // ---- Swap, Weiter, tabs -------------------------------------------------------------
-for (const id of ["swap-start", "swap-view"]) $(id).addEventListener("click", swap);
+for (const id of ["swap-start", "swap-open"]) $(id).addEventListener("click", swap);
 
 $("proceed").addEventListener("click", () => {
   if (!opened.old || !opened.new) return;
@@ -332,16 +409,34 @@ $("proceed").addEventListener("click", () => {
   render();
 });
 
-setUpPanelResize($("workspace"), $("panel-resize"));
+const panelResize = setUpPanelResize($("workspace"), $("panel-resize"));
 
-for (const tab of document.querySelectorAll<HTMLButtonElement>(".tab")) {
-  tab.addEventListener("click", () => {
-    for (const t of document.querySelectorAll<HTMLButtonElement>(".tab")) {
-      const on = t === tab;
-      t.setAttribute("aria-selected", String(on));
-      const body = document.getElementById(`body-${t.dataset.tab}`);
-      if (body) body.hidden = !on;
-    }
+function selectTab(id: TabId): void {
+  if (!isTabEnabled(id, reach)) return;
+  currentTab = id;
+  panelResize.setKind(panelKindFor(id));
+  renderTabs();
+}
+for (const id of TABS) $(`tab-${id}`).addEventListener("click", () => selectTab(id));
+
+// "Weiter" confirms "Öffnen" and opens the next tab.
+$("open-next").addEventListener("click", () => {
+  if (!opened.old || !opened.new || working) return;
+  reach = confirmTab(reach, "open");
+  selectTab("old");
+});
+
+for (const b of document.querySelectorAll<HTMLButtonElement>("#direction-switch button")) {
+  b.textContent = DIRECTION_LABEL[b.dataset.value as Direction];
+  b.addEventListener("click", () => {
+    direction = b.dataset.value as Direction;
+    render();
+  });
+}
+for (const b of document.querySelectorAll<HTMLButtonElement>("#shown-switch button")) {
+  b.addEventListener("click", () => {
+    shown = b.dataset.value as Role;
+    renderView();
   });
 }
 
