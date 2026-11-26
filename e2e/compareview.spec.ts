@@ -18,8 +18,8 @@ test.beforeAll(() => {
   if (!existsSync(PAIRS.down[0])) throw new Error("run `npm run samples` first");
 });
 
-async function compared(page: Page, pair: keyof typeof PAIRS) {
-  await page.setViewportSize({ width: 1400, height: 900 });
+async function compared(page: Page, pair: keyof typeof PAIRS, viewport = { width: 1400, height: 900 }) {
+  await page.setViewportSize(viewport);
   await page.goto(APP);
   await expect(page.locator("body")).toHaveAttribute("data-ready", "1", { timeout: 60_000 });
   const files = PAIRS[pair].map((p) => ({ name: p.split(/[\\/]/).pop()!, b64: readFileSync(p).toString("base64") }));
@@ -232,19 +232,39 @@ test("the minimap shows the Places, and a click on it centres the view there", a
   expect(s.zoom).toBeCloseTo(s0.zoom, 6);
 });
 
-test("the minimap with Places, for the user to judge: activities and down at a few zooms", async ({ page }) => {
-  test.skip(!SHOTS, "only with SHOTS_DIR");
+/** Screenshots for the user to judge the minimap's dots and outlines, at a few zooms. */
+async function minimapShots(page: Page, tag: string, viewport: { width: number; height: number }) {
   for (const pair of ["activities", "down"] as const) {
-    await compared(page, pair);
-    for (const [name, zoom] of [
-      ["width", "2"],
-      ["1to1", "3"],
+    await compared(page, pair, viewport);
+    for (const [name, key, zoomBy] of [
+      ["width", "2", 1],
+      ["1to1", "3", 1],
+      ["4to1", "3", 4],
     ] as const) {
-      await page.keyboard.press(zoom);
+      await page.keyboard.press(key);
+      if (zoomBy !== 1) {
+        const s = await inspect(page);
+        await page.evaluate(([x, y, z]) => (window as any).__spcCompare.setView(x, y, z), [s.centre.x, s.centre.y, s.zoom * zoomBy]);
+      }
       await settle(page);
       await page.waitForTimeout(400);
-      await shot(page, `minimap-${pair}-${name}.png`, "#cmp-minimap");
-      await shot(page, `view-${pair}-${name}.png`);
+      await shot(page, `minimap-${pair}-${name}-${tag}.png`, "#cmp-minimap");
+      await shot(page, `view-${pair}-${name}-${tag}.png`);
     }
   }
+}
+
+test("the minimap with Places, for the user to judge: activities and down at a few zooms", async ({ page }) => {
+  test.skip(!SHOTS, "only with SHOTS_DIR");
+  test.setTimeout(240_000);
+  await minimapShots(page, "1400x900", { width: 1400, height: 900 });
+});
+
+test.describe("on a sharper screen", () => {
+  test.use({ deviceScaleFactor: 2 });
+  test("the minimap with Places at 2 device px per CSS px, 1920 × 1080", async ({ page }) => {
+    test.skip(!SHOTS, "only with SHOTS_DIR");
+    test.setTimeout(240_000);
+    await minimapShots(page, "1920x1080-dpr2", { width: 1920, height: 1080 });
+  });
 });
