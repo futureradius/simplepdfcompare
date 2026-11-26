@@ -116,7 +116,9 @@ What happened at a Place, read from its drawing: later, earlier, longer, shorter
 across, text changed, label moved, new, gone, recoloured, thicker or thinner lines, or
 other (Später, Früher, Verlängert, Verkürzt, Quer verschoben, Text geändert, Beschriftung
 verschoben, Neu, Entfallen, Umgefärbt, Strichstärke, Sonstiges). Timing is read from the
-Activity's shape, never from its label or leader.
+Activity's shape, never from its label or leader. A Place can have several: its **main
+kind**, and the kinds of the parts that changed beside it (recoloured, thicker, its label);
+each part of a Place has one kind.
 _Avoid_: category, type
 
 **Hidden Place**
