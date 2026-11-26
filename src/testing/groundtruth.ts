@@ -12,12 +12,33 @@ export interface GroundTruthPlan {
   headerMm: [number, number];
   bodyMm: [number, number];
   footerMm: [number, number];
+  /** The axis zones the user would mark in step 2 (only some pairs). */
+  axisZonesMm?: { time?: Box[]; location?: Box[]; rows?: Box[] };
 }
 
 export interface PlantedChange {
   id: string;
   what: string;
   differences: { kind: "Added" | "Removed"; plan: "old" | "new"; boxMm: Box }[];
+  /** The Place it must come out as, with Wann, Wo and the amount as the list shows them. */
+  place: ExpectedPlace & {
+    /** A label set far from its shape without a leader, on a pair grouped by nearness: a Place of its own. */
+    labelPlace?: ExpectedPlace;
+  };
+}
+
+export interface ExpectedPlace {
+  kind: string;
+  kinds?: string[];
+  name: string | null;
+  nameFrom?: string;
+  oldName?: string;
+  note?: string;
+  /** Its shape, when it is named by it. */
+  shape?: string;
+  wann?: string;
+  wo?: string;
+  um?: string;
 }
 
 export interface GroundTruthPair {

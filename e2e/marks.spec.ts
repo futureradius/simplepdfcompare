@@ -85,6 +85,26 @@ for (const [name, offset] of [
   });
 }
 
+// A temporary readout of the Places (slice "Places, their names and kinds of change"), until
+// the real list replaces it: one row per Place with its name, main kind, Wann and Wo.
+test("?vergleich lists the Places of the activities pair in the sidebar", async ({ page }) => {
+  const gt = JSON.parse(readFileSync("samples/ground-truth.json", "utf8")).pairs.find((p: { name: string }) => p.name === "activities");
+  await openPair(page, `${APP}?vergleich`, [resolve("samples/activities-old.pdf"), resolve("samples/activities-new.pdf")]);
+  await expect(page.locator("#tab-compare")).toBeEnabled();
+  await page.locator("#tab-compare").click();
+  await expect(page.locator("#marks-view")).toHaveAttribute("data-state", "done", { timeout: 90_000 });
+  await expect(page.locator("#plans")).toBeHidden();
+  await expect(page.locator("#body-compare .places-readout")).toBeVisible();
+  const rows = page.locator("#body-compare .places-readout li");
+  await expect(rows).toHaveCount(gt.changes.length);
+  await expect(page.locator("#body-compare .places-readout")).toContainText("Gleis 1 erneuern");
+  const row = rows.filter({ hasText: "Gleis 2 erneuern mit Schotter" });
+  await expect(row).toContainText("Verlängert");
+  await expect(row).toContainText("um 1 Tag 6 Std.");
+  await expect(row).toContainText("km 15,5–16,0");
+  await page.screenshot({ path: "test-results/places-activities.png" });
+});
+
 test("without the flag the Vergleich tab stays locked", async ({ page }) => {
   await openPair(page, APP, PAIRS.right);
   await expect(page.locator("#tab-compare")).toBeDisabled();

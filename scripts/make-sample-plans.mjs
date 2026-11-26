@@ -93,6 +93,12 @@ function makePage(wMm, hMm) {
       const em = sizePt * PT_MM;
       return box(x, y - 0.72 * em, x + textWidthMm(font, sizePt, s), y + 0.22 * em);
     },
+    /** Draw upright text (reading upwards) with its baseline starting at (x, y); returns its box. */
+    textUp: (font, sizePt, x, y, s) => {
+      ops.push(`BT /${font} ${f(sizePt / userUnit)} Tf 0 1 -1 0 ${X(x)} ${Y(y)} Tm ${pdfStr(s)} Tj ET`);
+      const em = sizePt * PT_MM;
+      return box(x - 0.72 * em, y - textWidthMm(font, sizePt, s), x + 0.22 * em, y);
+    },
     /**
      * A hatch pattern: 45° lines in `color`, one cell of `cellMm`. Its origin (pattern
      * /Matrix) is at `originMm` (page mm) when given, so the phase moves with the shape;
@@ -164,6 +170,15 @@ const isoWeek = (date) => {
 };
 const dmy = (date) =>
   `${String(date.getUTCDate()).padStart(2, "0")}.${String(date.getUTCMonth() + 1).padStart(2, "0")}.${String(date.getUTCFullYear()).slice(2)}`;
+
+// ---- What a planted change's Place says (ADR 0006): Wann and Wo as the list shows them ----
+/** "03.06.–12.07.27" from the first to the last day covered, "am 03.06.27" for one day. */
+function wannText(day0, first, last) {
+  const a = dateOf(day0, first), b = dateOf(day0, last);
+  if (first === last) return `am ${dmy(a)}`;
+  return a.getUTCFullYear() === b.getUTCFullYear() ? `${dmy(a).slice(0, 6)}–${dmy(b)}` : `${dmy(a)}–${dmy(b)}`;
+}
+const km1 = (km) => km.toFixed(1).replace(".", ",");
 
 const TRADES = [
   ["Gleisbau", [0.2, 0.45, 0.8]],
@@ -464,8 +479,40 @@ function downPair() {
     const d = [];
     if (c.old) d.push({ kind: "Removed", plan: "old", boxMm: pickBox("old") });
     if (c.new) d.push({ kind: "Added", plan: "new", boxMm: pickBox("new") });
-    return { id: c.id, what: c.what, differences: d };
+    return { id: c.id, what: c.what, differences: d, place: placeOf(c) };
   });
+  /**
+   * The Place each change must come out as. This pair draws no Activity in one go (no white
+   * underlay under its hatches), so its Places are grouped by nearness (ADR 0005). A line
+   * Activity's label is set far from its line, without a leader: it is a Place of its own
+   * (labelPlace), named by its own text. Other labels are named only when they sit beside
+   * the shape (within 3 mm); else the Place is named by its shape. Wann and Wo come from the
+   * shape as drawn, feet included (the New one first).
+   */
+  function placeOf(c) {
+    const KIND = {
+      D1: ["later", [], "3 Tage"], D2: ["movedAcross", ["labelMoved"], "500 m"], D3: ["earlier", [], "1 Tag"],
+      D4: ["longer", ["labelMoved"], "7 Tage"], D5: ["textChanged", []], D6: ["textChanged", []], D7: ["new", []],
+      D8: ["gone", []], D9: ["later", ["labelMoved"], "2 Tage"],
+    }[c.id];
+    const a = c.new ?? c.old, place = { kind: KIND[0], kinds: [KIND[0], ...KIND[1]], ...(KIND[2] ? { um: KIND[2] } : {}) };
+    if (c.labelOnly) return { ...place, name: c.new.label, oldName: c.old.label, nameFrom: "text" };
+    const feet = a.feet ? 2 : 0, footKm = a.feet ? 7 / (KX(KM0 + 1) - KX(KM0)) : 0;
+    // Wo is read from the Header's km numbers, which stand left of their ticks (their middle
+    // 1.9 mm before it): so the km read are that much higher than the ticks say.
+    const read = (5 - textWidthMm("F1", 9, "10,0") / 2) / (KX(KM0 + 1) - KX(KM0));
+    const lo = Math.min(a.ka, a.kb) - footKm + read, hi = Math.max(a.ka, a.kb) + (a.w ?? 0) + footKm + read;
+    Object.assign(place, {
+      // D4: the nearest text beside its New shape is a closure's label lying on its extension
+      // (a random neighbour), nearer than its own label 2 mm off: rule 2 takes the nearest.
+      name: c.id === "D4" ? "Sperrung Gl. 2" : null,
+      ...(c.id === "D4" ? { nameFrom: "beside" } : { shape: a.kind === "line" ? "Linie" : "Schraffur" }),
+      wann: wannText(DAY0, a.t0 - feet, a.t1 - 1 + feet),
+      wo: `km ${km1(lo)}–${km1(hi)}`,
+    });
+    if (a.kind === "line") place.labelPlace = { kind: c.new && c.old ? "labelMoved" : c.new ? "new" : "gone", name: a.label, nameFrom: "text" };
+    return place;
+  }
   const controls = [
     {
       id: "C1", what: `Unchanged dashed station lines (x ${STATIONS.map(([km]) => r2(KX(km))).join(", ")} mm): one line each over the whole Body, dash phase starting at the Body's top, so after the Offset the dashes are out of phase by Offset mod period (${offsetMm} mm mod 5.5 mm = ${r2(offsetMm % 5.5)} mm) and the objects differ in length. Not a Difference.`,
@@ -670,8 +717,20 @@ function rightPair() {
     const d = [];
     if (c.old) d.push({ kind: "Removed", plan: "old", boxMm: pickBox(c, "old") });
     if (c.new) d.push({ kind: "Added", plan: "new", boxMm: pickBox(c, "new") });
-    return { id: c.id, what: c.what, differences: d };
+    return { id: c.id, what: c.what, differences: d, place: placeOf(c) };
   });
+  /**
+   * The Place each change must come out as: on a bar chart it is named by its row in the
+   * Header; the text by the bar is a note (ADR 0006). Grouped by nearness (no Activities
+   * drawn in one go), so a bar's label beside it belongs to its Place.
+   */
+  function placeOf(c) {
+    const base = { name: tasks[c.row].name, nameFrom: "row" };
+    if (c.id === "R1") return { ...base, kind: "later", kinds: ["later", "labelMoved"], note: "20 AT", wann: wannText(DAY0, 9 * 7, 13 * 7 - 1), um: "7 Tage" };
+    if (c.id === "R2") return { ...base, kind: "textChanged", kinds: ["textChanged"], note: "Abnahme 18 AT" };
+    if (c.id === "R3") return { ...base, kind: "new", kinds: ["new"], note: "Nachtrag", wann: wannText(DAY0, 20 * 7, 163) }; // its end is 0.34 mm before a day boundary: on it (ADR 0006)
+    return { ...base, kind: "gone", kinds: ["gone"], shape: "Raute", wann: wannText(DAY0, 11 * 7, 11 * 7) };
+  }
   const controls = [
     ...planted.filter((c) => c.control).map((c) => ({ id: c.id, what: c.what, boxMm: { old: pickBox(c, "old"), new: pickBox(c, "new") } })),
     { id: "C6", what: "Header: task 5's name differs ('... (geändert)'); Header is not compared. Not a Difference." },
@@ -692,6 +751,306 @@ function rightPair() {
   };
 }
 
+// =====================================================================================
+// Pair 3: Activities drawn in one go (time down, small), for Places (ADR 0005, 0006, 0008)
+// =====================================================================================
+// Drawn as the Plan software draws a time-distance diagram: each Activity in one go (a white
+// underlay, its hatch, the outline, a centre line for a line Activity, hatched feet, then its
+// label: a white background per line, the text in the Activity's colour, a short leader).
+// km markers are drawn in their own black pass, free notes in black. The km scale changes
+// per section (squeezed on open track, stretched in the station), read from upright labels
+// in the Header; dates stand in a date column, hours in an hour strip (the axis zones).
+// Fully deterministic, no random numbers: the other two pairs stay as they are.
+function activityPair() {
+  const W = 700, HEADER = 120, FOOTER = 40, DAY = 48; // 2 mm per hour
+  const DAY0 = new Date(Date.UTC(2027, 0, 4)); // master day 0, a Monday
+  const OLD = { start: 0, days: 20 }, NEW = { start: 1, days: 20 }; // New starts a day later
+  // km across, piecewise: open track 50 mm per km, the station (km 12–13) 200 mm per km
+  const SECTIONS = [[10, 60], [12, 160], [13, 360], [18, 610]];
+  const KX = (km) => {
+    for (let i = 1; i < SECTIONS.length; i++) {
+      const [k0, x0] = SECTIONS[i - 1], [k1, x1] = SECTIONS[i];
+      if (km <= k1 || i === SECTIONS.length - 1) return x0 + ((km - k0) * (x1 - x0)) / (k1 - k0);
+    }
+  };
+  const KM_MARKS = [10, 10.5, 11, 11.5, 12, 12.25, 12.5, 12.75, 13, 13.5, 14, 14.5, 15, 15.5, 16, 16.5, 17, 17.5, 18];
+  const [gb, ol, kt, ls, ib, we] = TRADES.map(([, c]) => c);
+  const BLUE = [0.1, 0.2, 0.9];
+
+  // Planted changes, master days (fractions are hours) and km.
+  const H = 1 / 24;
+  const planted = [
+    {
+      id: "A1", what: "Line Activity with feet and its km marker moved 8 hours later",
+      old: { line: true, color: gb, t0: 3, t1: 5, ka: 10.4, kb: 11.6, feet: true, label: ["Gleis 1 erneuern"], marker: "km 10,4 + 0" },
+      new: { line: true, color: gb, t0: 3 + 8 * H, t1: 5 + 8 * H, ka: 10.4, kb: 11.6, feet: true, label: ["Gleis 1 erneuern"], marker: "km 10,4 + 0" },
+      place: { kind: "later", kinds: ["later", "labelMoved"], um: "8 Std." },
+    },
+    {
+      id: "A2", what: "Hatched stripe moved 0.5 km across (open track)",
+      old: { color: ol, t0: 6, t1: 8, ka: 14.0, kb: 14.0, w: 0.6, label: ["Mast umbauen"] },
+      new: { color: ol, t0: 6, t1: 8, ka: 14.5, kb: 14.5, w: 0.6, label: ["Mast umbauen"] },
+      place: { kind: "movedAcross", kinds: ["movedAcross", "labelMoved"], um: "500 m" },
+    },
+    {
+      id: "A3", what: "Hatched stripe with a two-line label extended by 1 day 6 hours (label at its start, unchanged)",
+      old: { color: ib, t0: 9, t1: 11, ka: 15.5, kb: 15.5, w: 0.5, label: ["Gleis 2 erneuern", "mit Schotter"] },
+      new: { color: ib, t0: 9, t1: 12.25, ka: 15.5, kb: 15.5, w: 0.5, label: ["Gleis 2 erneuern", "mit Schotter"] },
+      place: { kind: "longer", kinds: ["longer"], um: "1 Tag 6 Std." },
+    },
+    {
+      id: "A4", what: "Line Activity label text changed: 'Kabeltrog herstellen' -> 'Kabeltrog verlegen'",
+      old: { line: true, color: kt, t0: 12, t1: 14, ka: 16.5, kb: 17.5, label: ["Kabeltrog herstellen"] },
+      new: { line: true, color: kt, t0: 12, t1: 14, ka: 16.5, kb: 17.5, label: ["Kabeltrog verlegen"] },
+      labelOnly: true,
+      place: { kind: "textChanged", kinds: ["textChanged"], oldName: "Kabeltrog herstellen" },
+    },
+    {
+      id: "A5", what: "Label moved to the other side of its Activity (shape unchanged)",
+      old: { color: we, t0: 15, t1: 17, ka: 10.5, kb: 10.8, w: 0.4, label: ["Weiche einbauen"] },
+      new: { color: we, t0: 15, t1: 17, ka: 10.5, kb: 10.8, w: 0.4, label: ["Weiche einbauen"], labelLeft: true },
+      labelOnly: true,
+      place: { kind: "labelMoved", kinds: ["labelMoved"] },
+    },
+    {
+      id: "A6", what: "Activity recoloured (hatch, outline and label)",
+      old: { color: ls, t0: 2, t1: 4, ka: 15.5, kb: 16.0, w: 0.5, label: ["Signal prüfen"] },
+      new: { color: BLUE, t0: 2, t1: 4, ka: 15.5, kb: 16.0, w: 0.5, label: ["Signal prüfen"] },
+      restyleOnly: true,
+      place: { kind: "recoloured", kinds: ["recoloured"] },
+    },
+    {
+      id: "A7", what: "Outline drawn thicker (0.25 -> 0.4 mm), same colour",
+      old: { color: kt, t0: 12, t1: 14, ka: 12.2, kb: 12.5, w: 0.15, label: ["Bahnsteig erneuern"] },
+      new: { color: kt, t0: 12, t1: 14, ka: 12.2, kb: 12.5, w: 0.15, label: ["Bahnsteig erneuern"], outline: 0.4 },
+      restyleOnly: true,
+      place: { kind: "lineWidth", kinds: ["lineWidth"] },
+    },
+    {
+      id: "A8", what: "Line Activity added (New Plan only)",
+      old: null,
+      new: { line: true, color: ls, t0: 16, t1: 18, ka: 15.0, kb: 17.0, label: ["Signal einbauen"] },
+      place: { kind: "new", kinds: ["new"] },
+    },
+    {
+      id: "A9", what: "Hatched stripe removed (Old Plan only); its corner touches A10's",
+      old: { color: kt, t0: 6, t1: 8, ka: 16.8, kb: 16.8, w: 0.4, label: ["Kabeltrog rückbauen"] },
+      new: null,
+      place: { kind: "gone", kinds: ["gone"] },
+    },
+    {
+      id: "A10", what: "Hatched stripe extended by 1 day and recoloured; it starts at A9's corner",
+      old: { color: kt, t0: 8, t1: 9, ka: 17.2, kb: 17.2, w: 0.3, label: ["Kabeltrog verlegen"] },
+      new: { color: BLUE, t0: 8, t1: 10, ka: 17.2, kb: 17.2, w: 0.3, label: ["Kabeltrog verlegen"] },
+      place: { kind: "longer", kinds: ["longer", "recoloured"], um: "1 Tag" },
+    },
+    {
+      id: "A11", what: "Free note over two lines added (black, outside any Activity)",
+      old: null,
+      new: { note: ["Achtung: Sperrpause", "beachten"], x: 620, t: 14.5 },
+      place: { kind: "new", kinds: ["new"], name: "Achtung: Sperrpause beachten", nameFrom: "text" },
+    },
+    {
+      id: "A12", what: "Unlabelled hatched stripe added",
+      old: null,
+      new: { color: ib, t0: 18, t1: 19, ka: 13.5, kb: 13.5, w: 1.0, label: [] },
+      place: { kind: "new", kinds: ["new"], name: null, shape: "Schraffur" },
+    },
+  ];
+  // Unchanged Activities around them, some touching the planted ones.
+  const still = [
+    { color: ol, t0: 8, t1: 10, ka: 14.0, kb: 14.0, w: 0.6, label: ["Mast prüfen"] }, // follows A2's old corner
+    { color: gb, t0: 1, t1: 19, ka: 11.8, kb: 11.8, w: 0.1, label: ["Gleis 3 sperren"] }, // long, crosses all
+    { line: true, color: ib, t0: 0, t1: 3, ka: 13.2, kb: 14.2, label: ["EÜ prüfen"] }, // crosses the Body start
+    { color: we, t0: 18.5, t1: 21, ka: 16.0, kb: 16.5, w: 0.3, label: ["Weiche prüfen"] }, // crosses the Body end
+  ];
+
+  function draw(plan, version) {
+    const bodyLen = plan.days * DAY, Hp = HEADER + bodyLen + FOOTER;
+    const p = makePage(W, Hp);
+    const DY = (d) => HEADER + (d - plan.start) * DAY;
+    p.rgb([1, 1, 1], false);
+    p.rectFill(0, 0, W, Hp);
+    // ---- Header: title, upright km labels at the marks (no plain number row) ----
+    p.rgb([0, 0, 0], false);
+    p.text("F2", 14, 10, 14, "Bauablaufplan Musterbahnhof (synthetisch)");
+    p.text("F1", 9, 10, 22, version === "new" ? "Stand: Index b" : "Stand: Index a");
+    p.rgb([0, 0, 0], true);
+    p.lw(0.35);
+    for (const km of KM_MARKS) {
+      const a = Math.floor(km * 10 + 1e-9) / 10, m = Math.round((km - a) * 1000);
+      const s = `${["Bf", "Bü", "Mast", "EÜ"][Math.round(km * 4) % 4]} km ${a.toFixed(1).replace(".", ",")} + ${m}`;
+      p.line(KX(km), HEADER - 8, KX(km), HEADER);
+      p.rgb([0, 0, 0], false);
+      p.textUp("F1", 7, KX(km) + 0.25 * 7 * PT_MM, HEADER - 10, s); // centred across its mark
+    }
+    p.lw(0.5);
+    p.line(0, HEADER, W, HEADER);
+    // ---- Body ----
+    p.clip(0, HEADER, W, bodyLen);
+    for (let d = plan.start; d < plan.start + plan.days; d++) {
+      const y = DY(d), date = dateOf(DAY0, d);
+      p.rgb([0.3, 0.3, 0.3], true);
+      p.lw(0.25);
+      p.line(0, y, W - 10, y);
+      p.rgb([0.8, 0.8, 0.8], true);
+      p.lw(0.08);
+      for (const h of [6, 12, 18]) p.line(26, y + h * 2, W - 10, y + h * 2);
+      p.rgb([0, 0, 0], false);
+      p.text("F1", 6, 4, y + 5, `${["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"][d % 7]} ${dmy(date)}`);
+      // hour labels just above their line
+      for (const h of [6, 12, 18, 24]) p.text("F1", 5, 30, y + h * 2 - 0.6, String(h));
+    }
+    p.rgb([0.7, 0.7, 0.7], true);
+    p.lw(0.1);
+    for (const km of [10, 11, 12, 13, 14, 15, 16, 17, 18]) p.line(KX(km), HEADER, KX(km), HEADER + bodyLen);
+
+    const boxes = {};
+    const drawAct = (a) => {
+      const y0 = DY(a.t0), y1 = DY(a.t1), half = 0.4;
+      const pts = a.line
+        ? [[KX(a.ka) - half, y0], [KX(a.ka) + half, y0], [KX(a.kb) + half, y1], [KX(a.kb) - half, y1]]
+        : [[KX(a.ka), y0], [KX(a.ka + a.w), y0], [KX(a.kb + a.w), y1], [KX(a.kb), y1]];
+      p.rgb([1, 1, 1], false);
+      p.poly(pts, "f");
+      p.fillPattern(p.hatch(a.color, a.line ? 0.6 : 1.5, pts[0], 0.12), pts);
+      p.rgb(a.color, true);
+      p.lw(a.outline ?? (a.line ? 0.1 : 0.25));
+      p.poly(pts, "S");
+      if (a.line) {
+        p.lw(0.6);
+        p.line(KX(a.ka), y0, KX(a.kb), y1);
+      }
+      let shape = grow(union(...pts.map(([x, y]) => box(x, y, x, y))), 0.3);
+      if (a.feet) {
+        const fw = 10, fh = 6;
+        for (const [fx, fy] of [[KX(a.ka) - fw / 2, y0 - fh], [KX(a.kb) - fw / 2, y1]]) {
+          const fp = [[fx, fy], [fx + fw, fy], [fx + fw, fy + fh], [fx, fy + fh]];
+          p.fillPattern(p.hatch(a.color, 1, fp[0], 0.1), fp);
+          p.rgb(a.color, true);
+          p.lw(0.25);
+          p.rectStroke(fx, fy, fw, fh);
+          shape = union(shape, grow(box(fx, fy, fx + fw, fy + fh), 0.15));
+        }
+      }
+      let label = null;
+      if (a.label.length) {
+        // near its start, beside the shape (right, or left), with a short leader
+        const ly = y0 + 4;
+        const right = pts[1][0] + ((pts[2][0] - pts[1][0]) * (ly - y0)) / (y1 - y0);
+        const left = pts[0][0] + ((pts[3][0] - pts[0][0]) * (ly - y0)) / (y1 - y0);
+        const wMax = Math.max(...a.label.map((s) => textWidthMm("F1", 7, s)));
+        const lx = a.labelLeft ? left - 3 - wMax : right + 3;
+        const col = a.labelColor ?? a.color;
+        a.label.forEach((s, i) => {
+          const by = ly + 1 + i * 2.8;
+          const tb = box(lx, by - 0.72 * 7 * PT_MM, lx + textWidthMm("F1", 7, s), by + 0.22 * 7 * PT_MM);
+          const bg = grow(tb, 0.3);
+          p.rgb([1, 1, 1], false);
+          p.rectFill(bg.x0, bg.y0, bg.x1 - bg.x0, bg.y1 - bg.y0);
+          p.rgb(col, false);
+          p.text("F1", 7, lx, by, s);
+          label = union(label, bg);
+        });
+        p.rgb(a.color, true);
+        p.lw(0.12);
+        if (a.labelLeft) p.line(left, ly, label.x1, ly);
+        else p.line(right, ly, label.x0, ly);
+        label = grow(label, 0.1);
+      }
+      return { shape, label };
+    };
+    for (const a of still) drawAct(a);
+    for (const c of planted) {
+      const a = c[version];
+      if (a && !a.note) boxes[c.id] = drawAct(a);
+    }
+    // km markers: their own black pass, a tick and the text beside the Activity's start
+    p.rgb([0, 0, 0], true);
+    for (const c of planted) {
+      const a = c[version];
+      if (!a?.marker) continue;
+      const x = KX(a.ka) - 8, y = DY(a.t0) + 10;
+      p.lw(0.15);
+      p.line(x, y, x + 6, y);
+      p.rgb([0, 0, 0], false);
+      const mb = p.text("F1", 5, x - textWidthMm("F1", 5, a.marker) - 1, y + 0.8, a.marker);
+      boxes[c.id].marker = grow(union(mb, box(x, y, x + 6, y)), 0.2);
+      p.rgb([0, 0, 0], true);
+    }
+    // free notes in black
+    for (const c of planted) {
+      const a = c[version];
+      if (!a?.note) continue;
+      let nb = null;
+      a.note.forEach((s, i) => {
+        p.rgb([0, 0, 0], false);
+        nb = union(nb, p.text("F1", 7, a.x, DY(a.t) + i * 2.8, s));
+      });
+      boxes[c.id] = { shape: null, label: grow(nb, 0.2) };
+    }
+    p.unclip();
+    p.rgb([0, 0, 0], true);
+    p.lw(0.5);
+    p.line(0, HEADER + bodyLen, W, HEADER + bodyLen);
+    p.rgb([0, 0, 0], false);
+    p.text("F1", 9, 10, HEADER + bodyLen + 14, version === "new" ? "Index b" : "Index a");
+    return { p, boxes, header: [0, HEADER], body: [HEADER, HEADER + bodyLen], footer: [HEADER + bodyLen, Hp] };
+  }
+
+  const old = draw(OLD, "old"), neu = draw(NEW, "new");
+  const offsetMm = (NEW.start - OLD.start) * DAY;
+  const kmText = (lo, hi) => `km ${km1(lo)}–${km1(hi)}`;
+  const kmOf = (x) => {
+    for (let i = 1; i < SECTIONS.length; i++) {
+      const [k0, x0] = SECTIONS[i - 1], [k1, x1] = SECTIONS[i];
+      if (x <= x1 || i === SECTIONS.length - 1) return k0 + ((x - x0) * (k1 - k0)) / (x1 - x0);
+    }
+  };
+  const changes = planted.map((c) => {
+    const pick = (v) => {
+      const b = (v === "old" ? old : neu).boxes[c.id];
+      if (!b) return null;
+      return roundBox(c.labelOnly ? b.label : union(b.shape, b.label, b.marker));
+    };
+    const d = [];
+    if (c.old && !c.restyleOnly) d.push({ kind: "Removed", plan: "old", boxMm: pick("old") });
+    if (c.new) d.push({ kind: "Added", plan: "new", boxMm: pick("new") });
+    const a = c.new ?? c.old, place = { ...c.place };
+    if (!a.note) {
+      // named by its Activity's label (read whole), placed by its shape (the New one first)
+      if (!("name" in place)) place.name = a.label.join(" ");
+      const x0 = a.line ? KX(Math.min(a.ka, a.kb)) - 0.4 : KX(Math.min(a.ka, a.kb)), x1 = a.line ? KX(Math.max(a.ka, a.kb)) + 0.4 : KX(Math.max(a.ka, a.kb) + a.w);
+      place.wo = kmText(kmOf(x0), kmOf(x1));
+      const frac = (t) => Math.abs(t - Math.round(t)) > 1e-9;
+      place.wann = frac(a.t0) || frac(a.t1)
+        ? `${dmy(dateOf(DAY0, Math.floor(a.t0))).slice(0, 6)} ${String(Math.round((a.t0 % 1) * 24)).padStart(2, "0")}:00 – ${dmy(dateOf(DAY0, Math.floor(a.t1)))} ${String(Math.round((a.t1 % 1) * 24)).padStart(2, "0")}:00`
+        : wannText(DAY0, a.t0, a.t1 - 1);
+    }
+    return { id: c.id, what: c.what, differences: d, place };
+  });
+  return {
+    name: "activities", timeDirection: "down", old, neu, offsetMm, changes,
+    controls: [
+      { id: "C7", what: "A9 and A10 touch corner to corner (and A2's old shape touches an unchanged Activity): nearness would join them; the drawing order keeps them apart. Two Places, not one." },
+      { id: "C8", what: "Unchanged Activities crossing the Body's start and end, and a long one crossing all planted changes: no Place." },
+    ],
+    describe: (plan, version, r) => ({
+      file: r.file, bytes: r.bytes, drawingOps: r.ops,
+      pageMm: [W, r2(plan.p.hMm)], userUnit: plan.p.userUnit,
+      headerMm: plan.header, bodyMm: plan.body.map(r2), footerMm: plan.footer.map(r2),
+      timespan: `${dmy(dateOf(DAY0, (version === "old" ? OLD : NEW).start))} - ${dmy(dateOf(DAY0, (version === "old" ? OLD : NEW).start + (version === "old" ? OLD : NEW).days - 1))}`,
+      // the Zeitachse zones (step 2): the date column and the hour strip
+      axisZonesMm: { time: [{ x0: 2, y0: plan.body[0], x1: 24, y1: plan.body[1] }, { x0: 28, y0: plan.body[0], x1: 36, y1: plan.body[1] }] },
+    }),
+    overhang: {
+      oldOnlyMm: [HEADER, HEADER + offsetMm],
+      newOnlyMm: [HEADER + (OLD.start + OLD.days - NEW.start) * DAY, HEADER + NEW.days * DAY],
+      note: "Old: the first day has no counterpart; New: the last day has none.",
+    },
+  };
+}
+
 // ---- Write everything ------------------------------------------------------------
 mkdirSync("samples", { recursive: true });
 const truth = {
@@ -706,7 +1065,8 @@ const truth = {
   ],
   pairs: [],
 };
-for (const pair of [downPair(), rightPair()]) {
+// The activities pair comes last and draws no random numbers, so the other two stay as they were.
+for (const pair of [downPair(), rightPair(), activityPair()]) {
   const ro = savePage(pair.old.p, `samples/${pair.name}-old.pdf`);
   const rn = savePage(pair.neu.p, `samples/${pair.name}-new.pdf`);
   truth.pairs.push({

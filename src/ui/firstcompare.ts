@@ -5,6 +5,8 @@
 // A temporary view: the setup tabs and the smooth comparison view replace it.
 
 import { guessTimeDirection } from "../compare/body";
+import type { Place } from "../compare/places";
+import { kindText, umText, wannText, wasText, woText } from "../compare/wording";
 import type { ComparisonSetup, Mark } from "../compare/compare";
 import type { TimeDirection } from "../compare/objects";
 import type { Engine } from "../engine/client";
@@ -85,6 +87,29 @@ function showFacts(rows: [string, string][], note: string): void {
   body.append(h, p, dl, legend);
 }
 
+/**
+ * A temporary readout of the Places (until the list of Places replaces it): one row each,
+ * with its number, name (Was), main kind and other kinds (Art), amount (Um), Wann and Wo.
+ */
+function showPlaces(places: readonly Place[]): void {
+  const h = document.createElement("h3");
+  h.textContent = `Stellen (${count(places.length)})`;
+  const ol = document.createElement("ol");
+  ol.className = "places-readout";
+  for (const p of places) {
+    const li = document.createElement("li"),
+      was = document.createElement("b");
+    was.textContent = wasText(p);
+    if (p.name && p.name !== was.textContent) was.title = p.name;
+    const um = umText(p.amount);
+    const art = [kindText(p.kind), ...p.kinds.slice(1).map((k) => `+ ${kindText(k)}`), um ? `um ${um}` : ""].filter(Boolean).join(" ");
+    const where = [wannText(p.when), woText(p.where)].filter(Boolean).join(" · ");
+    li.append(was, document.createElement("br"), `${art}${where ? ` · ${where}` : ""}`);
+    ol.append(li);
+  }
+  $("body-compare").append(h, ol);
+}
+
 export function setUpFirstComparison(deps: FirstComparisonDeps): void {
   if (!isOn()) return;
   const tab = $<HTMLButtonElement>("tab-compare");
@@ -136,12 +161,14 @@ export function setUpFirstComparison(deps: FirstComparisonDeps): void {
           ["Objekte lesen", `${seconds(r.extractMs)} / ${seconds(newPlan.extractMs)} (zusammen ${seconds(read - started)})`],
           ["Versatz suchen", seconds(r.ms.offset)],
           ["Abgleich", seconds(r.ms.compare)],
-          ["Übertragen", seconds(compared - read - r.ms.offset - r.ms.compare)],
+          ["Stellen bilden", seconds(r.ms.places)],
+          ["Übertragen", seconds(compared - read - r.ms.offset - r.ms.compare - r.ms.places)],
           ["Bild zeichnen", seconds(drawn - compared)],
           ["Gesamt", seconds(drawn - started)],
         ],
         "Vorläufig: Kopf und Fuß geschätzt, Versatz automatisch gefunden, keine Bereiche ausgenommen.",
       );
+      showPlaces(r.places);
     } catch (e) {
       view.dataset.state = "error";
       showFacts([], `Der Vergleich ist fehlgeschlagen: ${String(e)}`);
@@ -181,6 +208,8 @@ export function setUpFirstComparison(deps: FirstComparisonDeps): void {
       const on = t === tab;
       view.hidden = !on;
       plansView.hidden = on;
+      // the sidebar shows its facts and the Places (the tab flow does not reach this tab yet)
+      if (on) for (const b of document.querySelectorAll<HTMLElement>(".tab-body")) b.hidden = b.id !== "body-compare";
       if (on) void run();
     });
   }

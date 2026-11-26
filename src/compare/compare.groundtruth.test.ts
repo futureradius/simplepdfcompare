@@ -67,6 +67,8 @@ describe("comparing the synthetic pairs", () => {
       const { missing, falseAlarms } = check(gt, r.comparison.marks);
       expect(missing).toEqual([]);
       expect(falseAlarms).toEqual([]);
+      // and forms the Places, one per planted change (and per label set apart)
+      expect(r.places.length).toBe(gt.changes.reduce((n, c) => n + (c.place.labelPlace ? 2 : 1), 0));
     });
   }
 });
