@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bandBoxes, copyToNewPlan, dragZone, effectiveBox, hitTest, isClick, newZone, toggleFull, zoneLabel, type PlanZones } from "./model";
+import { bandBoxes, copyToNewPlan, dragZone, effectiveBox, hitTest, isClick, newZone, setKind, toggleFull, zoneLabel, type PlanZones, type Zone } from "./model";
 
 const page = { width: 1000, height: 14000 };
 const box = (x0: number, y0: number, x1: number, y1: number) => ({ x0, y0, x1, y1 });
@@ -44,10 +44,26 @@ describe("full-length zones (the ⇕ bubble)", () => {
   });
 });
 
-describe("zoneLabel", () => {
-  const zs = [newZone(5, "area", box(0, 0, 1, 1)), newZone(6, "time", box(0, 0, 1, 1)), newZone(9, "area", box(0, 0, 1, 1))];
-  it("numbers the Bereiche in order and names an axis zone by its kind", () => {
-    expect(zs.map((z) => zoneLabel(zs, z))).toEqual(["Bereich 1", "Zeitachse", "Bereich 2"]);
+describe("zoneLabel: every zone is numbered within its kind", () => {
+  const mk = () => [newZone(5, "area", box(0, 0, 1, 1)), newZone(6, "time", box(0, 0, 1, 1)), newZone(9, "area", box(0, 0, 1, 1)), newZone(11, "time", box(0, 0, 1, 1))];
+  const labels = (zs: Zone[]) => zs.map((z) => zoneLabel(zs, z));
+  it("counts Ausgenommen, Zeitachse, Wegachse and Vorgänge separately", () => {
+    expect(labels(mk())).toEqual(["Ausgenommen 1", "Zeitachse 1", "Ausgenommen 2", "Zeitachse 2"]);
+  });
+  it("renumbers without gaps after a delete, in the order of creation", () => {
+    const zs = mk().filter((z) => z.id !== 5);
+    expect(labels(zs)).toEqual(["Zeitachse 1", "Ausgenommen 1", "Zeitachse 2"]);
+  });
+  it("moves a zone into the new kind's numbering when its kind changes, and both kinds renumber", () => {
+    const zs = mk().map((z) => (z.id === 5 ? setKind(z, "path") : z));
+    expect(labels(zs)).toEqual(["Wegachse 1", "Zeitachse 1", "Ausgenommen 1", "Zeitachse 2"]);
+  });
+});
+
+describe("setKind", () => {
+  it("changes only the kind: the geometry, the id and the full-length flag stay", () => {
+    const z = toggleFull(newZone(3, "area", box(10, 20, 30, 40)));
+    expect(setKind(z, "rows")).toEqual({ ...z, kind: "rows" });
   });
 });
 

@@ -1,6 +1,6 @@
 // The zoomable view of one Plan, for the setup tabs (ADR 0002, ADR 0009). Adapted from
 // simplepdfclipper's viewer.ts: the wheel zooms around the pointer, the right or middle
-// button (and Space + left button) pans, and a left press goes to the editor of the zones.
+// button pans, and a left press goes to the editor of the zones.
 // This is the deliberate difference from the clipper, where a left drag pans (ADR 0002).
 //
 // Rendering works like a map: while zooming or panning, the pictures at hand are scaled (the
@@ -83,7 +83,6 @@ export class PlanView {
   private cssW = 1;
   private cssH = 1;
   private dpr = 1;
-  private space = false;
   private drag: { mode: "pan" | "edit"; screen: Point; cx: number; cy: number } | undefined;
   private renderTimer: ReturnType<typeof setTimeout> | undefined;
   private rendering = false;
@@ -149,12 +148,6 @@ export class PlanView {
     return { x0: this.cx - hw, y0: this.cy - hh, x1: this.cx + hw, y1: this.cy + hh };
   }
 
-  /** Space held or released: while held, a left drag pans. */
-  setSpace(down: boolean): void {
-    if (this.space === down) return;
-    this.space = down;
-    if (!this.drag) this.canvas.style.cursor = down ? "grab" : "";
-  }
 
   fitRect(r: Box, margin = 0.08): void {
     this.measure();
@@ -236,7 +229,7 @@ export class PlanView {
     if (!this.subject || (e.button !== 0 && e.button !== 1 && e.button !== 2)) return;
     const s = this.local(e);
     const base = { screen: s, cx: this.cx, cy: this.cy };
-    if (e.button !== 0 || this.space) {
+    if (e.button !== 0) {
       this.drag = { ...base, mode: "pan" };
       this.canvas.style.cursor = "grabbing";
     } else if (this.subject.editor.down(this.toMm(s.x, s.y), s, e, this.port)) {
@@ -252,7 +245,7 @@ export class PlanView {
     const s = this.local(e);
     const d = this.drag;
     if (!d) {
-      this.canvas.style.cursor = this.space ? "grab" : this.subject.editor.cursor(this.toMm(s.x, s.y), s, this.port);
+      this.canvas.style.cursor = this.subject.editor.cursor(this.toMm(s.x, s.y), s, this.port);
       return;
     }
     if (d.mode === "pan") {
@@ -272,7 +265,7 @@ export class PlanView {
     if (this.canvas.hasPointerCapture(e.pointerId)) this.canvas.releasePointerCapture(e.pointerId);
     const s = this.local(e);
     if (d.mode === "edit") this.subject.editor.up(this.toMm(s.x, s.y), s, e, this.port);
-    this.canvas.style.cursor = this.space ? "grab" : this.subject.editor.cursor(this.toMm(s.x, s.y), s, this.port);
+    this.canvas.style.cursor = this.subject.editor.cursor(this.toMm(s.x, s.y), s, this.port);
     this.requestDraw();
   }
 

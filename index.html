@@ -214,6 +214,17 @@
       .zone-row .x { width: 26px; height: 26px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--muted); cursor: pointer; }
       .zone-row .x:hover:not(:disabled) { background: #eef0f3; color: var(--text); }
       .zone-row .x:disabled { opacity: 0.35; cursor: default; }
+      /* The dropdown in a zone's row that changes its kind, in the look of the clipper's inputs and cards. */
+      .kind-menu { position: relative; flex: 0 0 auto; }
+      .kind-btn { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: 6px; background: #fff; font-weight: 600; cursor: pointer; }
+      .kind-btn:hover { background: #f6f7f9; }
+      .kind-btn:focus-visible, .kind-btn[aria-expanded="true"] { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+      .kind-btn .chev { font-size: 11px; color: var(--muted); }
+      .kind-list { position: absolute; z-index: 20; top: 100%; left: 0; min-width: 100%; margin: 4px 0 0; padding: 4px; list-style: none; background: #fff; border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 2px 6px rgba(16, 24, 40, 0.10), 0 12px 32px rgba(16, 24, 40, 0.18); outline: none; }
+      .kind-list[hidden] { display: none; }
+      .kind-list li { padding: 6px 12px; border-radius: 6px; white-space: nowrap; cursor: pointer; }
+      .kind-list li.active { background: #eef0f3; }
+      .kind-list li[aria-selected="true"] { color: var(--accent); font-weight: 600; }
       .kind-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 4px; }
       .kind-chips button { height: 28px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--surface); cursor: pointer; }
       .kind-chips button[aria-checked="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 600; }

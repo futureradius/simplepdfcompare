@@ -41,8 +41,9 @@ compared. It moves with the end of the Body, so each Plan has its own Footer pos
 **Ignored area**
 A part of the Body that is not compared, like the Header and Footer: usually a
 sidebar along the whole Body, sometimes a single box. It is usually in the same place in
-every version of a Plan, but not always. "Bereich" in the user interface (in
-simplepdfclipper a Bereich is an area kept, here one left out).
+every version of a Plan, but not always. "Ausgenommen" in the user interface;
+"Bereich" is the general UI word for any zone the user draws (Ausgenommen, or an axis
+zone). In simplepdfclipper a Bereich is an area kept, here one left out.
 _Avoid_: mask, exclusion, sidebar (only one kind)
 
 **Body**

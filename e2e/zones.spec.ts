@@ -118,7 +118,7 @@ test("draw, move, resize: a left drag edits, and the size shows in the sidebar",
   expect(s.zones[0]!.kind).toBe("area");
   expect(s.selected).toBe(s.zones[0]!.id);
   await expect(rows(page)).toHaveCount(1);
-  await expect(rows(page).first()).toContainText("Bereich 1");
+  await expect(rows(page).first()).toContainText("Ausgenommen 1");
   await expect(rows(page).first()).toContainText("300 × 500 mm");
   await shot(page, "old-drawn.png");
   // Move: drag inside by (+200, +100) mm.

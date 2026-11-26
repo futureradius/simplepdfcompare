@@ -9,6 +9,7 @@ import type { Engine } from "../engine/client";
 import { bandBoxes, copyToNewPlan, effectiveBox, lengthOf, zoneLabel, type PageMm, type PlanZones, type ZoneKind } from "../zones/model";
 import { applyRemembered, loadRemembered, storeRemembered, toRemembered } from "../zones/remember";
 import { SegmentIndex } from "../zones/snap";
+import { SetupStore } from "../zones/setupstore";
 import type { BusyWindow } from "./busy";
 import type { Direction } from "./direction";
 import { Minimap } from "./minimap";
@@ -35,7 +36,6 @@ export interface SetupDeps {
 }
 
 interface RoleSetup {
-  key: string;
   page: PageMm;
   hints: BodyHints;
   editor: ZoneEditor;
@@ -50,7 +50,22 @@ interface RoleSetup {
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
 export function setUpSetupTabs(deps: SetupDeps) {
-  const setups: Sides<RoleSetup | undefined> = { old: undefined, new: undefined };
+  // One set of setups per Time direction (ADR 0002); `setups` is the one of the direction that is on.
+  const store = new SetupStore<RoleSetup>();
+  const setups: Sides<RoleSetup | undefined> = {
+    get old() {
+      return store.get(axis(), "old");
+    },
+    set old(v) {
+      store.put(axis(), "old", v!);
+    },
+    get new() {
+      return store.get(axis(), "new");
+    },
+    set new(v) {
+      store.put(axis(), "new", v!);
+    },
+  };
   const view = new PlanView($<HTMLCanvasElement>("zone-canvas"));
   const minimap = new Minimap(
     {
@@ -70,7 +85,6 @@ export function setUpSetupTabs(deps: SetupDeps) {
   let drawKind: ZoneKind = "area";
 
   const axis = () => axisOf(deps.direction());
-  const keyOf = (role: Role) => `${deps.plans()[role]!.id}|${deps.direction()}`;
 
   /** The Old Plan's zones as hatched ghosts on the New Plan: those that lie elsewhere there. */
   function ghosts(): GhostZone[] {
@@ -108,7 +122,6 @@ export function setUpSetupTabs(deps: SetupDeps) {
   function build(role: Role, hints: BodyHints): RoleSetup {
     const plan = deps.plans()[role]!;
     const page: PageMm = { width: plan.widthMm, height: plan.heightMm };
-    const root = $(`body-${role}`);
     const ref: { s?: RoleSetup } = {};
     const editor = new ZoneEditor({
       axis,
@@ -140,14 +153,15 @@ export function setUpSetupTabs(deps: SetupDeps) {
       ghosts: () => (role === "new" ? ghosts() : []),
       changed: (isCommitted) => (isCommitted ? committed(role) : refresh(role)),
     });
-    const panel = new ZonePanel(root, role, {
+    const panel = new ZonePanel(role, {
       select: (id) => editor.select(id),
       removeZone: (id) => editor.removeZone(id),
       removeLine: (which) => editor.removeLine(which),
+      setZoneKind: (id, k) => editor.setZoneKind(id, k),
       setDrawKind: (k) => (drawKind = k),
       reset: () => reset(role),
       next: () => deps.next(role),
-    });
+    }, drawKind);
     const subject: Subject = {
       widthMm: plan.widthMm,
       heightMm: plan.heightMm,
@@ -158,14 +172,14 @@ export function setUpSetupTabs(deps: SetupDeps) {
         return createImageBitmap(new ImageData(p.pixels as Uint8ClampedArray<ArrayBuffer>, p.widthPx, p.heightPx));
       },
     };
-    const s: RoleSetup = { key: keyOf(role), page, hints, editor, panel, subject, index: undefined, indexLoading: false, edited: false };
+    const s: RoleSetup = { page, hints, editor, panel, subject, index: undefined, indexLoading: false, edited: false };
     ref.s = s;
     return s;
   }
 
   /** The Old Plan's first setup: the remembered one if it fits, else the detected Header and Footer. */
   function initialZones(s: RoleSetup): PlanZones {
-    const r = loadRemembered();
+    const r = loadRemembered(axis());
     const remembered = r && applyRemembered(r, axis(), s.page, () => s.editor.newId());
     if (remembered) return remembered;
     return { header: s.hints.body[0], footer: s.hints.body[1], zones: [] };
@@ -200,7 +214,15 @@ export function setUpSetupTabs(deps: SetupDeps) {
      * A Plan that did not change keeps its setup; a changed Old Plan starts again.
      */
     async prepare(): Promise<void> {
-      const stale = (["old", "new"] as Role[]).filter((r) => setups[r]?.key !== keyOf(r));
+      // A Plan that is another file or page than before loses its setups in both directions.
+      const changed = (["old", "new"] as Role[]).filter((r) => {
+        const gone = (["x", "y"] as const).map((a) => store.get(a, r));
+        const isNew = store.syncPlan(r, deps.plans()[r]!.id);
+        if (isNew) for (const g of gone) if (g) view.forget(g.subject);
+        return isNew;
+      });
+      // Only a direction without a setup yet needs its Header and Footer read.
+      const stale = (["old", "new"] as Role[]).filter((r) => !setups[r]);
       if (stale.length) {
         await deps.busy.start("Kopf und Fuß werden gesucht…");
         try {
@@ -222,7 +244,7 @@ export function setUpSetupTabs(deps: SetupDeps) {
             if (r === "old") s.editor.set(initialZones(s));
             setups[r] = s;
           });
-          if (stale.includes("old") && setups.new) setups.new.edited = false;
+          if (changed.includes("old") && setups.new) setups.new.edited = false;
         } finally {
           await deps.busy.end();
         }
@@ -237,6 +259,8 @@ export function setUpSetupTabs(deps: SetupDeps) {
       const s = setups[role];
       if (!s) return;
       current = role;
+      s.panel.setDrawKind(drawKind);
+      s.panel.mount($(`body-${role}`));
       if (role === "new" && !s.edited) copyFromOld();
       const plan = deps.plans()[role]!;
       minimap.setPlan(plan.widthMm, plan.heightMm, plan.picture);
@@ -249,7 +273,7 @@ export function setUpSetupTabs(deps: SetupDeps) {
       current = undefined;
     },
 
-    /** Keys 1, 2, 3, F, Entf and Space in a setup tab. Returns true if it handled the key. */
+    /** Keys 1, 2, 3, F, Entf in a setup tab. Returns true if it handled the key. */
     key(e: KeyboardEvent): boolean {
       const s = current && setups[current];
       if (!s || e.ctrlKey || e.metaKey || e.altKey) return false;
@@ -280,7 +304,6 @@ export function setUpSetupTabs(deps: SetupDeps) {
       return true;
     },
 
-    setSpace: (down: boolean) => view.setSpace(down),
 
     /** For the e2e tests: where a point of the Plan lies on the page, and what the setup is. */
     inspect(role: Role) {

@@ -37,12 +37,14 @@ export interface PlanZones {
   zones: Zone[];
 }
 
-export const KIND_NAME: Record<ZoneKind, string> = { area: "Bereich", time: "Zeitachse", path: "Wegachse", rows: "Vorgänge" };
+export const KIND_NAME: Record<ZoneKind, string> = { area: "Ausgenommen", time: "Zeitachse", path: "Wegachse", rows: "Vorgänge" };
 
-/** "Bereich 1", "Bereich 2" ... in the order drawn; an axis zone is named by its kind. */
+/** The same zone with another kind: geometry, id and length flag stay. */
+export const setKind = (z: Zone, kind: ZoneKind): Zone => ({ ...z, kind });
+
+/** "Ausgenommen 1", "Zeitachse 2" ...: every zone is numbered within its kind, 1..n in the order of creation. */
 export function zoneLabel(all: readonly Zone[], z: Zone): string {
-  if (z.kind !== "area") return KIND_NAME[z.kind];
-  return `${KIND_NAME.area} ${all.filter((o) => o.kind === "area").indexOf(z) + 1}`;
+  return `${KIND_NAME[z.kind]} ${all.filter((o) => o.kind === z.kind).indexOf(z) + 1}`;
 }
 
 export const lengthOf = (page: PageMm, axis: Axis): number => (axis === "y" ? page.height : page.width);

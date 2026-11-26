@@ -14,6 +14,7 @@ import {
   isClick,
   lengthOf,
   newZone,
+  setKind,
   sizeText,
   toggleFull,
   zoneLabel,
@@ -139,6 +140,12 @@ export class ZoneEditor implements Editor {
   deleteSelected(): void {
     if (this.selected === undefined) return;
     this.removeZone(this.selected);
+  }
+
+  /** Changes a zone's kind in place: geometry and selection stay. */
+  setZoneKind(id: number, kind: ZoneKind): void {
+    this.replace(id, (z) => setKind(z, kind));
+    this.host.changed(true);
   }
 
   removeZone(id: number): void {

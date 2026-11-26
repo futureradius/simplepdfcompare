@@ -67,19 +67,27 @@ export function parseRemembered(raw: string | null): Remembered | undefined {
   }
 }
 
-const KEY = "simplepdfcompare.setup";
+/** The part of localStorage that is used (storage may be unavailable, so tests and callers can pass another). */
+export interface KeyValueStore {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+}
 
-export function loadRemembered(): Remembered | undefined {
+/** One remembered setup per Time direction: the two never mix. */
+const keyFor = (axis: Axis) => `simplepdfcompare.setup.${axis}`;
+
+export function loadRemembered(axis: Axis, store: KeyValueStore = localStorage): Remembered | undefined {
   try {
-    return parseRemembered(localStorage.getItem(KEY));
+    const r = parseRemembered(store.getItem(keyFor(axis)));
+    return r?.axis === axis ? r : undefined;
   } catch {
     return undefined;
   }
 }
 
-export function storeRemembered(r: Remembered): void {
+export function storeRemembered(r: Remembered, store: KeyValueStore = localStorage): void {
   try {
-    localStorage.setItem(KEY, JSON.stringify(r));
+    store.setItem(keyFor(r.axis), JSON.stringify(r));
   } catch {
     // not remembered; the setup still works
   }

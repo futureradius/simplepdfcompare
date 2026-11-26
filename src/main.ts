@@ -456,22 +456,13 @@ $("open-next").addEventListener("click", async () => {
   selectTab("old");
 });
 
-// Keys of the setup tabs: 1, 2, 3, F, Entf; Space held pans with the left button.
+// Keys of the setup tabs: 1, 2, 3, F, Entf.
 const typing = (t: EventTarget | null) => t instanceof HTMLElement && !!t.closest("input, textarea, select, dialog[open]");
 document.addEventListener("keydown", (e) => {
   if (currentTab !== "old" && currentTab !== "new") return;
   if (typing(e.target) || busyWindow.active || picker.isOpen) return;
-  if (e.key === " " && !(e.target instanceof HTMLButtonElement)) {
-    e.preventDefault();
-    setupTabs.setSpace(true);
-    return;
-  }
   setupTabs.key(e);
 });
-document.addEventListener("keyup", (e) => {
-  if (e.key === " ") setupTabs.setSpace(false);
-});
-window.addEventListener("blur", () => setupTabs.setSpace(false));
 $("zone-canvas").addEventListener("pointerdown", () => (document.activeElement as HTMLElement | null)?.blur?.());
 
 for (const b of document.querySelectorAll<HTMLButtonElement>("#direction-switch button")) {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { newZone, toggleFull, type PlanZones } from "./model";
-import { applyRemembered, parseRemembered, toRemembered } from "./remember";
+import { applyRemembered, loadRemembered, parseRemembered, storeRemembered, toRemembered, type KeyValueStore } from "./remember";
 
 const box = (x0: number, y0: number, x1: number, y1: number) => ({ x0, y0, x1, y1 });
 const setup: PlanZones = { header: 150, footer: 13450, zones: [newZone(1, "area", box(10, 400, 90, 900)), toggleFull(newZone(2, "time", box(100, 160, 150, 300)))] };
@@ -32,5 +32,27 @@ describe("remembering the setup for the next pair (ADR 0002)", () => {
     expect(parseRemembered("{oops")).toBeUndefined();
     expect(parseRemembered(null)).toBeUndefined();
     expect(parseRemembered(JSON.stringify({ axis: "y", header: "x" }))).toBeUndefined();
+  });
+});
+
+describe("one remembered setup per Time direction", () => {
+  const fake = (): KeyValueStore => {
+    const m = new Map<string, string>();
+    return { getItem: (k) => m.get(k) ?? null, setItem: (k, v) => void m.set(k, v) };
+  };
+  it("a pair in senkrecht gets the senkrecht setup, one in waagerecht the waagerecht one", () => {
+    const store = fake();
+    storeRemembered(toRemembered(setup, "y", 13710), store);
+    expect(loadRemembered("y", store)?.header).toBe(150);
+    expect(loadRemembered("x", store)).toBeUndefined();
+    const right: PlanZones = { header: 70, footer: 500, zones: [] };
+    storeRemembered(toRemembered(right, "x", 590), store);
+    expect(loadRemembered("x", store)?.header).toBe(70);
+    expect(loadRemembered("y", store)?.header).toBe(150); // the other one is untouched
+  });
+  it("storage that throws only means nothing is remembered", () => {
+    const broken: KeyValueStore = { getItem: () => { throw new Error("no"); }, setItem: () => { throw new Error("no"); } };
+    expect(() => storeRemembered(toRemembered(setup, "y", 13710), broken)).not.toThrow();
+    expect(loadRemembered("y", broken)).toBeUndefined();
   });
 });
