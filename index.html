@@ -264,6 +264,11 @@
 
       /* ---- "Vergleich": the list of Places, the filter, the display settings and the prev/next bar (src/ui/places*.ts) ---- */
       #body-compare:not([hidden]) { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; padding-bottom: 12px; }
+      /* "Exportieren" (src/ui/exportui.ts) */
+      .cmp-export { flex: none; margin-bottom: 10px; }
+      .cmp-export .btn { gap: 6px; }
+      .cmp-export-error { color: #b42318; font-size: 12.5px; margin-top: 6px; }
+      .cmp-export-error:empty { display: none; }
       .pl { display: flex; flex-direction: column; gap: 8px; flex: 1 1 auto; min-height: 300px; min-width: 0; }
       .pl-count { font-size: 20px; font-weight: 650; line-height: 1.2; }
       .note { font-size: 12px; color: var(--muted); }

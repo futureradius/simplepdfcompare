@@ -30,20 +30,32 @@ export function download(blob: Blob, name: string): void {
   a.click();
 }
 
-/** Asks where to save, then writes; a download if no dialog is available; nothing if the user cancelled. */
-export async function saveFile(blob: Blob, suggestedName: string, description: string, mime: string, ext: string): Promise<void> {
+/**
+ * Asks where to save *now*, and returns a function that writes the file there later. Call it
+ * before any work that takes time: the dialog needs the click that started it, which the
+ * browser honours for a few seconds only (clipper ADR 0009, #27). Resolves to null if the user
+ * cancelled; a download if no dialog is available. Copied from simplepdfclipper's save.ts.
+ */
+export async function chooseSaveTarget(suggestedName: string, description: string, mime: string, ext: string): Promise<((blob: Blob) => Promise<void>) | null> {
   const picker = (window as unknown as { showSaveFilePicker?: ShowSaveFilePicker }).showSaveFilePicker;
   if (picker) {
     try {
       const handle = await picker({ suggestedName, types: [{ description, accept: { [mime]: [ext] } }] });
-      const w = await handle.createWritable();
-      await w.write(blob);
-      await w.close();
-      return;
+      return async (blob) => {
+        const w = await handle.createWritable();
+        await w.write(blob);
+        await w.close();
+      };
     } catch (e) {
-      if (isAbort(e)) return;
+      if (isAbort(e)) return null;
       // anything else: fall through to a plain download
     }
   }
-  download(blob, suggestedName);
+  return async (blob) => download(blob, suggestedName);
+}
+
+/** Asks where to save, then writes; a download if no dialog is available; nothing if the user cancelled. */
+export async function saveFile(blob: Blob, suggestedName: string, description: string, mime: string, ext: string): Promise<void> {
+  const write = await chooseSaveTarget(suggestedName, description, mime, ext);
+  await write?.(blob);
 }

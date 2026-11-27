@@ -5,6 +5,7 @@ import { BUSY_TIMING, BusyWindow } from "./ui/busy";
 import { setUpFirstComparison } from "./ui/firstcompare";
 import { setUpCompareView } from "./ui/compareview";
 import { setUpPlaces } from "./ui/placesui";
+import { createExportBar } from "./ui/exportui";
 import { ComparisonHandoff } from "./ui/handoff";
 import { setUpOffsetTab } from "./ui/offsettab";
 import { setUpSetupTabs, type SetupPlan } from "./ui/setuptabs";
@@ -473,6 +474,11 @@ const places = setUpPlaces({
   },
 });
 (window as unknown as { __places: typeof places }).__places = places;
+// "Exportieren" at the top of "Vergleich" (ADR 0007).
+const infoPlan = (o: Opened | undefined) => o && { fileName: o.fileName, page: o.page, pages: o.pages.length };
+$("body-compare").prepend(
+  createExportBar({ state: places.state, result: () => handoff.latest(), plans: () => ({ old: infoPlan(opened.old), new: infoPlan(opened.new) }), busy: busyWindow }),
+);
 const comparisonView = setUpFirstComparison({ busy: busyWindow, handoff, view: compareView, places });
 comparisonView.listen();
 
