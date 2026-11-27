@@ -1,6 +1,6 @@
 // Named Vorlagen, whatever they hold (ADR 0009, adapted from simplepdfclipper's ADR 0015).
 // Pure logic, no DOM: unique names and importing. What a Vorlage holds and its file format
-// belong to its kind (the setup in src/zones/vorlagen.ts, the filter's later).
+// belong to its kind (the setup in src/zones/vorlagen.ts, the filter in src/ui/filtervorlagen.ts).
 
 /** Anything with a name. */
 export interface Named {

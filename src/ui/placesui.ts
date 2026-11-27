@@ -11,6 +11,7 @@ import { createDisplayPanel, type DisplayPanel } from "./displaypanel";
 import { loadSettings, storeSettings } from "./displaysettings";
 import { h } from "./dom";
 import { FilterPanel } from "./filterpanel";
+import { filterVorlagen } from "./filtervorlagemenu";
 import { PlacesPanel } from "./placespanel";
 import { PlacesState } from "./placesstate";
 import { minimapBottom } from "./navlayout";
@@ -96,6 +97,8 @@ export function setUpPlaces(deps: PlacesDeps): PlacesUi {
   };
   display = createDisplayPanel(settings, change);
   el.body.replaceChildren(panel.el, display.el);
+  const vorlagen = filterVorlagen(state);
+  filter.el.before(vorlagen.el);
 
   // ---- The Plan ------------------------------------------------------------------
 
@@ -211,6 +214,7 @@ export function setUpPlaces(deps: PlacesDeps): PlacesUi {
   state.onChange = (what) => {
     panel.update(what);
     if (what === "filter" || what === "result") filter.draw();
+    if (what === "filter") vorlagen.render();
     drawNav();
     if (what === "result") return; // the view takes the result's `shown` with `show`
     if (what === "filter" || what === "hidden") view.setShown(state.shown());

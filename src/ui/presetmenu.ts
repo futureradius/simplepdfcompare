@@ -1,5 +1,5 @@
 // "Vorlage: [▾] [✎]" and its window (save, overwrite, rename, delete, export, import), one
-// component for every kind of Vorlage: the setup in "Alter Plan" now, the filter's later
+// component for every kind of Vorlage: the setup in "Alter Plan" and the filter in "Vergleich"
 // (ADR 0009). Adapted from simplepdfclipper's presetmenu.ts (ADR 0015) with two differences:
 // it builds its own elements instead of finding them in the page, and it is not tied to one
 // place, so a kind only says what a Vorlage holds and how it is applied and compared.
