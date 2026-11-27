@@ -4,6 +4,7 @@ import { startEngines, type Engine } from "./engine/client";
 import { BUSY_TIMING, BusyWindow } from "./ui/busy";
 import { setUpFirstComparison } from "./ui/firstcompare";
 import { setUpCompareView } from "./ui/compareview";
+import { setUpPlaces } from "./ui/placesui";
 import { ComparisonHandoff } from "./ui/handoff";
 import { setUpOffsetTab } from "./ui/offsettab";
 import { setUpSetupTabs, type SetupPlan } from "./ui/setuptabs";
@@ -458,7 +459,20 @@ const offsetTab = setUpOffsetTab({
 // "Vergleich": the smooth comparison view, fed by the hand-off; the sidebar keeps the temporary readout.
 (window as unknown as { __handoff: ComparisonHandoff }).__handoff = handoff;
 const compareView = setUpCompareView({ engines: () => engines, plans: () => opened });
-const comparisonView = setUpFirstComparison({ busy: busyWindow, handoff, view: compareView });
+const places = setUpPlaces({
+  view: compareView,
+  pair: () => handoff.pair,
+  active: () => currentTab === "compare",
+  el: {
+    body: $("body-compare"),
+    nav: $("cmp-nav"),
+    prev: $<HTMLButtonElement>("cmp-prev"),
+    next: $<HTMLButtonElement>("cmp-next"),
+    navText: $<HTMLButtonElement>("cmp-nav-text"),
+  },
+});
+(window as unknown as { __places: typeof places }).__places = places;
+const comparisonView = setUpFirstComparison({ busy: busyWindow, handoff, view: compareView, places });
 comparisonView.listen();
 
 function selectTab(id: TabId): void {

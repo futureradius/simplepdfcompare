@@ -68,16 +68,18 @@ function sortValue(p: Place, key: ColumnId): number | string | null {
   }
 }
 
-const compareValues = (a: number | string, b: number | string): number =>
-  typeof a === "string" ? a.localeCompare(String(b), "de", { numeric: true }) : a - Number(b);
+const collator = new Intl.Collator("de", { numeric: true });
+const compareValues = (a: number | string, b: number | string): number => (typeof a === "string" ? collator.compare(a, String(b)) : a - Number(b));
 
 /** The Places in the order of the sort keys; empty cells last, ties by number. */
 export function sortPlaces(places: readonly Place[], keys: readonly SortKey[]): Place[] {
   if (!keys.length) return [...places];
+  // Each Place's values once, not at every comparison.
+  const values = new Map(places.map((p) => [p, keys.map((k) => sortValue(p, k.key))] as const));
   return [...places].sort((p, q) => {
-    for (const { key, dir } of keys) {
-      const a = sortValue(p, key),
-        b = sortValue(q, key);
+    for (const [i, { dir }] of keys.entries()) {
+      const a = values.get(p)![i]!,
+        b = values.get(q)![i]!;
       if (a === null || b === null) {
         if (a === null && b === null) continue;
         return a === null ? 1 : -1;

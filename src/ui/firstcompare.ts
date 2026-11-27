@@ -1,20 +1,21 @@
 // The "Vergleich" tab: it listens for the ComparisonResult that "Vergleichen" hands over
-// (src/ui/handoff.ts) and shows it in the comparison view (src/ui/compareview.ts). The
-// sidebar keeps the temporary facts and the readout of the Places until the list of Places
-// replaces them.
+// (src/ui/handoff.ts) and shows it in the comparison view (src/ui/compareview.ts) and in
+// the list of Places (src/ui/placesui.ts). The facts of the comparison are folded away below
+// the list.
 
-import type { Place } from "../compare/places";
-import { kindText, umText, wannText, wasText, woText } from "../compare/wording";
 import type { ComparisonResult } from "../compare/result";
 import type { BusyWindow } from "./busy";
-import { LEGEND_COLOURS, type CompareView } from "./compareview";
+import type { CompareView } from "./compareview";
 import type { ComparisonHandoff } from "./handoff";
+import type { PlacesUi } from "./placesui";
 
 export interface FirstComparisonDeps {
   busy: BusyWindow;
   handoff: ComparisonHandoff;
   /** The view that draws the comparison. */
   view: CompareView;
+  /** The list of Places in the sidebar, the filter, the selection and the ◀ ▶ bar. */
+  places: PlacesUi;
 }
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -22,11 +23,7 @@ const mm = (v: number) => v.toLocaleString("de-DE", { minimumFractionDigits: 2, 
 const seconds = (ms: number) => `${(ms / 1000).toLocaleString("de-DE", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} s`;
 const count = (n: number) => n.toLocaleString("de-DE");
 
-function showFacts(rows: [string, string][], note: string): void {
-  const body = $("body-compare");
-  body.replaceChildren();
-  const h = document.createElement("h2");
-  h.textContent = "Vergleich (erster Durchgang)";
+function showFacts(into: HTMLElement, rows: [string, string][], note: string): void {
   const p = document.createElement("p");
   p.className = "placeholder";
   p.textContent = note;
@@ -39,47 +36,9 @@ function showFacts(rows: [string, string][], note: string): void {
     dd.textContent = v;
     dl.append(dt, dd);
   }
-  const legend = document.createElement("ul");
-  legend.className = "marks-legend";
-  for (const [colour, text] of [
-    [LEGEND_COLOURS.added, "Hinzugefügt: nur im neuen Plan"],
-    [LEGEND_COLOURS.removed, "Entfernt: nur im alten Plan"],
-    [LEGEND_COLOURS.unchanged, "Unverändert: Teil, den beide Pläne zeichnen"],
-  ] as const) {
-    const li = document.createElement("li"),
-      sw = document.createElement("span");
-    sw.className = "sw";
-    sw.style.background = colour;
-    li.append(sw, text);
-    legend.append(li);
-  }
-  const keys = document.createElement("p");
-  keys.className = "placeholder";
-  keys.textContent = "Leertaste: neuer Plan ohne Markierungen, Strg + Leertaste: alter Plan. 1 ganzer Plan, 2 Planbreite, 3 1:1.";
-  body.append(h, p, dl, legend, keys);
-}
-
-/**
- * A temporary readout of the Places (until the list of Places replaces it): one row each,
- * with its number, name (Was), main kind and other kinds (Art), amount (Um), Wann and Wo.
- */
-function showPlaces(places: readonly Place[]): void {
-  const h = document.createElement("h3");
-  h.textContent = `Stellen (${count(places.length)})`;
-  const ol = document.createElement("ol");
-  ol.className = "places-readout";
-  for (const p of places) {
-    const li = document.createElement("li"),
-      was = document.createElement("b");
-    was.textContent = wasText(p);
-    if (p.name && p.name !== was.textContent) was.title = p.name;
-    const um = umText(p.amount);
-    const art = [kindText(p.kind), ...p.kinds.slice(1).map((k) => `+ ${kindText(k)}`), um ? `um ${um}` : ""].filter(Boolean).join(" ");
-    const where = [wannText(p.when), woText(p.where)].filter(Boolean).join(" · ");
-    li.append(was, document.createElement("br"), `${art}${where ? ` · ${where}` : ""}`);
-    ol.append(li);
-  }
-  $("body-compare").append(h, ol);
+  const summary = document.createElement("summary");
+  summary.textContent = "Einzelheiten des Vergleichs";
+  into.replaceChildren(summary, p, dl);
 }
 
 export function setUpFirstComparison(deps: FirstComparisonDeps) {
@@ -89,6 +48,10 @@ export function setUpFirstComparison(deps: FirstComparisonDeps) {
   /** The result the view and the sidebar show now. */
   let drawn: ComparisonResult | undefined;
   let drawing = false;
+  // The facts of the comparison, folded away below the list.
+  const facts = document.createElement("details");
+  facts.className = "facts";
+  deps.places.append(facts);
 
   async function show(r: ComparisonResult): Promise<void> {
     if (drawing) return;
@@ -98,7 +61,8 @@ export function setUpFirstComparison(deps: FirstComparisonDeps) {
     try {
       const started = performance.now();
       // The view makes both Plans ready (bands and overview) only now, as it is shown.
-      await deps.view.show(r);
+      const passing = deps.places.setResult(r);
+      await deps.view.show(r, passing);
       if (shown) deps.view.enter();
       const { counts } = r.comparison;
       Object.assign(viewEl.dataset, {
@@ -110,6 +74,7 @@ export function setUpFirstComparison(deps: FirstComparisonDeps) {
         places: String(r.places.length),
       });
       showFacts(
+        facts,
         [
           ["Zeitrichtung", r.timeDirection === "down" ? "senkrecht" : "waagerecht"],
           ["Versatz", `${mm(r.setup.offset)} mm`],
@@ -125,18 +90,20 @@ export function setUpFirstComparison(deps: FirstComparisonDeps) {
           ["Übertragen", seconds(r.ms.transfer)],
           ["Ansicht vorbereiten", seconds(performance.now() - started)],
         ],
-        "Vorläufige Seitenleiste: Sie zeigt das Ergebnis des Vergleichs mit Ihren Einstellungen.",
+        "Die Zahlen dieses Vergleichs mit Ihren Einstellungen.",
       );
-      showPlaces(r.places);
       drawn = r;
     } catch (e) {
       viewEl.dataset.state = "error";
-      showFacts([], `Der Vergleich konnte nicht gezeigt werden: ${String(e)}`);
+      showFacts(facts, [], `Der Vergleich konnte nicht gezeigt werden: ${String(e)}`);
     } finally {
       drawing = false;
       await deps.busy.end();
       // Done once the busy window is gone: the keys work from here.
-      if (viewEl.dataset.state === "drawn") viewEl.dataset.state = "done";
+      if (viewEl.dataset.state === "drawn") {
+        viewEl.dataset.state = "done";
+        deps.places.ready(); // only now: nothing heavy runs before the result is shown
+      }
     }
   }
 

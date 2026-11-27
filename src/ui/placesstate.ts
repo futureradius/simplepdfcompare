@@ -39,6 +39,7 @@ export class PlacesState {
   /** Mark index to its Place and its place in the Place's marks. */
   private markOf = new Map<number, { place: Place; part: number }>();
   private cache: { listed: Place[]; nos: Set<number> } | undefined;
+  private rowsCache: Row[] | undefined;
 
   onChange: ((what: StateChange) => void) | undefined;
   /** Called when the list asks to move the Plan to a Place (a click in the list, ◀ ▶). */
@@ -56,6 +57,7 @@ export class PlacesState {
 
   private invalidate(): void {
     this.cache = undefined;
+    this.rowsCache = undefined;
   }
 
   // ---- The result --------------------------------------------------------------
@@ -107,11 +109,15 @@ export class PlacesState {
 
   /** The rows of the list: the listed Places, and with `showHidden` the hidden ones that pass the filter too. */
   rows(): Row[] {
-    if (!this.showHiddenNow) return this.listed.map((place) => ({ place, hidden: false }));
-    return sortPlaces(
-      this.all.filter((p) => placeShown(this.filterNow, p)),
-      this.sortNow,
-    ).map((place) => ({ place, hidden: this.hidden.has(place) }));
+    if (!this.rowsCache) {
+      this.rowsCache = this.showHidden
+        ? sortPlaces(
+            this.all.filter((p) => placeShown(this.filterNow, p)),
+            this.sortNow,
+          ).map((place) => ({ place, hidden: this.hidden.has(place) }))
+        : this.listed.map((place) => ({ place, hidden: false }));
+    }
+    return this.rowsCache;
   }
 
   /** The list as a table, as shown: for the export (ADR 0007). */
@@ -231,6 +237,7 @@ export class PlacesState {
 
   set showHidden(v: boolean) {
     this.showHiddenNow = v;
+    this.rowsCache = undefined;
     this.emit("hidden");
   }
 

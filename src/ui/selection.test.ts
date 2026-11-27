@@ -85,7 +85,7 @@ describe("hiding Places", () => {
     h.hide([a]);
     expect(h.has(a)).toBe(true);
     // The comparison ran again: the same Place has another number.
-    expect(h.has({ ...a, no: 9, box: { x0: 10.4, y0: 20.1, x1: 29.8, y1: 40 } })).toBe(true);
+    expect(h.has(place({ kind: "later", no: 9, box: { x0: 10.4, y0: 20.1, x1: 29.8, y1: 40 } }))).toBe(true);
     expect(h.has(place({ kind: "new", box: a.box }))).toBe(false);
     h.show([a]);
     expect(h.has(a)).toBe(false);
