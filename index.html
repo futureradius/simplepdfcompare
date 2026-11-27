@@ -173,9 +173,15 @@
       .open-actions { display: flex; justify-content: flex-end; margin-top: 18px; }
       .open-actions .btn { height: 38px; padding: 0 24px; }
       .viewer .placeholder-view { position: absolute; inset: 0; display: grid; place-items: center; }
-      /* First thin pass (?vergleich): both Plans in one picture with the marks, scrolled. */
-      .marks-view { position: absolute; inset: 0; overflow: auto; padding: 56px 16px 16px; }
-      .marks-view canvas { display: block; margin: 0 auto; background: #fff; box-shadow: 0 0 0 1px var(--line-strong); }
+      /* "Vergleich": the comparison view, over the other views; its minimap as in the setup tabs. */
+      .compare-view { position: absolute; inset: 0; z-index: 4; overflow: hidden; background: #e9e9ec; }
+      .compare-view > canvas { display: block; touch-action: none; }
+      #cmp-minimap-collapse { position: absolute; top: -10px; right: -10px; width: 22px; height: 22px; padding: 0; border-radius: 50%; border: 1px solid var(--line); background: #fff; color: var(--muted); font-size: 13px; line-height: 1; cursor: pointer; box-shadow: var(--shadow); }
+      #cmp-minimap-collapse:hover { color: var(--text); background: #eef0f3; }
+      #cmp-overview-inner { position: relative; user-select: none; touch-action: none; cursor: pointer; box-shadow: 0 0 0 1px var(--line); }
+      #cmp-overview-canvas { display: block; background: #fff; }
+      #cmp-places-canvas { position: absolute; left: 0; top: 0; pointer-events: none; }
+      #cmp-view-box { position: absolute; border: 2px solid #e5383b; background: rgba(229, 56, 59, 0.06); pointer-events: none; }
       .marks-legend { list-style: none; padding: 0; margin: 8px 0 12px; }
       .marks-legend li { display: flex; align-items: center; gap: 8px; margin: 0 0 4px; }
       .marks-legend .sw { width: 14px; height: 14px; border-radius: 3px; flex: 0 0 auto; }
@@ -436,7 +442,6 @@
         <div class="plans" id="plans" data-dir="down">
           <div class="stage"><div class="sheet" id="sheet"><canvas id="plan" width="1" height="1"></canvas><span class="tarrow a" aria-hidden="true"><svg viewBox="0 0 34 110"><path d="M17 4v94M10.5 91l6.5 15 6.5-15z" fill="currentColor" stroke="currentColor" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/></svg></span><span class="tarrow b" aria-hidden="true"><svg viewBox="0 0 34 110"><path d="M17 4v94M10.5 91l6.5 15 6.5-15z" fill="currentColor" stroke="currentColor" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/></svg></span></div></div>
         </div>
-        <div class="marks-view" id="marks-view" hidden><canvas id="marks-canvas" width="1" height="1"></canvas></div>
         <!-- "Alter Plan" and "Neuer Plan": one zoomable view of the Plan with its zones. -->
         <div class="zone-view" id="zone-view">
           <canvas id="zone-canvas" width="1" height="1" aria-label="Plan mit Kopf, Fuß und Bereichen"></canvas>
@@ -450,6 +455,22 @@
             </div>
           </div>
           <button class="minimap-expand" id="minimap-expand" title="Übersicht zeigen" aria-label="Übersicht zeigen" hidden>
+            <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="2" y="2" width="14" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="6" y="5" width="6" height="5" fill="none" stroke="#e5383b" stroke-width="1.5"/></svg>
+          </button>
+        </div>
+        <!-- "Vergleich": the comparison view and its minimap with the Places (src/ui/compareview.ts). -->
+        <div class="compare-view" id="compare-view" hidden>
+          <canvas id="compare-canvas" width="1" height="1" aria-label="Vergleich: Plan mit Markierungen"></canvas>
+          <div class="minimap" id="cmp-minimap" hidden>
+            <button class="minimap-x" id="cmp-minimap-collapse" title="Übersicht einklappen" aria-label="Übersicht einklappen">×</button>
+            <div class="overview-inner" id="cmp-overview-inner" title="Klicken oder ziehen, um die Ansicht zu verschieben">
+              <canvas class="overview-canvas" id="cmp-overview-canvas"></canvas>
+              <canvas class="places-layer" id="cmp-places-canvas"></canvas>
+              <div id="cmp-zone-boxes"></div>
+              <div class="view-box" id="cmp-view-box"></div>
+            </div>
+          </div>
+          <button class="minimap-expand" id="cmp-minimap-expand" title="Übersicht zeigen" aria-label="Übersicht zeigen" hidden>
             <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="2" y="2" width="14" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="6" y="5" width="6" height="5" fill="none" stroke="#e5383b" stroke-width="1.5"/></svg>
           </button>
         </div>

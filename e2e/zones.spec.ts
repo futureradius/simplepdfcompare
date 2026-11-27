@@ -244,8 +244,13 @@ test("delete: the × bubble, the sidebar × and the Entf key; ⇕ stretches over
   for (const x of [100, 450, 800]) await dragMm(page, [x, h + 300], [x + 200, h + 700], { alt: true });
   expect((await inspect(page)).zones).toHaveLength(3);
   await expect(rows(page)).toHaveCount(3);
+  // The bubbles as the next frame draws them.
+  const fresh = async () => {
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    return spc<{ name: string; x: number; y: number }[]>(page, "bubbles", "old");
+  };
   // The × bubble of the selected (third) zone, drawn on the canvas.
-  let bubbles = await spc<{ name: string; x: number; y: number }[]>(page, "bubbles", "old");
+  let bubbles = await fresh();
   const del = bubbles.filter((b) => b.name === "Bereich löschen");
   expect(del.length).toBeGreaterThan(0);
   const last = del[del.length - 1]!; // the selected zone is drawn last
@@ -258,7 +263,7 @@ test("delete: the × bubble, the sidebar × and the Entf key; ⇕ stretches over
   await rows(page).first().click();
   expect((await inspect(page)).selected).toBeDefined();
   // ⇕ first, to see the zone run over the whole length.
-  bubbles = await spc(page, "bubbles", "old");
+  bubbles = await fresh();
   const full = bubbles.find((b) => b.name === "Über die ganze Länge")!;
   await page.mouse.click(full.x, full.y);
   let z = (await inspect(page)).zones[0]!;
@@ -266,7 +271,7 @@ test("delete: the × bubble, the sidebar × and the Entf key; ⇕ stretches over
   expect(z.box.y0).toBe(0);
   expect(z.box.y1).toBeCloseTo(OLD_LEN, 0);
   await shot(page, "old-full-length.png");
-  bubbles = await spc(page, "bubbles", "old");
+  bubbles = await fresh();
   await page.mouse.click(bubbles.find((b) => b.name === "Über die ganze Länge")!.x, bubbles.find((b) => b.name === "Über die ganze Länge")!.y);
   z = (await inspect(page)).zones[0]!;
   expect(z.full).toBe(false);

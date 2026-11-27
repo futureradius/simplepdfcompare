@@ -5,7 +5,7 @@
 import wasmGzBase64 from "virtual:mupdf-wasm";
 import EngineWorker from "./worker?worker&inline";
 import type { DocumentInfo, PlanInfo, Preview, RegionRequest, RequestBody, Response, ThumbnailRequest } from "./protocol";
-import type { BodyHints, ComparisonRunInput, ComparisonRunOutput, OffsetSearchInput, PlanObjectsInfo } from "./core";
+import type { BodyHints, ComparisonRunInput, ComparisonRunOutput, OffsetSearchInput, PlanObjectsInfo, ViewPrepared } from "./core";
 import type { OffsetResult } from "../compare/offset";
 import type { Axis } from "../compare/objects";
 import type { Segments } from "../zones/snap";
@@ -19,6 +19,8 @@ export interface Engine {
   renderThumbnail(thumb: ThumbnailRequest): Promise<Preview>;
   /** A part of the Plan (page mm) as a picture, for the zoomable view. */
   renderRegion(region: RegionRequest): Promise<Preview>;
+  /** Cuts the Plan into bands along the axis and renders its overview, for the comparison view (ADR 0004). */
+  prepareView(axis: Axis): Promise<ViewPrepared>;
   /** First guess for Header and Footer, and the lines across the Plan they snap to. */
   bodyHints(axis: Axis): Promise<BodyHints>;
   /** The straight lines zone edges snap to; built in the worker on first use. */
@@ -102,6 +104,7 @@ function workerEngine(wasm: ArrayBuffer, timeoutMs: number): Promise<Engine> {
           openPage: (page) => call<PlanInfo>({ op: "openPage", page }),
           renderThumbnail: (thumb) => call<Preview>({ op: "renderThumbnail", thumb }),
           renderRegion: (region) => call<Preview>({ op: "renderRegion", region }),
+          prepareView: (axis) => call<ViewPrepared>({ op: "prepareView", axis }),
           bodyHints: (axis) => call<BodyHints>({ op: "bodyHints", axis }),
           snapSegments: () => call<Segments>({ op: "snapSegments" }),
           extractObjects: () => call<{ count: number; extractMs: number }>({ op: "extractObjects" }),

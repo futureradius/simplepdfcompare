@@ -51,6 +51,7 @@ export type Request =
   | { id: number; op: "openPage"; page: number }
   | { id: number; op: "renderThumbnail"; thumb: ThumbnailRequest }
   | { id: number; op: "renderRegion"; region: RegionRequest }
+  | { id: number; op: "prepareView"; axis: Axis }
   | { id: number; op: "bodyHints"; axis: Axis }
   | { id: number; op: "snapSegments" }
   | { id: number; op: "extractObjects" }

@@ -9,7 +9,7 @@ comparison. The viewer is simplepdfclipper's: every frame draws the cached overv
 sharp layers of both Plans with the GPU ("darken" for both Plans, a white veil for the
 fade), the New Plan moved by the Offset. 120 ms after the view rests, the visible area plus
 25 % is rendered sharp through the bands it touches. Differences are drawn every frame as
-vector shapes on top, never by a per-pixel loop. List thumbnails are rendered in the
+vector shapes on top, never by a per-pixel loop (zoomed out, from cached tiles: ADR 0010). List thumbnails are rendered in the
 workers at lower priority, with an overview crop until they arrive.
 
 Measured in Edge on the synthetic 14 m pair and on simplepdfclipper's denser Test Plan

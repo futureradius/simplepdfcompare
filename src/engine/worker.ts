@@ -30,6 +30,11 @@ scope.onmessage = async (ev: MessageEvent<Request>) => {
         scope.postMessage({ id: req.id, ok: true, result: t } satisfies Response, [t.pixels.buffer]);
         return;
       }
+      case "prepareView": {
+        const v = core.prepareView(req.axis);
+        scope.postMessage({ id: req.id, ok: true, result: v } satisfies Response, [v.overview.pixels.buffer]);
+        return;
+      }
       case "bodyHints":
         result = core.bodyHints(req.axis);
         break;
