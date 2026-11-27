@@ -60,4 +60,14 @@ describe("handing a comparison result to the Vergleich tab", () => {
     expect(h.latest()).toBeUndefined();
     expect(a).not.toHaveBeenCalled();
   });
+
+  it("tells pairs of Plans apart: a new pair after each clear, the same pair for a result run again", () => {
+    const h = new ComparisonHandoff();
+    const first = h.pair;
+    h.publish(result(1));
+    h.publish(result(2));
+    expect(h.pair).toBe(first);
+    h.clear();
+    expect(h.pair).not.toBe(first);
+  });
 });

@@ -22,6 +22,7 @@ import {
   notCompared,
   placeSpots,
   RING_BELOW_PX,
+  RING_RADIUS_PX,
   rings,
   shiftOf,
   type NotCompared,
@@ -35,7 +36,32 @@ import { Minimap, minimapShapes, type MinimapElements } from "./minimap";
 import { levelFor, levelScale, MAX_TILED_S, metricScale, tilesFor, TILE_PX, type Tile } from "./marktiles";
 import { boxOutline, OUTLINE_MARGIN_MM, outlineGroups, outlineOf, type OutlineGroup } from "./outlines";
 import type { Role, Sides } from "./openplans";
+import { boxSelect, placeAt, type Pickable } from "./picking";
 import { PX_PER_MM_100 } from "./planview";
+
+/** CAD: a plain drag or click replaces, Shift adds, Ctrl removes. */
+export type SelectMode = "replace" | "add" | "remove";
+
+/** What the user did on the Plan with the left button (selecting Places, ADR 0003). */
+export type PickEvent =
+  /** A click: on a Place, or on empty Plan (no is null). */
+  | { type: "click"; no: number | null; mode: SelectMode }
+  /** A box: the Places it takes. */
+  | { type: "box"; nos: number[]; mode: SelectMode };
+
+/** A selection box being dragged (CSS px of the canvas), and what it will do. */
+interface DragBox {
+  from: { x: number; y: number };
+  to: { x: number; y: number };
+  mode: SelectMode;
+}
+
+const BOX_COLOURS = { remove: "#d0215f", crossing: "#16a34a", window: "#1d5fd6" } as const;
+/** A press that moves less than this is a click, CSS px. */
+const CLICK_PX = 4;
+/** The selected Places are outlined in this blue. */
+const SELECT_INK = "#1d5fd6";
+const FLY_MS = 380;
 
 /**
  * What the view draws: a finished comparison. "Vergleichen" (the "Versatz" tab) hands over a
@@ -171,6 +197,19 @@ export class CompareView {
   private tileStats: { level: number; drawn: number; painted: number; standIn: number } | null = null;
   private tilesIdle: ReturnType<typeof setTimeout> | undefined;
   private settings: ViewSettings = { ...DEFAULT_SETTINGS };
+  /** The Places that are selected (the list and the Plan share one selection). */
+  private selected: ReadonlySet<number> = new Set();
+  private spotByNo = new Map<number, PlaceSpot>();
+  /** The shown Places with their shown marks, for picking; made when first needed after a change. */
+  private pickables: Pickable[] | undefined;
+  private gesture: { x: number; y: number; mode: SelectMode } | undefined;
+  private dragBox: DragBox | undefined;
+  private hoverTimer: ReturnType<typeof setTimeout> | undefined;
+  private pointer: { x: number; y: number } | undefined;
+  private flight: number | undefined;
+  private readonly thumbLayers = new Layers();
+  /** Told what the left button did on the Plan. */
+  onPick: ((e: PickEvent) => void) | undefined;
   private peek: Role | null = null;
   private space = false;
   private active = false;
@@ -223,7 +262,7 @@ export class CompareView {
    * 0004), so call it inside the busy window. The view keeps its place when the frame is the
    * same (a comparison run again); otherwise it shows the whole frame.
    */
-  async show(result: ViewedComparison): Promise<void> {
+  async show(result: ViewedComparison, shown?: Shown): Promise<void> {
     const plans = this.deps.plans(),
       engines = this.deps.engines();
     const old = plans.old,
@@ -253,6 +292,9 @@ export class CompareView {
     this.pages = { old: [old.widthMm, old.heightMm], new: [nu.widthMm, nu.heightMm] };
     const before = this.frame;
     this.result = result;
+    // Which Places and marks are shown (filter and hiding) comes with the result, so that no frame draws it with the wrong ones.
+    if (shown) this.shown = shown;
+    this.selected = new Set();
     this.frame = comparisonFrame(this.pages, axis, result.setup.offset);
     this.zones = notCompared(result.setup, result.comparison.window, this.pages);
     this.marks = result.comparison.marks.map((m, i) => paintMark(i, m));
@@ -260,6 +302,7 @@ export class CompareView {
     this.outlines.clear();
     this.roughOutlines.clear();
     this.tiles.clear();
+    this.pickables = undefined;
     const sameFrame = Math.abs(before.x0 - this.frame.x0) + Math.abs(before.y0 - this.frame.y0) + Math.abs(before.x1 - this.frame.x1) + Math.abs(before.y1 - this.frame.y1) < 0.01;
     this.measure();
     if (!sameFrame) this.fitFrame();
@@ -318,6 +361,7 @@ export class CompareView {
 
   /** Key 2: the Plan's width fills the view, from the top of the frame. */
   fitWidth(): void {
+    this.stopFlight();
     this.measure();
     const f = this.frame;
     this.zoom = clamp(this.cssW / ((f.x1 - f.x0) * 1.02), MIN_ZOOM, MAX_ZOOM);
@@ -332,6 +376,7 @@ export class CompareView {
   }
 
   fitRect(r: Box, margin = 0.08): void {
+    this.stopFlight();
     this.measure();
     const w = Math.max(1, r.x1 - r.x0),
       h = Math.max(1, r.y1 - r.y0);
@@ -342,13 +387,76 @@ export class CompareView {
   }
 
   centerOn(p: { x: number; y: number }): void {
+    this.stopFlight();
     this.cx = p.x;
     this.cy = p.y;
     this.viewUpdated();
   }
 
+  /** The selected Places, outlined on the Plan. Nothing moves. */
+  setSelection(nos: Iterable<number>): void {
+    this.selected = new Set(nos);
+    this.requestDraw();
+  }
+
+  /** Where a Place is now (the box of its shown marks, Old frame mm), if it is shown. */
+  placeBox(no: number): Box | null {
+    return this.spotByNo.get(no)?.box ?? null;
+  }
+
+  /** Key F: the view flies to the selected Places, or fits the whole frame when none is selected. */
+  fitSelection(): void {
+    let box: Box | null = null;
+    for (const no of this.selected) {
+      const b = this.spotByNo.get(no)?.box;
+      if (b) box = box ? { x0: Math.min(box.x0, b.x0), y0: Math.min(box.y0, b.y0), x1: Math.max(box.x1, b.x1), y1: Math.max(box.y1, b.y1) } : { ...b };
+    }
+    if (box) this.flyTo(box);
+    else this.fitFrame();
+  }
+
+  /**
+   * Moves the view to show a box (a Place), in one smooth flight: the zoom changes as it
+   * moves. A Place smaller than 50 mm is shown with room around it. Wheel, a drag or the
+   * minimap stop it where it is. With reduced motion the view jumps.
+   */
+  flyTo(box: Box): void {
+    this.measure();
+    const MIN_MM = 50;
+    const w = Math.max(MIN_MM, box.x1 - box.x0),
+      h = Math.max(MIN_MM, box.y1 - box.y0);
+    const to = {
+      cx: (box.x0 + box.x1) / 2,
+      cy: (box.y0 + box.y1) / 2,
+      zoom: clamp(Math.min(this.cssW / (w * 1.5), this.cssH / (h * 1.5)), MIN_ZOOM, MAX_ZOOM),
+    };
+    this.stopFlight();
+    const from = { cx: this.cx, cy: this.cy, zoom: this.zoom };
+    if (!this.active || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      this.setView(to.cx, to.cy, to.zoom);
+      return;
+    }
+    const t0 = performance.now();
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - t0) / FLY_MS);
+      const e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+      this.zoom = from.zoom * Math.pow(to.zoom / from.zoom, e);
+      this.cx = from.cx + (to.cx - from.cx) * e;
+      this.cy = from.cy + (to.cy - from.cy) * e;
+      this.viewUpdated();
+      this.flight = t < 1 ? requestAnimationFrame(tick) : undefined;
+    };
+    this.flight = requestAnimationFrame(tick);
+  }
+
+  private stopFlight(): void {
+    if (this.flight !== undefined) cancelAnimationFrame(this.flight);
+    this.flight = undefined;
+  }
+
   /** Moves the view without waiting: for measuring frame times. */
   setView(cx: number, cy: number, zoom: number): void {
+    this.stopFlight();
     this.cx = cx;
     this.cy = cy;
     this.zoom = clamp(zoom, MIN_ZOOM, MAX_ZOOM);
@@ -371,6 +479,9 @@ export class CompareView {
       cssW: this.cssW,
       cssH: this.cssH,
       peek: this.peek,
+      selected: [...this.selected],
+      settings: { ...this.settings },
+      flying: this.flight !== undefined,
       layers: this.pictures ? { old: this.pictures.old.layers.length, new: this.pictures.new.layers.length } : null,
       sharpRenders: this.sharpRenders,
       outlineMs: this.outlineMs,
@@ -388,6 +499,14 @@ export class CompareView {
     const v = this.visible();
     const b = intersect(z.rect, v);
     if (!b) return null;
+    return { x: (b.x0 - v.x0) * this.zoom, y: (b.y0 - v.y0) * this.zoom, w: (b.x1 - b.x0) * this.zoom, h: (b.y1 - b.y0) * this.zoom };
+  }
+
+  /** Where a shown Place is on screen, CSS px of the canvas (for the tests). */
+  placeOnScreen(no: number) {
+    const b = this.spotByNo.get(no)?.box;
+    if (!b) return null;
+    const v = this.visible();
     return { x: (b.x0 - v.x0) * this.zoom, y: (b.y0 - v.y0) * this.zoom, w: (b.x1 - b.x0) * this.zoom, h: (b.y1 - b.y0) * this.zoom };
   }
 
@@ -420,8 +539,7 @@ export class CompareView {
         break;
       case "f":
       case "F":
-        // The selected Places (a later slice); with none selected, the whole frame.
-        this.fitFrame();
+        this.fitSelection();
         break;
       default:
         return;
@@ -446,6 +564,7 @@ export class CompareView {
   }
 
   private zoomAt(sx: number, sy: number, factor: number): void {
+    this.stopFlight();
     const v = this.visible();
     const bx = v.x0 + sx / this.zoom,
       by = v.y0 + sy / this.zoom;
@@ -458,14 +577,26 @@ export class CompareView {
 
   private onWheel(e: WheelEvent): void {
     e.preventDefault();
+    this.stopFlight();
     const p = this.local(e);
     const lines = e.deltaMode === 1 ? 33 : e.deltaMode === 2 ? 400 : 1;
     this.zoomAt(p.x, p.y, Math.exp(-e.deltaY * lines * 0.0015));
   }
 
   private onDown(e: PointerEvent): void {
-    if (!this.result || (e.button !== 1 && e.button !== 2)) return;
+    if (!this.result) return;
+    this.stopFlight();
+    // The keys (H, arrows) work after a click on the Plan, also when a field in the sidebar had the focus.
+    (document.activeElement as HTMLElement | null)?.blur?.();
     const p = this.local(e);
+    if (e.button === 0) {
+      // The left button selects (CAD): a click, or a box dragged to the right (fully inside) or left (touching).
+      this.gesture = { ...p, mode: e.ctrlKey || e.metaKey ? "remove" : e.shiftKey ? "add" : "replace" };
+      this.el.canvas.setPointerCapture(e.pointerId);
+      e.preventDefault();
+      return;
+    }
+    if (e.button !== 1 && e.button !== 2) return;
     this.pan = { ...p, cx: this.cx, cy: this.cy };
     this.el.canvas.setPointerCapture(e.pointerId);
     this.el.canvas.style.cursor = "grabbing";
@@ -473,18 +604,95 @@ export class CompareView {
   }
 
   private onMove(e: PointerEvent): void {
-    if (!this.pan) return;
     const p = this.local(e);
+    if (this.gesture) {
+      const g = this.gesture;
+      if (this.dragBox || Math.hypot(p.x - g.x, p.y - g.y) > CLICK_PX) {
+        this.dragBox = { from: { x: g.x, y: g.y }, to: p, mode: g.mode };
+        this.requestDraw();
+      }
+      return;
+    }
+    if (!this.pan) {
+      this.hover(p);
+      return;
+    }
     this.cx = this.pan.cx - (p.x - this.pan.x) / this.zoom;
     this.cy = this.pan.cy - (p.y - this.pan.y) / this.zoom;
     this.viewUpdated();
   }
 
   private onUp(e: PointerEvent): void {
+    if (this.gesture) {
+      const g = this.gesture,
+        box = this.dragBox;
+      this.gesture = undefined;
+      this.dragBox = undefined;
+      if (this.el.canvas.hasPointerCapture(e.pointerId)) this.el.canvas.releasePointerCapture(e.pointerId);
+      if (e.type === "pointercancel") {
+        this.requestDraw();
+        return;
+      }
+      if (!box) this.onPick?.({ type: "click", no: this.placeUnder(g.x, g.y), mode: g.mode });
+      else {
+        const a = this.toMm(box.from),
+          b = this.toMm(box.to);
+        const r = { x0: Math.min(a.x, b.x), y0: Math.min(a.y, b.y), x1: Math.max(a.x, b.x), y1: Math.max(a.y, b.y) };
+        this.onPick?.({ type: "box", nos: boxSelect(this.pickList(), r, box.to.x < box.from.x), mode: g.mode });
+      }
+      this.requestDraw();
+      return;
+    }
     if (!this.pan) return;
     this.pan = undefined;
     if (this.el.canvas.hasPointerCapture(e.pointerId)) this.el.canvas.releasePointerCapture(e.pointerId);
     this.el.canvas.style.cursor = "";
+  }
+
+  /** A point of the canvas (CSS px) in the Old frame, mm. */
+  private toMm(p: { x: number; y: number }): { x: number; y: number } {
+    const v = this.visible();
+    return { x: v.x0 + p.x / this.zoom, y: v.y0 + p.y / this.zoom };
+  }
+
+  /** The shown Places with their shown marks. */
+  private pickList(): Pickable[] {
+    if (!this.pickables && this.result) {
+      const marks = this.result.comparison.marks;
+      this.pickables = [];
+      for (const p of this.result.places) {
+        const spot = this.spotByNo.get(p.no);
+        if (spot) this.pickables.push({ no: p.no, box: spot.box, marks: p.marks.filter((i) => this.isShown(i)).map((i) => marks[i]!) });
+      }
+    }
+    return this.pickables ?? [];
+  }
+
+  /** The smallest Place under a point of the canvas (CSS px), or null. */
+  private placeUnder(x: number, y: number): number | null {
+    const p = this.toMm({ x, y });
+    const tol = (Math.max(this.settings.outline, 3) + 3) / this.zoom;
+    const ringed = this.settings.rings && this.settings.marks;
+    return placeAt(this.pickList(), p, tol, ringed ? (pl) => this.ringHit(pl, x, y) : undefined);
+  }
+
+  /** The pointer is on the ring of a Place that is too small on screen to hit. */
+  private ringHit(pl: Pickable, x: number, y: number): boolean {
+    const b = pl.box;
+    if (Math.max(b.x1 - b.x0, b.y1 - b.y0) * this.zoom >= RING_BELOW_PX) return false;
+    const c = { x: ((b.x0 + b.x1) / 2 - this.visible().x0) * this.zoom, y: ((b.y0 + b.y1) / 2 - this.visible().y0) * this.zoom };
+    return Math.hypot(c.x - x, c.y - y) <= 14;
+  }
+
+  /** The pointer is a hand over a Place, else a cross (looked up at most every 50 ms). */
+  private hover(p: { x: number; y: number }): void {
+    this.pointer = p;
+    if (this.hoverTimer !== undefined || !this.result) return;
+    this.hoverTimer = setTimeout(() => {
+      this.hoverTimer = undefined;
+      if (this.pan || this.gesture || !this.pointer) return;
+      this.el.canvas.style.cursor = this.placeUnder(this.pointer.x, this.pointer.y) !== null ? "pointer" : "crosshair";
+    }, 50);
   }
 
   // ---- State that follows the comparison --------------------------------------
@@ -508,6 +716,8 @@ export class CompareView {
   private updateSpots(): void {
     if (!this.result) return;
     this.spots = placeSpots(this.result.places, this.result.comparison.marks, this.shown);
+    this.spotByNo = new Map(this.spots.map((p) => [p.no, p] as const));
+    this.pickables = undefined;
     this.groups = outlineGroups(this.result.places, this.result.comparison.marks, (i) => this.isShown(i));
     const spots = this.spots,
       marks = this.marks;
@@ -728,7 +938,14 @@ export class CompareView {
    * Paints the marks that `vp` shows onto ctx, as they are: the objects, and the outlines with
    * the halos and the x–x–x. Outlines not made yet are made until `until`, else rough.
    */
-  private paintLive(ctx: CanvasRenderingContext2D, layers: Layers, vp: Viewport, until: number, metricS = vp.s): { marks: number; outlines: number } {
+  private paintLive(
+    ctx: CanvasRenderingContext2D,
+    layers: Layers,
+    vp: Viewport,
+    until: number,
+    metricS = vp.s,
+    plan: (role: Role) => void = (role) => this.drawPlan(ctx, role, vp),
+  ): { marks: number; outlines: number } {
     // Sizes kept on screen (outline, x–x–x, thinnest line) as at metricS: a tile is drawn at other zooms too.
     const met = markMetrics(this.settings, metricS, vp.dpr);
     const pad = met.outlineMm + met.xxx.distanceMm + (8 * vp.dpr) / vp.s;
@@ -748,8 +965,72 @@ export class CompareView {
         outs.push(size(g.box) < small ? this.roughOutline(g) : this.outlineOf(g, until));
       }
     }
-    paintMarks(ctx, layers, vis, outs, vp, met, this.settings, (role) => this.drawPlan(ctx, role, vp));
+    paintMarks(ctx, layers, vis, outs, vp, met, this.settings, plan);
     return { marks: vis.length, outlines: outs.length };
+  }
+
+  /**
+   * A small picture of a Place for the list: both Plans (as the display settings say) around
+   * the Place, faded, with the marks that are shown. The regions are rendered by the Plans'
+   * workers now, so call it only for a row that is in view. Returns false when the comparison
+   * changed meanwhile or the Place is unknown.
+   */
+  async drawThumbnail(canvas: HTMLCanvasElement, no: number, cssW: number, cssH: number): Promise<boolean> {
+    const res = this.result,
+      place = res?.places.find((p) => p.no === no);
+    if (!res || !place) return false;
+    const gen = this.generation,
+      dpr = window.devicePixelRatio || 1;
+    const W = Math.round(cssW * dpr),
+      H = Math.round(cssH * dpr);
+    const b = place.box;
+    const mw = Math.max(b.x1 - b.x0, 30) * 1.3,
+      mh = Math.max(b.y1 - b.y0, 30) * 1.3;
+    const s = Math.min(W / mw, H / mh); // device px per mm
+    const vp: Viewport = { x0: (b.x0 + b.x1) / 2 - W / 2 / s, y0: (b.y0 + b.y1) / 2 - H / 2 / s, s, w: W, h: H, dpr };
+    const roles: Role[] = this.settings.base === "both" ? ["old", "new"] : [this.settings.base];
+    const engines = this.deps.engines();
+    const maps = new Map<Role, ImageBitmap>();
+    try {
+      // Both Plans' workers draw at once; with marks on, the changed words' ink comes from each Plan.
+      const need: Role[] = this.settings.marks ? ROLES : roles;
+      const got = await Promise.all(
+        need.map(async (role) => {
+          const sh = shiftOf(role, res.setup.axis, res.setup.offset);
+          const rect = { x0: vp.x0 - sh.dx, y0: vp.y0 - sh.dy, x1: vp.x0 + W / s - sh.dx, y1: vp.y0 + H / s - sh.dy };
+          return [role, await bitmapOf(await engines[role].renderRegion({ rect, pxPerMm: s }))] as const;
+        }),
+      );
+      for (const [role, bm] of got) maps.set(role, bm);
+      if (gen !== this.generation) return false;
+      if (canvas.width !== W || canvas.height !== H) {
+        canvas.width = W;
+        canvas.height = H;
+      }
+      const ctx = canvas.getContext("2d")!;
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.globalCompositeOperation = "source-over";
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(0, 0, W, H);
+      ctx.imageSmoothingQuality = "high";
+      const draw = (role: Role) => ctx.drawImage(maps.get(role)!, 0, 0, W, H);
+      roles.forEach((role, i) => {
+        ctx.globalCompositeOperation = i === 0 ? "source-over" : "darken";
+        draw(role);
+      });
+      ctx.globalCompositeOperation = "source-over";
+      if (this.settings.marks && this.settings.fade < 100) {
+        ctx.fillStyle = `rgba(255,255,255,${1 - this.settings.fade / 100})`;
+        ctx.fillRect(0, 0, W, H);
+      }
+      if (this.settings.marks) {
+        // The changed words' own ink comes from the Plan that draws them.
+        this.paintLive(ctx, this.thumbLayers, vp, performance.now() + 25, vp.s, (role) => ctx.drawImage(maps.get(role)!, 0, 0, W, H));
+      }
+      return true;
+    } finally {
+      for (const m of maps.values()) m.close();
+    }
   }
 
   /** Paints one tile of the marks at level k. */
@@ -939,6 +1220,58 @@ export class CompareView {
     ctx.restore();
   }
 
+  /** The selected Places: a blue frame round each, at least a ring's size, drawn over the marks. */
+  private paintSelection(ctx: CanvasRenderingContext2D, vp: Viewport): void {
+    if (!this.selected.size) return;
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    const pad = 4 * vp.dpr,
+      min = 2 * RING_RADIUS_PX * vp.dpr;
+    for (const no of this.selected) {
+      const b = this.spotByNo.get(no)?.box;
+      if (!b) continue;
+      let x = (b.x0 - vp.x0) * vp.s - pad,
+        y = (b.y0 - vp.y0) * vp.s - pad,
+        w = (b.x1 - b.x0) * vp.s + 2 * pad,
+        h = (b.y1 - b.y0) * vp.s + 2 * pad;
+      if (x > vp.w || y > vp.h || x + w < 0 || y + h < 0) continue;
+      if (w < min) (x -= (min - w) / 2), (w = min);
+      if (h < min) (y -= (min - h) / 2), (h = min);
+      const r = Math.min(8 * vp.dpr, w / 2, h / 2);
+      ctx.beginPath();
+      ctx.roundRect(x, y, w, h, r);
+      ctx.lineWidth = 4.5 * vp.dpr;
+      ctx.strokeStyle = "rgba(255,255,255,0.9)";
+      ctx.stroke();
+      ctx.lineWidth = 2.2 * vp.dpr;
+      ctx.strokeStyle = SELECT_INK;
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  /** The selection box while it is dragged: solid blue to the right (fully inside), dashed green to the left (touching), red to remove. */
+  private paintDragBox(ctx: CanvasRenderingContext2D): void {
+    const b = this.dragBox;
+    if (!b) return;
+    const d = this.dpr,
+      crossing = b.to.x < b.from.x;
+    const colour = b.mode === "remove" ? BOX_COLOURS.remove : crossing ? BOX_COLOURS.crossing : BOX_COLOURS.window;
+    const x = Math.min(b.from.x, b.to.x) * d,
+      y = Math.min(b.from.y, b.to.y) * d,
+      w = Math.abs(b.to.x - b.from.x) * d,
+      h = Math.abs(b.to.y - b.from.y) * d;
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = colour + "1f";
+    ctx.strokeStyle = colour;
+    ctx.lineWidth = 1.3 * d;
+    ctx.setLineDash(crossing ? [6 * d, 4 * d] : []);
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeRect(x, y, w, h);
+    ctx.restore();
+  }
+
   private draw(): void {
     const t0 = performance.now();
     const { ctx } = this;
@@ -991,6 +1324,10 @@ export class CompareView {
       }
     }
     paintNotComparedLabels(ctx, zones, vp);
+    if (!this.peek) {
+      this.paintSelection(ctx, vp);
+      this.paintDragBox(ctx);
+    }
     if (this.peek) {
       ctx.save();
       ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
@@ -1032,6 +1369,8 @@ export function setUpCompareView(deps: CompareViewDeps): CompareView {
     centerOn: (x: number, y: number) => view.centerOn({ x, y }),
     setView: (cx: number, cy: number, zoom: number) => view.setView(cx, cy, zoom),
     notComparedOnScreen: (plan: Role, kind: NotCompared["kind"]) => view.notComparedOnScreen(plan, kind),
+    /** A shown Place on screen, in the canvas's CSS px (null when it is not in view). */
+    placeOnScreen: (no: number) => view.placeOnScreen(no),
     setShown: (places: number[] | null) => view.setShown(places ? { place: (no) => places.includes(no) } : {}),
   };
   return view;
