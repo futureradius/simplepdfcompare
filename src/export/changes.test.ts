@@ -60,16 +60,19 @@ describe("the exported rows", () => {
     expect(earlier.map((r) => r.um)).toEqual([-1]);
   });
 
-  it("give Von and Bis as the list reads them: the first and the last day covered, with the times when not on a day boundary", () => {
+  it("give Von and Bis as the moments the Activity starts and runs up to, with the time; a milestone is its day", () => {
     const rows = rowsOf();
     const vonBis = (name: string, art: string) => {
       const r = find(rows, name, art)!;
       return [iso(r.von), iso(r.bis)];
     };
-    expect(vonBis("Mast umbauen", "Quer")).toEqual(["2027-01-10", "2027-01-11"]); // 10.01.–11.01.27
+    expect(vonBis("Mast umbauen", "Quer")).toEqual(["2027-01-10 00:00", "2027-01-12 00:00"]); // 10.01.–11.01.27 in the list: runs up to the end of the 11th
     expect(vonBis("Gleis 1 erneuern", "Später")).toEqual(["2027-01-07 08:00", "2027-01-09 08:00"]); // 07.01. 08:00 – 09.01.27 08:00
     expect(vonBis("Gleis 2 erneuern mit Schotter", "Verlängert")).toEqual(["2027-01-13 00:00", "2027-01-16 06:00"]); // 13.01. 00:00 – 16.01.27 06:00
-    expect(vonBis("Schraffur km 13,5–14,5, am 22.01.27", "Neu")).toEqual(["2027-01-22", "2027-01-22"]); // a milestone
+    expect(vonBis("Schraffur km 13,5–14,5, am 22.01.27", "Neu")).toEqual(["2027-01-22 00:00", "2027-01-23 00:00"]); // one whole day
+    // A milestone is a day, not a span.
+    const [m] = changeRows([place({ kind: "new", kinds: ["new"], when: { from: 20.02, to: 20.02, point: true, mmPerDay: 5 } })], { isHidden: none, setup: activities.setup });
+    expect([m!.von, m!.bis]).toEqual([{ day: 20, time: false }, { day: 20, time: false }]);
   });
 
   it("leave Um, Von, Bis, km von and km bis empty when no axis was read", () => {
@@ -194,14 +197,17 @@ describe("the workbook", () => {
     expect(formatOf(at("F")!.s)).toBe("dd.mm.yyyy hh:mm");
     expect(Number(at("G")!.v)).toBeCloseTo(46396 + 8 / 24, 6);
     expect(Number(at("H")!.v)).toBeCloseTo(10.4, 1);
-    // km to the metre, shown with one decimal as in the list
+    // km to the metre, shown to the metre
     expect(at("H")!.v).toMatch(/^\d+(\.\d{1,3})?$/);
-    expect(formatOf(at("H")!.s)).toBe("0.0");
-    expect(formatOf(at("J")!.s)).toBe("0.0");
+    expect(formatOf(at("H")!.s)).toBe("0.000");
+    expect(formatOf(at("I")!.s)).toBe("0.000");
+    expect(formatOf(at("J")!.s)).toBe("0.0"); // x (mm)
     expect(at("L")).toBeUndefined();
     const whole = rowsOf().find((x) => x.was === "Mast umbauen")!; // 10.01.–11.01.27, whole days
     expect(cells.get(`F${whole.no + 1}`)!.v).toBe("46397");
-    expect(formatOf(cells.get(`F${whole.no + 1}`)!.s)).toBe("dd.mm.yyyy");
+    expect(formatOf(cells.get(`F${whole.no + 1}`)!.s)).toBe("dd.mm.yyyy hh:mm");
+    expect(cells.get(`G${whole.no + 1}`)!.v).toBe("46399"); // 12.01.2027 00:00
+    expect(formatOf(cells.get(`G${whole.no + 1}`)!.s)).toBe("dd.mm.yyyy hh:mm");
     expect(cells.get(`E${whole.no + 1}`)).toBeUndefined();
     expect(cells.get("L4")).toMatchObject({ t: "inlineStr", v: "ja" });
   });

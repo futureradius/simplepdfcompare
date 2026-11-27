@@ -5,7 +5,7 @@
 import { zip } from "./zip";
 
 /** The number formats a cell can have. "+0.00" shows the sign of a positive number too. */
-export type NumFormat = "0.0" | "0.00" | "+0.00";
+export type NumFormat = "0.0" | "0.00" | "0.000" | "+0.00";
 
 /**
  * A cell: empty, text, a number (General unless a format is given), or a moment in days since
@@ -28,11 +28,12 @@ const FORMATS: Record<NumFormat | "date" | "datetime", { id: number; code: strin
   "0.0": { id: 164, code: "0.0" },
   "0.00": { id: 2, code: "0.00" }, // built in
   "+0.00": { id: 165, code: "+0.00;-0.00;0.00" },
+  "0.000": { id: 166, code: "0.000" },
   date: { id: 166, code: "dd.mm.yyyy" },
   datetime: { id: 167, code: "dd.mm.yyyy hh:mm" },
 };
 /** Style 0 is plain, 1 the bold header, then one per format. */
-const STYLE_KEYS = ["0.0", "0.00", "+0.00", "date", "datetime"] as const;
+const STYLE_KEYS = ["0.0", "0.00", "+0.00", "date", "datetime", "0.000"] as const;
 const styleOf = (key: (typeof STYLE_KEYS)[number]) => 2 + STYLE_KEYS.indexOf(key);
 
 function stylesXml(): string {

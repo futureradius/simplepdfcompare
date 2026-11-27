@@ -28,7 +28,11 @@ export interface ChangeRow {
   art: string;
   /** Days with a sign (+ Später and Verlängert, − Früher and Verkürzt); null for the other kinds and without a time axis. */
   um: number | null;
-  /** The first and the last day covered (or moment, to the hour); null without a time axis. */
+  /**
+   * When the Activity starts and the moment it runs up to, to the hour: an Activity over whole
+   * days 10.01.–11.01. runs from 10.01. 00:00 up to 12.01. 00:00. A milestone is its day. Null
+   * without a time axis.
+   */
   von: Moment | null;
   bis: Moment | null;
   /** km, the smaller first; null without a location axis. */
@@ -67,15 +71,17 @@ export function changeRows(places: readonly Place[], input: ChangeRowsInput): Ch
   return [...places]
     .sort((a, b) => a.no - b.no)
     .map((p) => {
-      const span = whenSpan(p.when);
+      const span = whenSpan(p.when),
+        milestone = !!p.when?.point;
       return {
         no: p.no,
         was: fullWasText(p),
         vorher: p.kinds.includes("textChanged") && p.oldName && p.oldName !== p.name ? p.oldName : "",
         art: p.kinds.map(kindText).join(", "),
         um: umDays(p),
-        von: span && { day: span.from, time: span.time },
-        bis: span && { day: span.to, time: span.time },
+        von: span && { day: span.from, time: !milestone },
+        // whenSpan gives the last day covered for whole days; the end is the next midnight.
+        bis: span && { day: milestone || span.time ? span.to : span.to + 1, time: !milestone },
         kmVon: p.where && Math.min(p.where.from, p.where.to),
         kmBis: p.where && Math.max(p.where.from, p.where.to),
         x: oneDecimal(p.box.x0 - dx),
@@ -117,8 +123,8 @@ function rowCells(r: ChangeRow): Cell[] {
     num(r.um, "+0.00"),
     moment(r.von),
     moment(r.bis),
-    num(metres(r.kmVon), "0.0"),
-    num(metres(r.kmBis), "0.0"),
+    num(metres(r.kmVon), "0.000"),
+    num(metres(r.kmBis), "0.000"),
     num(r.x, "0.0"),
     num(r.y, "0.0"),
     r.hidden ? "ja" : null,
