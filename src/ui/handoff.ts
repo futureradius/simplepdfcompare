@@ -31,5 +31,12 @@ export class ComparisonHandoff {
   /** Forgets the result, because the Plans or what was opened changed. Tells no one. */
   clear(): void {
     this.last = undefined;
+    this.pairNo++;
   }
+
+  /** Which pair of Plans the results are for: changes with each `clear`. Hidden Places are kept per pair. */
+  get pair(): number {
+    return this.pairNo;
+  }
+  private pairNo = 0;
 }
