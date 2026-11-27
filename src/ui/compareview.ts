@@ -29,8 +29,9 @@ import {
   type Shown,
   type ViewSettings,
 } from "./compareframe";
-import { Layers, MARK_COLOURS, paintMark, paintMarks, paintNotCompared, paintNotComparedLabels, paintRings, pill, REMOVED_INK, type PaintMark, type Viewport } from "./comparepaint";
+import { Layers, MARK_COLOURS, paintMark, paintMarks, paintNotCompared, paintNotComparedLabels, paintOutline, paintRings, pill, REMOVED_INK, type PaintMark, type PaintOutline, type Viewport } from "./comparepaint";
 import { Minimap, minimapShapes, type MinimapElements } from "./minimap";
+import { boxOutline, OUTLINE_MARGIN_MM, outlineGroups, outlineOf, type OutlineGroup } from "./outlines";
 import type { Role, Sides } from "./openplans";
 import { PX_PER_MM_100 } from "./planview";
 
@@ -87,6 +88,15 @@ const MAX_RENDER_PIXELS = 12_000_000;
 /** Sharp layers kept per Plan (ADR 0004). */
 const KEEP_LAYERS = 2;
 const BACKGROUND = "#e9e9ec";
+/**
+ * Making the outlines (one per Place and colour): as many as fit in this while the busy
+ * window is up, the rest in slices between frames, and a frame makes the ones it needs
+ * within its budget (from its start), ms.
+ */
+const OUTLINE_SHOW_MS = 250;
+const OUTLINE_SLICE_MS = 8;
+const OUTLINE_PAUSE_MS = 16;
+const OUTLINE_FRAME_MS = 6;
 const ROLES: Role[] = ["old", "new"];
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
@@ -122,6 +132,12 @@ export class CompareView {
   private placeOf = new Map<number, number>();
   private spots: PlaceSpot[] = [];
   private shown: Shown = {};
+  /** Per Place and colour, of the shown marks; their outlines are made once, by key. */
+  private groups: OutlineGroup[] = [];
+  private outlines = new Map<string, PaintOutline>();
+  /** Rough outlines (the box around the marks) for groups whose outline is not made yet. */
+  private roughOutlines = new Map<string, PaintOutline>();
+  private outlineIdle: ReturnType<typeof setTimeout> | undefined;
   private settings: ViewSettings = { ...DEFAULT_SETTINGS };
   private peek: Role | null = null;
   private space = false;
@@ -138,10 +154,14 @@ export class CompareView {
   private moving = false;
   private frameId = 0;
   private generation = 0;
+  /** How long making the outlines took when shown (for measuring). */
+  private outlineMs = 0;
+  /** The last frame drew a rough outline. */
+  private outlinesMissing = false;
   /** Sharp layers that arrived (for measuring). */
   private sharpRenders = 0;
   /** What the last frame drew, for the tests. */
-  drawn: { notCompared: NotCompared[]; marks: number; rings: number; ms: number } = { notCompared: [], marks: 0, rings: 0, ms: 0 };
+  drawn: { notCompared: NotCompared[]; marks: number; outlines: number; rings: number; ms: number } = { notCompared: [], marks: 0, outlines: 0, rings: 0, ms: 0 };
 
   constructor(
     private readonly el: CompareViewElements,
@@ -205,11 +225,18 @@ export class CompareView {
     this.zones = notCompared(result.setup, result.comparison.window, this.pages);
     this.marks = result.comparison.marks.map((m, i) => paintMark(i, m));
     this.placeOf = new Map(result.places.flatMap((p) => p.marks.map((i) => [i, p.no] as const)));
+    this.outlines.clear();
+    this.roughOutlines.clear();
     const sameFrame = Math.abs(before.x0 - this.frame.x0) + Math.abs(before.y0 - this.frame.y0) + Math.abs(before.x1 - this.frame.x1) + Math.abs(before.y1 - this.frame.y1) < 0.01;
     this.measure();
     if (!sameFrame) this.fitFrame();
     this.updateMinimapPicture();
     this.updateSpots();
+    // The outlines, once: what fits while the busy window is still up, the rest when idle.
+    const t = performance.now();
+    this.makeOutlines(t + OUTLINE_SHOW_MS);
+    this.outlineMs = performance.now() - t;
+    this.scheduleOutlines();
     this.viewUpdated();
   }
 
@@ -229,6 +256,7 @@ export class CompareView {
   setShown(shown: Shown): void {
     this.shown = shown;
     this.updateSpots();
+    this.scheduleOutlines();
     this.requestDraw();
   }
 
@@ -302,6 +330,9 @@ export class CompareView {
       peek: this.peek,
       layers: this.pictures ? { old: this.pictures.old.layers.length, new: this.pictures.new.layers.length } : null,
       sharpRenders: this.sharpRenders,
+      outlineMs: this.outlineMs,
+      outlinesMade: this.outlines.size,
+      outlineGroups: this.groups.length,
       drawn: { ...this.drawn, notCompared: this.drawn.notCompared.map((z) => ({ plan: z.plan, kind: z.kind, label: z.label })) },
     };
   }
@@ -433,6 +464,7 @@ export class CompareView {
   private updateSpots(): void {
     if (!this.result) return;
     this.spots = placeSpots(this.result.places, this.result.comparison.marks, this.shown);
+    this.groups = outlineGroups(this.result.places, this.result.comparison.marks, (i) => this.isShown(i));
     const spots = this.spots,
       marks = this.marks;
     const byNo = new Map(this.result.places.map((p) => [p.no, p] as const));
@@ -460,6 +492,51 @@ export class CompareView {
         ctx.restore();
       }
     });
+  }
+
+  /**
+   * A group's outline, made the first time it is needed (and again when its shown marks
+   * change). Past `until` (performance.now) it is not made now: the rough one stands in.
+   */
+  private outlineOf(g: OutlineGroup, until = Infinity): PaintOutline {
+    let o = this.outlines.get(g.key);
+    if (o) return o;
+    if (performance.now() < until) {
+      o = paintOutline(g.kind, outlineOf(g.marks.map((i) => this.marks[i]!.mark)));
+      this.outlines.set(g.key, o);
+      return o;
+    }
+    this.outlinesMissing = true;
+    o = this.roughOutlines.get(g.key);
+    if (!o) {
+      o = paintOutline(g.kind, boxOutline(g.box));
+      this.roughOutlines.set(g.key, o);
+    }
+    return o;
+  }
+
+  /** Makes the outlines not made yet until `until`; true when all are made. */
+  private makeOutlines(until: number): boolean {
+    for (const g of this.groups) {
+      if (this.outlines.has(g.key)) continue;
+      if (performance.now() >= until) return false;
+      this.outlineOf(g);
+    }
+    return true;
+  }
+
+  /** Makes the missing outlines in short slices between frames, then draws once. */
+  private scheduleOutlines(): void {
+    if (this.outlineIdle !== undefined) clearTimeout(this.outlineIdle);
+    const gen = this.generation;
+    const slice = () => {
+      this.outlineIdle = undefined;
+      if (gen !== this.generation) return;
+      if (this.makeOutlines(performance.now() + OUTLINE_SLICE_MS)) {
+        if (this.outlinesMissing) this.requestDraw();
+      } else this.outlineIdle = setTimeout(slice, OUTLINE_PAUSE_MS);
+    };
+    this.outlineIdle = setTimeout(slice, OUTLINE_PAUSE_MS);
   }
 
   /** The minimap shows the frame with the Plan under the marks (both: the Old Plan). */
@@ -652,6 +729,7 @@ export class CompareView {
     const zones = this.zones.filter((z) => roles.includes(z.plan));
     paintNotCompared(ctx, zones, vp);
     let drawnMarks = 0,
+      drawnOutlines = 0,
       drawnRings = 0;
     if (marksOn) {
       const met = markMetrics(this.settings, vp.s, vp.dpr);
@@ -659,8 +737,16 @@ export class CompareView {
       const v = this.visible();
       const view = { x0: v.x0 - pad, y0: v.y0 - pad, x1: v.x1 + pad, y1: v.y1 + pad };
       const vis = this.marks.filter((pm) => touches(pm.mark.box, view) && this.isShown(pm.index));
+      const m = OUTLINE_MARGIN_MM,
+        around = { x0: view.x0 - m, y0: view.y0 - m, x1: view.x1 + m, y1: view.y1 + m };
+      // Outlines not made yet: made now within the frame's budget, else rough until the next frame.
+      this.outlinesMissing = false;
+      const until = t0 + OUTLINE_FRAME_MS;
+      const outs = met.outlineMm > 0 || this.settings.removed === "xxx" ? this.groups.filter((g) => touches(g.box, around)).map((g) => this.outlineOf(g, until)) : [];
+      if (this.outlinesMissing) this.requestDraw();
       drawnMarks = vis.length;
-      paintMarks(ctx, this.layers, vis, vp, met, this.settings, (role) => this.drawPlan(ctx, role, vp));
+      drawnOutlines = outs.length;
+      paintMarks(ctx, this.layers, vis, outs, vp, met, this.settings, (role) => this.drawPlan(ctx, role, vp));
       if (this.settings.rings) {
         const rs = rings(this.spots, this.zoom, v);
         drawnRings = rs.length;
@@ -676,7 +762,7 @@ export class CompareView {
       pill(ctx, this.cssW / 2 - (ctx.measureText(text).width + 16) / 2, 12, text);
       ctx.restore();
     }
-    this.drawn = { notCompared: zones, marks: drawnMarks, rings: drawnRings, ms: performance.now() - t0 };
+    this.drawn = { notCompared: zones, marks: drawnMarks, outlines: drawnOutlines, rings: drawnRings, ms: performance.now() - t0 };
   }
 }
 

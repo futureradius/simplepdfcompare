@@ -2,7 +2,9 @@
 // ADR 0004): the object itself, Added red, Removed yellow, grey where a Removed and an Added
 // mark cover the same place (the Unchanged part), an outline that keeps its width on screen,
 // Removed outlined with the dashed x–x–x line (or a soft yellow outline), changed words as
-// their own ink tinted, and the not-compared parts dimmed and the Overhang hatched.
+// their own ink tinted, and the not-compared parts dimmed and the Overhang hatched. The
+// halo and the x–x–x go once around each Place's marks of one colour (outlines.ts); the
+// marks themselves are filled one by one.
 //
 // Ported from the comparison-view prototype (prototypes/comparison/common.mjs: paintCompare,
 // drawOverlay) with the research branch's vector frame (proto-bench.mjs: vectorFrame) in
@@ -11,6 +13,7 @@
 import type { Mark } from "../compare/compare";
 import type { Box } from "../compare/objects";
 import { RING_RADIUS_PX, type MarkMetrics, type NotCompared, type Ring, type ViewSettings } from "./compareframe";
+import { OUTLINE_MARGIN_MM, type Outline } from "./outlines";
 
 export const MARK_COLOURS = { Added: "#dc2a1e", Removed: "#f0be00", Unchanged: "#4a4a4a" } as const;
 /** The x–x–x line and the Removed ring: the yellow, darker, so that it reads on white. */
@@ -33,44 +36,65 @@ export interface PaintMark {
   index: number;
   mark: Mark;
   path: Path2D;
-  /** Its outline as point lists, for the crosses of the x–x–x line. */
-  subpaths: number[][];
   closed: boolean;
 }
 
 export function paintMark(index: number, m: Mark): PaintMark {
   const path = new Path2D(),
-    k = m.coords,
-    subpaths: number[][] = [];
+    k = m.coords;
   if (m.shape === "word") {
     const b = m.box;
     path.rect(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0);
-    subpaths.push([b.x0, b.y0, b.x1, b.y0, b.x1, b.y1, b.x0, b.y1, b.x0, b.y0]);
   } else if (m.shape === "line") {
     for (let q = 0; q + 3 < k.length; q += 4) {
       path.moveTo(k[q]!, k[q + 1]!);
       path.lineTo(k[q + 2]!, k[q + 3]!);
-      subpaths.push([k[q]!, k[q + 1]!, k[q + 2]!, k[q + 3]!]);
     }
   } else {
-    let cur: number[] = [];
-    const close = () => {
-      if (cur.length) subpaths.push([...cur, cur[0]!, cur[1]!]);
-      cur = [];
-    };
+    let open = false;
     for (let q = 0; q + 1 < k.length; q += 2) {
       if (Number.isNaN(k[q]!)) {
         path.closePath();
-        close();
+        open = false;
       } else {
-        if (!cur.length) path.moveTo(k[q]!, k[q + 1]!);
+        if (!open) path.moveTo(k[q]!, k[q + 1]!);
         else path.lineTo(k[q]!, k[q + 1]!);
-        cur.push(k[q]!, k[q + 1]!);
+        open = true;
       }
     }
-    close();
   }
-  return { index, mark: m, path, subpaths, closed: m.shape !== "line" };
+  return { index, mark: m, path, closed: m.shape !== "line" };
+}
+
+/** One Place's outline of one colour, ready to draw: its paths in Old frame mm, made once. */
+export interface PaintOutline {
+  kind: Mark["kind"];
+  /** Of its outer contours. */
+  box: Box;
+  /** The outer contours. */
+  around: Path2D;
+  /** The outer contours and the holes: the shape the halo fills. */
+  shape: Path2D;
+  /** The outer contours as point lists, closed (the first point again at the end), for the crosses. */
+  subpaths: number[][];
+}
+
+export function paintOutline(kind: Mark["kind"], o: Outline): PaintOutline {
+  const around = new Path2D(),
+    shape = new Path2D(),
+    subpaths: number[][] = [];
+  const add = (path: Path2D, c: readonly number[]) => {
+    path.moveTo(c[0]!, c[1]!);
+    for (let i = 2; i < c.length; i += 2) path.lineTo(c[i]!, c[i + 1]!);
+    path.closePath();
+  };
+  for (const c of o.outer) {
+    add(around, c);
+    add(shape, c);
+    subpaths.push([...c, c[0]!, c[1]!]);
+  }
+  for (const c of o.holes) add(shape, c);
+  return { kind, box: o.box, around, shape, subpaths };
 }
 
 /** Three scratch layers the size of the view, kept between frames. */
@@ -105,51 +129,71 @@ const toMm = (l: CanvasRenderingContext2D, v: Viewport) => l.setTransform(v.s, 0
 /** Of a line, the width it is drawn at. */
 const lineWidthOf = (pm: PaintMark, met: MarkMetrics) => Math.max(pm.mark.lineWidth, met.minLineMm);
 
-/** Draws the objects of one kind onto a layer, full colour: the halos (`grow` mm wider) or the marks. */
-function drawObjects(l: CanvasRenderingContext2D, marks: readonly PaintMark[], kind: Mark["kind"], v: Viewport, met: MarkMetrics, grow: number): void {
+/** Draws the objects of one kind onto a layer, full colour. */
+function drawObjects(l: CanvasRenderingContext2D, marks: readonly PaintMark[], kind: Mark["kind"], v: Viewport, met: MarkMetrics): void {
   toMm(l, v);
   l.fillStyle = l.strokeStyle = MARK_COLOURS[kind];
   l.lineCap = "round";
   l.lineJoin = "round";
   for (const pm of marks) {
     if (pm.mark.kind !== kind) continue;
-    if (pm.mark.shape === "word") {
-      if (!grow) continue; // the word itself is its tinted ink, see drawWords
-      const b = pm.mark.box;
-      l.fillRect(b.x0 - grow, b.y0 - grow, b.x1 - b.x0 + 2 * grow, b.y1 - b.y0 + 2 * grow);
-    } else if (pm.mark.shape === "line") {
-      l.lineWidth = lineWidthOf(pm, met) + 2 * grow;
+    if (pm.mark.shape === "word") continue; // the word itself is its tinted ink, see drawWords
+    if (pm.mark.shape === "line") {
+      l.lineWidth = lineWidthOf(pm, met);
       l.stroke(pm.path);
-    } else if (grow) {
-      l.lineWidth = 2 * grow;
-      l.stroke(pm.path);
-      l.fill(pm.path, "evenodd");
     } else l.fill(pm.path, "evenodd");
   }
 }
 
+/**
+ * The halos of one kind onto a layer, full colour: each outline's shape, grown further so
+ * that it reaches `outlineMm` beyond the marks once the margin it already has is used up.
+ */
+function drawHalos(l: CanvasRenderingContext2D, outlines: readonly PaintOutline[], kind: Mark["kind"], v: Viewport, met: MarkMetrics): void {
+  toMm(l, v);
+  l.fillStyle = l.strokeStyle = MARK_COLOURS[kind];
+  l.lineJoin = "round";
+  const grow = met.outlineMm - OUTLINE_MARGIN_MM;
+  for (const o of outlines) {
+    if (o.kind !== kind) continue;
+    l.fill(o.shape, "evenodd");
+    if (grow > 0) {
+      l.lineWidth = 2 * grow;
+      l.stroke(o.shape);
+    }
+  }
+}
+
 /** Halos and marks of both kinds, and the Unchanged part grey where they overlap. */
-function drawShapes(ctx: CanvasRenderingContext2D, layers: Layers, marks: readonly PaintMark[], v: Viewport, met: MarkMetrics, settings: ViewSettings): void {
+function drawShapes(
+  ctx: CanvasRenderingContext2D,
+  layers: Layers,
+  marks: readonly PaintMark[],
+  outlines: readonly PaintOutline[],
+  v: Viewport,
+  met: MarkMetrics,
+  settings: ViewSettings,
+): void {
   const { a: rem, b: add, c: both } = layers;
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   if (met.outlineMm > 0) {
     // Halos: one layer per kind at full colour, laid on at 30 %, so overlaps do not darken.
     clear(add);
-    drawObjects(add, marks, "Added", v, met, met.outlineMm);
+    drawHalos(add, outlines, "Added", v, met);
     ctx.globalAlpha = 0.3;
     ctx.drawImage(add.canvas, 0, 0);
     if (settings.removed === "soft") {
       clear(rem);
-      drawObjects(rem, marks, "Removed", v, met, met.outlineMm);
+      drawHalos(rem, outlines, "Removed", v, met);
       ctx.drawImage(rem.canvas, 0, 0);
     }
     ctx.globalAlpha = 1;
   }
   clear(rem);
   clear(add);
-  drawObjects(rem, marks, "Removed", v, met, 0);
-  drawObjects(add, marks, "Added", v, met, 0);
+  drawObjects(rem, marks, "Removed", v, met);
+  drawObjects(add, marks, "Added", v, met);
   ctx.drawImage(rem.canvas, 0, 0);
   ctx.drawImage(add.canvas, 0, 0);
   // Where both are drawn: the Unchanged part.
@@ -198,8 +242,14 @@ function drawWords(ctx: CanvasRenderingContext2D, marks: readonly PaintMark[], v
   }
 }
 
-/** Removed as x–x–x: a dashed line around each Removed object, with × in the gaps. */
-function drawXxx(ctx: CanvasRenderingContext2D, layers: Layers, marks: readonly PaintMark[], v: Viewport, met: MarkMetrics): void {
+/**
+ * Removed as x–x–x: a dashed line once around each Place's Removed marks (its outline), with
+ * × in the gaps. The line keeps its distance from the marks on screen: when zoomed out it
+ * lies further out than the outline's margin. All the lines go on first and the insides come
+ * out after, so where two outlines come close their lines join and none runs inside another
+ * Removed shape.
+ */
+function drawXxx(ctx: CanvasRenderingContext2D, layers: Layers, outlines: readonly PaintOutline[], v: Viewport, met: MarkMetrics): void {
   const ring = layers.c;
   clear(ring);
   toMm(ring, v);
@@ -207,24 +257,26 @@ function drawXxx(ctx: CanvasRenderingContext2D, layers: Layers, marks: readonly 
   ring.lineJoin = "round";
   ring.strokeStyle = REMOVED_INK;
   const { distanceMm: D, lineMm: t, dashMm: dash, gapMm: gap } = met.xxx;
-  const removed = marks.filter((pm) => pm.mark.kind === "Removed");
-  for (const pm of removed) {
-    const lw = pm.closed ? 0 : lineWidthOf(pm, met);
-    ring.globalCompositeOperation = "source-over";
-    ring.setLineDash([dash, gap]);
-    ring.lineWidth = lw + 2 * D + t;
-    ring.stroke(pm.path);
-    ring.globalCompositeOperation = "destination-out";
-    ring.setLineDash([]);
-    ring.lineWidth = lw + 2 * D - t;
-    ring.stroke(pm.path);
-    if (pm.closed) ring.fill(pm.path);
-  }
+  // From the outline to the middle of the dashed line.
+  const off = Math.max(D - OUTLINE_MARGIN_MM, t / 2);
+  const removed = outlines.filter((o) => o.kind === "Removed");
+  ring.setLineDash([dash, gap]);
+  ring.lineWidth = 2 * off + t;
+  for (const o of removed) ring.stroke(o.around);
+  ring.globalCompositeOperation = "destination-out";
   ring.setLineDash([]);
+  const inner = 2 * off - t;
+  for (const o of removed) {
+    if (inner > 0) {
+      ring.lineWidth = inner;
+      ring.stroke(o.around);
+    }
+    ring.fill(o.around);
+  }
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.drawImage(ring.canvas, 0, 0);
-  // × in the middle of each gap, on both sides of the object (outside a closed shape only).
+  // × in the middle of each gap, outside the outline.
   ctx.strokeStyle = REMOVED_INK;
   ctx.lineWidth = met.xxx.linePx;
   ctx.lineCap = "round";
@@ -232,10 +284,8 @@ function drawXxx(ctx: CanvasRenderingContext2D, layers: Layers, marks: readonly 
     pad = 2 * k;
   ctx.beginPath();
   toMm(ring, v); // isPointInPath below works in device px through this transform
-  for (const pm of removed) {
-    const lw = pm.closed ? 0 : lineWidthOf(pm, met),
-      off = lw / 2 + D;
-    for (const sp of pm.subpaths) {
+  for (const o of removed) {
+    for (const sp of o.subpaths) {
       let walked = 0,
         next = dash + gap / 2;
       for (let i = 0; i + 3 < sp.length; i += 2) {
@@ -255,7 +305,7 @@ function drawXxx(ctx: CanvasRenderingContext2D, layers: Layers, marks: readonly 
             const X = (x + sg * nx * off - v.x0) * v.s,
               Y = (y + sg * ny * off - v.y0) * v.s;
             if (X < -pad || Y < -pad || X > v.w + pad || Y > v.h + pad) continue;
-            if (pm.closed && ring.isPointInPath(pm.path, X, Y)) continue;
+            if (ring.isPointInPath(o.around, X, Y)) continue;
             ctx.moveTo(X - k, Y - k);
             ctx.lineTo(X + k, Y + k);
             ctx.moveTo(X - k, Y + k);
@@ -271,11 +321,15 @@ function drawXxx(ctx: CanvasRenderingContext2D, layers: Layers, marks: readonly 
   ctx.restore();
 }
 
-/** The marks of the view: `marks` are those in view, `drawPlan` draws a Plan's pictures onto ctx. */
+/**
+ * The marks of the view: `marks` and `outlines` are those in view (the outlines carry the
+ * halos and the x–x–x), `drawPlan` draws a Plan's pictures onto ctx.
+ */
 export function paintMarks(
   ctx: CanvasRenderingContext2D,
   layers: Layers,
   marks: readonly PaintMark[],
+  outlines: readonly PaintOutline[],
   v: Viewport,
   met: MarkMetrics,
   settings: ViewSettings,
@@ -283,9 +337,9 @@ export function paintMarks(
 ): void {
   if (!marks.length) return;
   layers.size(v.w, v.h);
-  drawShapes(ctx, layers, marks, v, met, settings);
+  drawShapes(ctx, layers, marks, outlines, v, met, settings);
   drawWords(ctx, marks, v, drawPlan);
-  if (settings.removed === "xxx") drawXxx(ctx, layers, marks, v, met);
+  if (settings.removed === "xxx") drawXxx(ctx, layers, outlines, v, met);
 }
 
 let hatchTile: HTMLCanvasElement | undefined;

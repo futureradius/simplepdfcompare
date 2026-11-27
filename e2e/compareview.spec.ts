@@ -49,7 +49,7 @@ interface Inspected {
   frame: { x0: number; y0: number; x1: number; y1: number };
   cssW: number;
   peek: "old" | "new" | null;
-  drawn: { notCompared: { plan: string; kind: string; label: string }[]; marks: number; rings: number };
+  drawn: { notCompared: { plan: string; kind: string; label: string }[]; marks: number; outlines: number; rings: number };
 }
 const inspect = (page: Page) => page.evaluate(() => (window as any).__spcCompare.inspect()) as Promise<Inspected>;
 const settle = (page: Page) => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
@@ -118,6 +118,42 @@ test("the view shows the marks on the faded New Plan, and keys 1 2 3 F zoom", as
   await page.keyboard.press("f");
   s = await inspect(page);
   expect(s.visible.y1 - s.visible.y0).toBeGreaterThanOrEqual(s.frame.y1 - s.frame.y0 - 1);
+  expect(errors).toEqual([]);
+});
+
+test("the x–x–x goes once around a Place's Removed marks: none inside a removed hatch", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await compared(page, "activities");
+  await page.keyboard.press("1");
+  await settle(page);
+  let s = await inspect(page);
+  // One outline per Place and colour: fewer than the marks (a label's words, a hatch and its border).
+  expect(s.drawn.outlines).toBeGreaterThan(0);
+  expect(s.drawn.outlines).toBeLessThan(s.drawn.marks);
+  // Made once each, the rest soon after the view is shown.
+  await expect.poll(async () => { const t = (await inspect(page)) as any; return t.outlinesMade === t.outlineGroups && t.outlineGroups > 0; }).toBe(true);
+  // A9: a hatched stripe removed, x 549.7 to 569.7 mm, y 407.7 to 504.3 mm, its label beside it.
+  await page.keyboard.press("3");
+  const zoom = (await inspect(page)).zoom;
+  await page.evaluate(([x, y, z]) => (window as any).__spcCompare.setView(x, y, z), [559.7, 456, zoom]);
+  await settle(page);
+  s = await inspect(page);
+  const rect = (x0: number, y0: number, x1: number, y1: number) => ({ x: (x0 - s.visible.x0) * s.zoom, y: (y0 - s.visible.y0) * s.zoom, w: (x1 - x0) * s.zoom, h: (y1 - y0) * s.zoom });
+  /** The x–x–x's dark yellow, not the mark's own yellow. */
+  const ink = (part: { x: number; y: number; w: number; h: number }) =>
+    page.evaluate((part) => {
+      const c = document.getElementById("compare-canvas") as HTMLCanvasElement;
+      const d = devicePixelRatio;
+      const px = c.getContext("2d")!.getImageData(Math.round(part.x * d), Math.round(part.y * d), Math.round(part.w * d), Math.round(part.h * d)).data;
+      let n = 0;
+      for (let i = 0; i < px.length; i += 4) if (px[i]! > 140 && px[i]! < 215 && px[i + 1]! > 95 && px[i + 1]! < 170 && px[i + 2]! < 60) n++;
+      return n;
+    }, part);
+  // Inside the stripe: no x–x–x (it used to run along the inner side of the border line).
+  expect(await ink(rect(553, 412, 566, 500))).toBe(0);
+  // Left of the stripe: the x–x–x.
+  expect(await ink(rect(540, 412, 549, 500))).toBeGreaterThan(50);
   expect(errors).toEqual([]);
 });
 
