@@ -257,7 +257,10 @@ test("Vergleichen with an Ausgenommen box over a planted change leaves that Diff
   await page.mouse.up();
   await page.keyboard.up("Alt");
   // ... and stretch it over the whole length (the ⇕ bubble).
-  const full = (await spc<{ name: string; x: number; y: number }[]>(page, "bubbles", "old")).find((x) => x.name === "Über die ganze Länge")!;
+  // The bubbles come with the next frame.
+  const bubble = async () => (await spc<{ name: string; x: number; y: number }[]>(page, "bubbles", "old")).find((x) => x.name === "Über die ganze Länge");
+  await expect.poll(bubble).toBeTruthy();
+  const full = (await bubble())!;
   await page.mouse.click(full.x, full.y);
   await page.locator('#body-old [data-action="next"]').click();
   await page.locator('#body-new [data-action="next"]').click();

@@ -13,7 +13,7 @@
 import type { Mark } from "../compare/compare";
 import type { Box } from "../compare/objects";
 import { RING_RADIUS_PX, type MarkMetrics, type NotCompared, type Ring, type ViewSettings } from "./compareframe";
-import { OUTLINE_MARGIN_MM, type Outline } from "./outlines";
+import { crossesAlong, OUTLINE_MARGIN_MM, simplifiedOutline, xxxOffsetMm, type Outline } from "./outlines";
 
 export const MARK_COLOURS = { Added: "#dc2a1e", Removed: "#f0be00", Unchanged: "#4a4a4a" } as const;
 /** The x–x–x line and the Removed ring: the yellow, darker, so that it reads on white. */
@@ -66,11 +66,17 @@ export function paintMark(index: number, m: Mark): PaintMark {
   return { index, mark: m, path, closed: m.shape !== "line" };
 }
 
-/** One Place's outline of one colour, ready to draw: its paths in Old frame mm, made once. */
+/** One Place's outline of one colour, ready to draw: its paths in Old frame mm, made once per level of detail. */
 export interface PaintOutline {
   kind: Mark["kind"];
   /** Of its outer contours. */
   box: Box;
+  outline: Outline;
+  /** By the simplification (mm) they were made with; 0: as traced. */
+  levels: Map<number, OutlinePaths | null>;
+}
+
+export interface OutlinePaths {
   /** The outer contours. */
   around: Path2D;
   /** The outer contours and the holes: the shape the halo fills. */
@@ -80,21 +86,39 @@ export interface PaintOutline {
 }
 
 export function paintOutline(kind: Mark["kind"], o: Outline): PaintOutline {
-  const around = new Path2D(),
-    shape = new Path2D(),
-    subpaths: number[][] = [];
-  const add = (path: Path2D, c: readonly number[]) => {
-    path.moveTo(c[0]!, c[1]!);
-    for (let i = 2; i < c.length; i += 2) path.lineTo(c[i]!, c[i + 1]!);
-    path.closePath();
-  };
-  for (const c of o.outer) {
-    add(around, c);
-    add(shape, c);
-    subpaths.push([...c, c[0]!, c[1]!]);
+  return { kind, box: o.box, outline: o, levels: new Map() };
+}
+
+/** The simplifications kept, mm: a frame draws the coarsest within half a device px. */
+const LEVELS_MM = [0.1, 0.3, 1, 3, 10, 30, 100];
+const LEVEL_PX = 0.5;
+
+/** The outline's paths for `s` device px per mm, or null when it is too small to draw at all. */
+export function outlinePaths(o: PaintOutline, s: number): OutlinePaths | null {
+  let level = 0;
+  for (const l of LEVELS_MM) if (l * s <= LEVEL_PX) level = l;
+  if (o.levels.has(level)) return o.levels.get(level)!;
+  const ol = level ? simplifiedOutline(o.outline, level) : o.outline;
+  let paths: OutlinePaths | null = null;
+  if (ol.outer.length) {
+    const around = new Path2D(),
+      shape = new Path2D(),
+      subpaths: number[][] = [];
+    const add = (path: Path2D, c: readonly number[]) => {
+      path.moveTo(c[0]!, c[1]!);
+      for (let i = 2; i < c.length; i += 2) path.lineTo(c[i]!, c[i + 1]!);
+      path.closePath();
+    };
+    for (const c of ol.outer) {
+      add(around, c);
+      add(shape, c);
+      subpaths.push([...c, c[0]!, c[1]!]);
+    }
+    for (const c of ol.holes) add(shape, c);
+    paths = { around, shape, subpaths };
   }
-  for (const c of o.holes) add(shape, c);
-  return { kind, box: o.box, around, shape, subpaths };
+  o.levels.set(level, paths);
+  return paths;
 }
 
 /** Three scratch layers the size of the view, kept between frames. */
@@ -156,10 +180,12 @@ function drawHalos(l: CanvasRenderingContext2D, outlines: readonly PaintOutline[
   const grow = met.outlineMm - OUTLINE_MARGIN_MM;
   for (const o of outlines) {
     if (o.kind !== kind) continue;
-    l.fill(o.shape, "evenodd");
+    const p = outlinePaths(o, v.s);
+    if (!p) continue;
+    l.fill(p.shape, "evenodd");
     if (grow > 0) {
       l.lineWidth = 2 * grow;
-      l.stroke(o.shape);
+      l.stroke(p.shape);
     }
   }
 }
@@ -256,68 +282,63 @@ function drawXxx(ctx: CanvasRenderingContext2D, layers: Layers, outlines: readon
   ring.lineCap = "butt";
   ring.lineJoin = "round";
   ring.strokeStyle = REMOVED_INK;
-  const { distanceMm: D, lineMm: t, dashMm: dash, gapMm: gap } = met.xxx;
+  const { lineMm: t, dashMm: dash, gapMm: gap } = met.xxx;
   // From the outline to the middle of the dashed line.
-  const off = Math.max(D - OUTLINE_MARGIN_MM, t / 2);
-  const removed = outlines.filter((o) => o.kind === "Removed");
+  const off = xxxOffsetMm(met.xxx, v.s);
+  const removed: OutlinePaths[] = [];
+  for (const o of outlines) {
+    if (o.kind !== "Removed") continue;
+    const p = outlinePaths(o, v.s);
+    if (p) removed.push(p);
+  }
+  if (!removed.length) return;
   ring.setLineDash([dash, gap]);
   ring.lineWidth = 2 * off + t;
-  for (const o of removed) ring.stroke(o.around);
+  for (const p of removed) ring.stroke(p.around);
   ring.globalCompositeOperation = "destination-out";
   ring.setLineDash([]);
   const inner = 2 * off - t;
-  for (const o of removed) {
+  for (const p of removed) {
     if (inner > 0) {
       ring.lineWidth = inner;
-      ring.stroke(o.around);
+      ring.stroke(p.around);
     }
-    ring.fill(o.around);
+    ring.fill(p.around);
   }
-  ctx.save();
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.drawImage(ring.canvas, 0, 0);
-  // × in the middle of each gap, outside the outline.
-  ctx.strokeStyle = REMOVED_INK;
-  ctx.lineWidth = met.xxx.linePx;
-  ctx.lineCap = "round";
+  // × in the middle of each gap, on the outer side, then the insides out again: no × inside
+  // another Removed shape.
+  ring.globalCompositeOperation = "source-over";
+  ring.setTransform(1, 0, 0, 1, 0, 0);
+  ring.lineWidth = met.xxx.linePx;
+  ring.lineCap = "round";
   const k = met.xxx.crossHalfPx,
-    pad = 2 * k;
-  ctx.beginPath();
-  toMm(ring, v); // isPointInPath below works in device px through this transform
-  for (const o of removed) {
-    for (const sp of o.subpaths) {
-      let walked = 0,
-        next = dash + gap / 2;
-      for (let i = 0; i + 3 < sp.length; i += 2) {
-        const ax = sp[i]!,
-          ay = sp[i + 1]!,
-          bx = sp[i + 2]!,
-          by = sp[i + 3]!,
-          len = Math.hypot(bx - ax, by - ay);
-        if (!len) continue;
-        const nx = -(by - ay) / len,
-          ny = (bx - ax) / len;
-        while (next <= walked + len) {
-          const u = (next - walked) / len,
-            x = ax + (bx - ax) * u,
-            y = ay + (by - ay) * u;
-          for (const sg of [1, -1]) {
-            const X = (x + sg * nx * off - v.x0) * v.s,
-              Y = (y + sg * ny * off - v.y0) * v.s;
-            if (X < -pad || Y < -pad || X > v.w + pad || Y > v.h + pad) continue;
-            if (ring.isPointInPath(o.around, X, Y)) continue;
-            ctx.moveTo(X - k, Y - k);
-            ctx.lineTo(X + k, Y + k);
-            ctx.moveTo(X - k, Y + k);
-            ctx.lineTo(X + k, Y - k);
-          }
-          next += dash + gap;
-        }
-        walked += len;
+    pad = (2 * k) / v.s;
+  const x0 = v.x0 - pad,
+    y0 = v.y0 - pad,
+    x1 = v.x0 + v.w / v.s + pad,
+    y1 = v.y0 + v.h / v.s + pad;
+  const onScreen = (x: number, y: number) => x >= x0 && x <= x1 && y >= y0 && y <= y1;
+  ring.beginPath();
+  for (const p of removed) {
+    for (const sp of p.subpaths) {
+      const xs = crossesAlong(sp, dash, gap, off, onScreen);
+      for (let i = 0; i < xs.length; i += 2) {
+        const X = (xs[i]! - v.x0) * v.s,
+          Y = (xs[i + 1]! - v.y0) * v.s;
+        ring.moveTo(X - k, Y - k);
+        ring.lineTo(X + k, Y + k);
+        ring.moveTo(X - k, Y + k);
+        ring.lineTo(X + k, Y - k);
       }
     }
   }
-  ctx.stroke();
+  ring.stroke();
+  ring.globalCompositeOperation = "destination-out";
+  toMm(ring, v);
+  for (const p of removed) ring.fill(p.around);
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.drawImage(ring.canvas, 0, 0);
   ctx.restore();
 }
 

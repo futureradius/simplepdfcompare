@@ -21,6 +21,7 @@ import {
   markMetrics,
   notCompared,
   placeSpots,
+  RING_BELOW_PX,
   rings,
   shiftOf,
   type NotCompared,
@@ -31,6 +32,7 @@ import {
 } from "./compareframe";
 import { Layers, MARK_COLOURS, paintMark, paintMarks, paintNotCompared, paintNotComparedLabels, paintOutline, paintRings, pill, REMOVED_INK, type PaintMark, type PaintOutline, type Viewport } from "./comparepaint";
 import { Minimap, minimapShapes, type MinimapElements } from "./minimap";
+import { levelFor, levelScale, MAX_TILED_S, metricScale, tilesFor, TILE_PX, type Tile } from "./marktiles";
 import { boxOutline, OUTLINE_MARGIN_MM, outlineGroups, outlineOf, type OutlineGroup } from "./outlines";
 import type { Role, Sides } from "./openplans";
 import { PX_PER_MM_100 } from "./planview";
@@ -97,6 +99,29 @@ const OUTLINE_SHOW_MS = 250;
 const OUTLINE_SLICE_MS = 8;
 const OUTLINE_PAUSE_MS = 16;
 const OUTLINE_FRAME_MS = 6;
+/** Mark tiles kept (4 MB each), the least recently drawn dropped first. */
+const MAX_TILES = 40;
+/** Levels with at most this many tiles for the whole frame are painted ahead, when idle. */
+const AHEAD_TILES = 3;
+const AHEAD_PAUSE_MS = 40;
+
+/**
+ * A canvas keeps what it is told to draw and rasterizes it only when its picture is used:
+ * the first frame to draw a tile painted ahead would pay for it. Reading a pixel makes it
+ * rasterize now, while idle (or inside the busy window).
+ */
+const rasterize = (t: MarkTile) => void t.canvas.getContext("2d")!.getImageData(0, 0, 1, 1);
+
+/** A cached picture of the marks in one tile of one level (marktiles.ts). */
+interface MarkTile {
+  canvas: HTMLCanvasElement;
+  /** Painted with rough outlines (not all made yet): painted again once they are. */
+  rough: boolean;
+  /** Its outlines are all made now: still drawn, and painted again when the view rests. */
+  stale?: boolean;
+  /** The frame that last drew it. */
+  used: number;
+}
 const ROLES: Role[] = ["old", "new"];
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
@@ -138,6 +163,13 @@ export class CompareView {
   /** Rough outlines (the box around the marks) for groups whose outline is not made yet. */
   private roughOutlines = new Map<string, PaintOutline>();
   private outlineIdle: ReturnType<typeof setTimeout> | undefined;
+  /** The marks zoomed out, by level and tile ("k:tx:ty"). Dropped when what they show changes. */
+  private tiles = new Map<string, MarkTile>();
+  private readonly tileLayers = new Layers();
+  private frameNo = 0;
+  /** What the last frame drew from the tiles, for the tests. */
+  private tileStats: { level: number; drawn: number; painted: number; standIn: number } | null = null;
+  private tilesIdle: ReturnType<typeof setTimeout> | undefined;
   private settings: ViewSettings = { ...DEFAULT_SETTINGS };
   private peek: Role | null = null;
   private space = false;
@@ -227,6 +259,7 @@ export class CompareView {
     this.placeOf = new Map(result.places.flatMap((p) => p.marks.map((i) => [i, p.no] as const)));
     this.outlines.clear();
     this.roughOutlines.clear();
+    this.tiles.clear();
     const sameFrame = Math.abs(before.x0 - this.frame.x0) + Math.abs(before.y0 - this.frame.y0) + Math.abs(before.x1 - this.frame.x1) + Math.abs(before.y1 - this.frame.y1) < 0.01;
     this.measure();
     if (!sameFrame) this.fitFrame();
@@ -236,6 +269,9 @@ export class CompareView {
     const t = performance.now();
     this.makeOutlines(t + OUTLINE_SHOW_MS);
     this.outlineMs = performance.now() - t;
+    // The marks' pictures for the view it opens with, also while the busy window is up.
+    this.paintVisibleTiles();
+    this.scheduleTiles();
     this.scheduleOutlines();
     this.viewUpdated();
   }
@@ -255,6 +291,8 @@ export class CompareView {
   /** Which Places and marks are shown (filter and hiding, a later slice). Nothing moves. */
   setShown(shown: Shown): void {
     this.shown = shown;
+    this.tiles.clear();
+    this.scheduleTiles();
     this.updateSpots();
     this.scheduleOutlines();
     this.requestDraw();
@@ -265,6 +303,11 @@ export class CompareView {
     const baseChanged = patch.base !== undefined && patch.base !== this.settings.base;
     this.settings = { ...this.settings, ...patch };
     if (baseChanged) this.updateMinimapPicture();
+    // The tiles hold the marks as the settings draw them; the Plan under them and its fade are not in them.
+    if (Object.keys(patch).some((k) => k !== "base" && k !== "fade")) {
+      this.tiles.clear();
+      this.scheduleTiles();
+    }
     this.requestDraw();
   }
 
@@ -332,6 +375,7 @@ export class CompareView {
       sharpRenders: this.sharpRenders,
       outlineMs: this.outlineMs,
       outlinesMade: this.outlines.size,
+      tiles: this.tileStats,
       outlineGroups: this.groups.length,
       drawn: { ...this.drawn, notCompared: this.drawn.notCompared.map((z) => ({ plan: z.plan, kind: z.kind, label: z.label })) },
     };
@@ -507,7 +551,12 @@ export class CompareView {
       return o;
     }
     this.outlinesMissing = true;
-    o = this.roughOutlines.get(g.key);
+    return this.roughOutline(g);
+  }
+
+  /** The box around a group's marks, rounded: for a group too small on screen to tell, or not made yet. */
+  private roughOutline(g: OutlineGroup): PaintOutline {
+    let o = this.outlines.get(g.key) ?? this.roughOutlines.get(g.key);
     if (!o) {
       o = paintOutline(g.kind, boxOutline(g.box));
       this.roughOutlines.set(g.key, o);
@@ -532,8 +581,21 @@ export class CompareView {
     const slice = () => {
       this.outlineIdle = undefined;
       if (gen !== this.generation) return;
+      // Not while the view moves: the frames come first.
+      if (this.moving) {
+        this.outlineIdle = setTimeout(slice, MOVING_MS);
+        return;
+      }
       if (this.makeOutlines(performance.now() + OUTLINE_SLICE_MS)) {
-        if (this.outlinesMissing) this.requestDraw();
+        // All made: tiles painted with rough outlines are painted again, at rest.
+        let rough = false;
+        for (const t of this.tiles.values()) {
+          if (!t.rough) continue;
+          t.stale = true;
+          rough = true;
+        }
+        if (this.outlinesMissing || rough) this.requestDraw();
+        if (rough) this.scheduleTiles();
       } else this.outlineIdle = setTimeout(slice, OUTLINE_PAUSE_MS);
     };
     this.outlineIdle = setTimeout(slice, OUTLINE_PAUSE_MS);
@@ -566,7 +628,9 @@ export class CompareView {
 
   private measure(): void {
     const parent = this.el.root;
-    this.dpr = window.devicePixelRatio || 1;
+    const dpr = window.devicePixelRatio || 1;
+    if (dpr !== this.dpr) this.tiles.clear();
+    this.dpr = dpr;
     const w = Math.max(1, parent.clientWidth),
       h = Math.max(1, parent.clientHeight);
     if (w === this.cssW && h === this.cssH && this.el.canvas.width === Math.round(w * this.dpr)) return;
@@ -639,6 +703,7 @@ export class CompareView {
         // The actual picture size (pixel counts are rounded), so nothing shifts.
         p.layers.push({ bitmap, rect, pxPerMm: bitmap.width / (rect.x1 - rect.x0) });
         this.sharpRenders++;
+        this.dropBlurryTiles(role, rect, p.overview.pxPerMm);
         while (p.layers.length > KEEP_LAYERS) p.layers.shift()!.bitmap.close();
         this.requestDraw();
       }
@@ -659,12 +724,186 @@ export class CompareView {
     return { x0: v.x0, y0: v.y0, s, w: this.el.canvas.width, h: this.el.canvas.height, dpr: this.dpr };
   }
 
+  /**
+   * Paints the marks that `vp` shows onto ctx, as they are: the objects, and the outlines with
+   * the halos and the x–x–x. Outlines not made yet are made until `until`, else rough.
+   */
+  private paintLive(ctx: CanvasRenderingContext2D, layers: Layers, vp: Viewport, until: number, metricS = vp.s): { marks: number; outlines: number } {
+    // Sizes kept on screen (outline, x–x–x, thinnest line) as at metricS: a tile is drawn at other zooms too.
+    const met = markMetrics(this.settings, metricS, vp.dpr);
+    const pad = met.outlineMm + met.xxx.distanceMm + (8 * vp.dpr) / vp.s;
+    const view = { x0: vp.x0 - pad, y0: vp.y0 - pad, x1: vp.x0 + vp.w / vp.s + pad, y1: vp.y0 + vp.h / vp.s + pad };
+    const vis = this.marks.filter((pm) => touches(pm.mark.box, view) && this.isShown(pm.index));
+    const m = OUTLINE_MARGIN_MM,
+      around = { x0: view.x0 - m, y0: view.y0 - m, x1: view.x1 + m, y1: view.y1 + m };
+    this.outlinesMissing = false;
+    const outs: PaintOutline[] = [];
+    if (met.outlineMm > 0 || this.settings.removed === "xxx") {
+      // Smaller than a ring on screen: no outline where the Place gets a ring, else its rounded box.
+      const small = (RING_BELOW_PX * vp.dpr) / metricS,
+        size = (b: Box) => Math.max(b.x1 - b.x0, b.y1 - b.y0);
+      const ringed = new Set(this.settings.rings ? this.spots.filter((p) => size(p.box) < small).map((p) => p.no) : []);
+      for (const g of this.groups) {
+        if (!touches(g.box, around) || (g.place !== null && ringed.has(g.place))) continue;
+        outs.push(size(g.box) < small ? this.roughOutline(g) : this.outlineOf(g, until));
+      }
+    }
+    paintMarks(ctx, layers, vis, outs, vp, met, this.settings, (role) => this.drawPlan(ctx, role, vp));
+    return { marks: vis.length, outlines: outs.length };
+  }
+
+  /** Paints one tile of the marks at level k. */
+  private paintTile(k: number, t: Tile): MarkTile {
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = TILE_PX;
+    const tctx = canvas.getContext("2d")!;
+    const vp: Viewport = { x0: t.rect.x0, y0: t.rect.y0, s: levelScale(k), w: TILE_PX, h: TILE_PX, dpr: this.dpr };
+    this.tileLayers.size(TILE_PX, TILE_PX);
+    this.paintLive(tctx, this.tileLayers, vp, performance.now() + OUTLINE_FRAME_MS, metricScale(k));
+    const tile = { canvas, rough: this.outlinesMissing, used: this.frameNo };
+    this.outlinesMissing = false;
+    this.tiles.set(`${k}:${t.tx}:${t.ty}`, tile);
+    return tile;
+  }
+
+  /**
+   * Paints the coarse levels of the whole frame ahead, one tile at a time while the view
+   * rests, coarsest first, so that zooming out finds them there.
+   */
+  private scheduleTiles(): void {
+    if (this.tilesIdle !== undefined) clearTimeout(this.tilesIdle);
+    const gen = this.generation;
+    const next = () => {
+      this.tilesIdle = undefined;
+      // Room is left for the tiles in view: painting ahead never pushes them out.
+      if (gen !== this.generation || !this.result || !this.settings.marks || this.tiles.size > MAX_TILES - 12) return;
+      if (this.moving) {
+        this.tilesIdle = setTimeout(next, MOVING_MS);
+        return;
+      }
+      // From the level that shows the whole frame.
+      const f = this.frame,
+        fit = Math.min(this.el.canvas.width / (f.x1 - f.x0), this.el.canvas.height / (f.y1 - f.y0), MAX_TILED_S);
+      for (let k = levelFor(fit) ?? 0; k >= 0; k--) {
+        const ts = tilesFor(k, this.frame, this.frame);
+        if (ts.length > AHEAD_TILES) break;
+        const t = ts.find((u) => !this.tiles.get(`${k}:${u.tx}:${u.ty}`) || this.tiles.get(`${k}:${u.tx}:${u.ty}`)!.stale);
+        if (!t) continue;
+        rasterize(this.paintTile(k, t));
+        this.tilesIdle = setTimeout(next, AHEAD_PAUSE_MS);
+        return;
+      }
+    };
+    this.tilesIdle = setTimeout(next, AHEAD_PAUSE_MS);
+  }
+
+  /**
+   * A sharp picture of a Plan arrived: tiles under it that are sharper than the overview may
+   * show changed words' ink from the overview, blurred. They are painted again.
+   */
+  private dropBlurryTiles(role: Role, rect: Box, overviewPxPerMm: number): void {
+    const res = this.result;
+    if (!res) return;
+    const sh = shiftOf(role, res.setup.axis, res.setup.offset);
+    const r = { x0: rect.x0 + sh.dx, y0: rect.y0 + sh.dy, x1: rect.x1 + sh.dx, y1: rect.y1 + sh.dy };
+    const words = this.marks.some((pm) => pm.mark.shape === "word" && pm.mark.plan === role && touches(pm.mark.box, r));
+    if (!words) return;
+    for (const key of [...this.tiles.keys()]) {
+      const [k, tx, ty] = key.split(":").map(Number) as [number, number, number];
+      if (levelScale(k) <= overviewPxPerMm) continue;
+      const mm = TILE_PX / levelScale(k),
+        t = { x0: this.frame.x0 + tx * mm, y0: this.frame.y0 + ty * mm, x1: this.frame.x0 + (tx + 1) * mm, y1: this.frame.y0 + (ty + 1) * mm };
+      if (touches(t, r)) this.tiles.delete(key);
+    }
+  }
+
+  /** The tiles the view opens with, painted now (inside the busy window). */
+  private paintVisibleTiles(): void {
+    if (!this.settings.marks) return;
+    const vp = this.viewport(),
+      k = levelFor(vp.s);
+    if (k === null) return;
+    for (const t of tilesFor(k, this.frame, this.visible())) if (!this.tiles.has(`${k}:${t.tx}:${t.ty}`)) rasterize(this.paintTile(k, t));
+  }
+
+  /**
+   * Draws the marks from the tiles of level k. A missing tile is painted when no other level's
+   * tiles can stand in; else they stand in while the view moves, and at rest one missing tile
+   * is painted a frame.
+   */
+  private drawTiles(ctx: CanvasRenderingContext2D, vp: Viewport, k: number): void {
+    const frameNo = ++this.frameNo;
+    this.tileStats = { level: k, drawn: 0, painted: 0, standIn: 0 };
+    let missing = false,
+      painted = 0;
+    const place = (tile: MarkTile, rect: Box) => {
+      tile.used = frameNo;
+      const x0 = Math.round((rect.x0 - vp.x0) * vp.s),
+        y0 = Math.round((rect.y0 - vp.y0) * vp.s),
+        x1 = Math.round((rect.x1 - vp.x0) * vp.s),
+        y1 = Math.round((rect.y1 - vp.y0) * vp.s);
+      ctx.drawImage(tile.canvas, x0, y0, x1 - x0, y1 - y0);
+    };
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    // A tile is drawn at most a level step smaller: plain bilinear keeps its thin lines crisp.
+    ctx.imageSmoothingQuality = "low";
+    for (const t of tilesFor(k, this.frame, this.visible())) {
+      let tile = this.tiles.get(`${k}:${t.tx}:${t.ty}`);
+      if (tile?.stale) {
+        if (this.moving || painted > 0) missing = true;
+        else {
+          tile = this.paintTile(k, t);
+          painted++;
+          this.tileStats.painted++;
+        }
+      }
+      if (!tile) {
+        // Another level's tiles over this one, all of them there: the nearest, coarser first.
+        let cover: [MarkTile, Box][] | undefined;
+        for (const kk of [k + 1, k - 1, k + 2, k - 2, k + 3, k - 3, ...Array.from({ length: 40 }, (_, i) => k + 4 + i)]) {
+          if (kk < 0) continue;
+          const under = tilesFor(kk, this.frame, t.rect).map((u) => [this.tiles.get(`${kk}:${u.tx}:${u.ty}`), u.rect] as const);
+          if (under.length && under.every(([u]) => u)) {
+            cover = under as [MarkTile, Box][];
+            break;
+          }
+        }
+        // While the view moves it stands in; at rest the tile is painted, one a frame.
+        if (cover && (this.moving || painted > 0)) {
+          missing = true;
+          this.tileStats.standIn++;
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect((t.rect.x0 - vp.x0) * vp.s, (t.rect.y0 - vp.y0) * vp.s, (t.rect.x1 - t.rect.x0) * vp.s, (t.rect.y1 - t.rect.y0) * vp.s);
+          ctx.clip();
+          for (const [u, rect] of cover) place(u, rect);
+          ctx.restore();
+          continue;
+        }
+        tile = this.paintTile(k, t);
+        painted++;
+        this.tileStats.painted++;
+      }
+      place(tile, t.rect);
+      this.tileStats.drawn++;
+    }
+    ctx.restore();
+    if (missing) this.requestDraw();
+    // Keep the most recently drawn.
+    if (this.tiles.size > MAX_TILES) {
+      const old = [...this.tiles].filter(([, t]) => t.used !== frameNo).sort((a, b) => a[1].used - b[1].used);
+      for (const [key] of old.slice(0, this.tiles.size - MAX_TILES)) this.tiles.delete(key);
+    }
+  }
+
   /** Draws a Plan's pictures (overview, then sharper layers) at its place in the frame. */
   private drawPlan(ctx: CanvasRenderingContext2D, role: Role, vp: Viewport): void {
     const p = this.pictures![role],
       res = this.result!;
     const sh = shiftOf(role, res.setup.axis, res.setup.offset);
-    const vis = this.visibleIn(role);
+    // What vp shows, in the Plan's own page mm.
+    const vis = { x0: vp.x0 - sh.dx, y0: vp.y0 - sh.dy, x1: vp.x0 + vp.w / vp.s - sh.dx, y1: vp.y0 + vp.h / vp.s - sh.dy };
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     for (const l of [p.overview, ...[...p.layers].sort((a, b) => a.pxPerMm - b.pxPerMm)]) {
       const part = intersect(l.rect, vis);
@@ -732,21 +971,19 @@ export class CompareView {
       drawnOutlines = 0,
       drawnRings = 0;
     if (marksOn) {
-      const met = markMetrics(this.settings, vp.s, vp.dpr);
-      const pad = met.outlineMm + met.xxx.distanceMm + (8 * vp.dpr) / vp.s;
       const v = this.visible();
-      const view = { x0: v.x0 - pad, y0: v.y0 - pad, x1: v.x1 + pad, y1: v.y1 + pad };
-      const vis = this.marks.filter((pm) => touches(pm.mark.box, view) && this.isShown(pm.index));
-      const m = OUTLINE_MARGIN_MM,
-        around = { x0: view.x0 - m, y0: view.y0 - m, x1: view.x1 + m, y1: view.y1 + m };
-      // Outlines not made yet: made now within the frame's budget, else rough until the next frame.
-      this.outlinesMissing = false;
-      const until = t0 + OUTLINE_FRAME_MS;
-      const outs = met.outlineMm > 0 || this.settings.removed === "xxx" ? this.groups.filter((g) => touches(g.box, around)).map((g) => this.outlineOf(g, until)) : [];
-      if (this.outlinesMissing) this.requestDraw();
-      drawnMarks = vis.length;
-      drawnOutlines = outs.length;
-      paintMarks(ctx, this.layers, vis, outs, vp, met, this.settings, (role) => this.drawPlan(ctx, role, vp));
+      const level = levelFor(vp.s);
+      if (level === null) {
+        // Zoomed in: few marks in view, painted live.
+        this.tileStats = null;
+        const n = this.paintLive(ctx, this.layers, vp, t0 + OUTLINE_FRAME_MS);
+        if (this.outlinesMissing) this.requestDraw();
+        drawnMarks = n.marks;
+        drawnOutlines = n.outlines;
+      } else {
+        this.drawTiles(ctx, vp, level);
+        for (const pm of this.marks) if (touches(pm.mark.box, v) && this.isShown(pm.index)) drawnMarks++;
+      }
       if (this.settings.rings) {
         const rs = rings(this.spots, this.zoom, v);
         drawnRings = rs.length;

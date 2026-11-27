@@ -18,7 +18,7 @@ export const OUTLINE_MARGIN_MM = 1.2;
  * About this many grid points per group at most: a very large group (lines all over the
  * Plan) gets a coarser grid, which at the zoom it is seen whole at shows no difference.
  */
-const POINT_BUDGET = 200_000;
+const POINT_BUDGET = 80_000;
 /** Simplifying the contour leaves out points closer than this to it, mm. */
 const SIMPLIFY_MM = 0.03;
 
@@ -117,6 +117,64 @@ export function boxOutline(b: Box, marginMm = OUTLINE_MARGIN_MM): Outline {
   const out: number[] = [];
   for (let i = pts.length - 2; i >= 0; i -= 2) out.push(pts[i]!, pts[i + 1]!);
   return { outer: [out], holes: [], box: { x0: b.x0 - m, y0: b.y0 - m, x1: b.x1 + m, y1: b.y1 + m } };
+}
+
+/**
+ * The outline with fewer points, for when it is seen zoomed out: each contour simplified
+ * to within `tolMm`; a contour smaller than that is left out.
+ */
+export function simplifiedOutline(o: Outline, tolMm: number): Outline {
+  const keep = (cs: number[][]) =>
+    cs.flatMap((c) => {
+      let x0 = Infinity,
+        y0 = Infinity,
+        x1 = -Infinity,
+        y1 = -Infinity;
+      for (let i = 0; i < c.length; i += 2) (x0 = Math.min(x0, c[i]!)), (x1 = Math.max(x1, c[i]!)), (y0 = Math.min(y0, c[i + 1]!)), (y1 = Math.max(y1, c[i + 1]!));
+      if (Math.max(x1 - x0, y1 - y0) < tolMm) return [];
+      const sc = simplifyClosed(c, tolMm);
+      return sc.length >= 6 ? [sc] : [];
+    });
+  return { outer: keep(o.outer), holes: keep(o.holes), box: o.box };
+}
+
+/**
+ * How far out from an outline the middle of the x–x–x runs, mm, at `s` device px per mm:
+ * at its distance from the marks on screen, but at least so far that a whole cross lies
+ * outside the outline (zoomed far in, the margin alone is wider than that distance).
+ */
+export function xxxOffsetMm(x: { distanceMm: number; linePx: number; crossHalfPx: number }, s: number): number {
+  return Math.max(x.distanceMm - OUTLINE_MARGIN_MM, (x.crossHalfPx * Math.SQRT2 + x.linePx / 2) / s);
+}
+
+/**
+ * Where the x of the x–x–x go along a closed outer contour (the first point again at the
+ * end): in the middle of each gap of the dashes, `off` mm out. The outer contours turn
+ * anticlockwise on screen, so outward is to the left of the way they go (y down).
+ */
+export function crossesAlong(sp: readonly number[], dash: number, gap: number, off: number, keep?: (x: number, y: number) => boolean): number[] {
+  const out: number[] = [];
+  let walked = 0,
+    next = dash + gap / 2;
+  for (let i = 0; i + 3 < sp.length; i += 2) {
+    const ax = sp[i]!,
+      ay = sp[i + 1]!,
+      bx = sp[i + 2]!,
+      by = sp[i + 3]!,
+      len = Math.sqrt((bx - ax) ** 2 + (by - ay) ** 2);
+    if (!len) continue;
+    const nx = -(by - ay) / len,
+      ny = (bx - ax) / len;
+    while (next <= walked + len) {
+      const u = (next - walked) / len,
+        x = ax + (bx - ax) * u + nx * off,
+        y = ay + (by - ay) * u + ny * off;
+      if (!keep || keep(x, y)) out.push(x, y);
+      next += dash + gap;
+    }
+    walked += len;
+  }
+  return out;
 }
 
 /** An area's polygons: x,y,x,y ... each, from coords where each polygon ends with NaN,NaN. */

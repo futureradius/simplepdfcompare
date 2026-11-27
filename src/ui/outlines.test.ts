@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { Mark } from "../compare/compare";
 import type { Box } from "../compare/objects";
-import { boxOutline, OUTLINE_MARGIN_MM, outlineGroups, outlineOf, signedArea } from "./outlines";
+import { markMetrics } from "./compareframe";
+import { boxOutline, crossesAlong, OUTLINE_MARGIN_MM, outlineGroups, outlineOf, signedArea, simplifiedOutline, xxxOffsetMm } from "./outlines";
 
 const word = (x0: number, y0: number, x1: number, y1: number, kind: Mark["kind"] = "Removed"): Mark => ({
   kind,
@@ -147,5 +148,53 @@ describe("outlineGroups: per Place and colour, of the shown marks", () => {
     ]);
     expect(some[1]!.key).not.toBe(all[1]!.key);
     expect(some[0]!.key).toBe(all[0]!.key);
+  });
+});
+
+describe("simplifiedOutline: fewer points when zoomed out", () => {
+  const o = outlineOf([word(0, 0, 30, 4), line([0, 10, 80, 40], 0.4)]);
+  const count = (x: { outer: number[][] }) => x.outer.reduce((a, c) => a + c.length / 2, 0);
+
+  it("keeps the shape within the tolerance, with fewer points", () => {
+    const s = simplifiedOutline(o, 1);
+    expect(s.outer).toHaveLength(o.outer.length);
+    expect(count(s)).toBeLessThan(count(o) / 2);
+    const b = boxOf(s.outer[0]!),
+      ob = boxOf(o.outer[0]!);
+    expect(Math.abs(b.x0 - ob.x0)).toBeLessThan(1);
+    expect(Math.abs(b.y1 - ob.y1)).toBeLessThan(1);
+  });
+
+  it("drops a contour smaller than the tolerance", () => {
+    expect(simplifiedOutline(outlineOf([word(0, 0, 1, 1)]), 20).outer).toHaveLength(0);
+  });
+});
+
+describe("crossesAlong: the x of the x–x–x outside the outline", () => {
+  it("puts every cross outside, in the middle of each gap", () => {
+    const b = { x0: 0, y0: 0, x1: 40, y1: 10 };
+    const c = boxOutline(b).outer[0]!;
+    const xs = crossesAlong([...c, c[0]!, c[1]!], 3, 3, 2);
+    expect(xs.length / 2).toBeGreaterThan(10);
+    for (let i = 0; i < xs.length; i += 2) expect(distToRect(xs[i]!, xs[i + 1]!, b)).toBeGreaterThan(OUTLINE_MARGIN_MM + 1.5);
+  });
+});
+
+describe("xxxOffsetMm: how far out from the outline the x–x–x runs", () => {
+  const met = (s: number) => markMetrics({ outline: 6, xSize: 70 }, s, 1);
+
+  it("zoomed far in, still leaves room for whole crosses outside the outline", () => {
+    for (const s of [3.78, 15, 60]) {
+      const x = met(s).xxx,
+        off = xxxOffsetMm(x, s);
+      // The cross reaches this far across the line, px; all of it must lie outside the outline.
+      expect(off * s).toBeGreaterThanOrEqual(x.crossHalfPx * Math.SQRT2 + x.linePx / 2 - 1e-9);
+    }
+  });
+
+  it("zoomed out, keeps the line at its distance from the marks on screen", () => {
+    const s = 0.1,
+      x = met(s).xxx;
+    expect(xxxOffsetMm(x, s) + OUTLINE_MARGIN_MM).toBeCloseTo(x.distanceMm, 6);
   });
 });

@@ -128,9 +128,6 @@ test("the x–x–x goes once around a Place's Removed marks: none inside a remo
   await page.keyboard.press("1");
   await settle(page);
   let s = await inspect(page);
-  // One outline per Place and colour: fewer than the marks (a label's words, a hatch and its border).
-  expect(s.drawn.outlines).toBeGreaterThan(0);
-  expect(s.drawn.outlines).toBeLessThan(s.drawn.marks);
   // Made once each, the rest soon after the view is shown.
   await expect.poll(async () => { const t = (await inspect(page)) as any; return t.outlinesMade === t.outlineGroups && t.outlineGroups > 0; }).toBe(true);
   // A9: a hatched stripe removed, x 549.7 to 569.7 mm, y 407.7 to 504.3 mm, its label beside it.
@@ -139,6 +136,9 @@ test("the x–x–x goes once around a Place's Removed marks: none inside a remo
   await page.evaluate(([x, y, z]) => (window as any).__spcCompare.setView(x, y, z), [559.7, 456, zoom]);
   await settle(page);
   s = await inspect(page);
+  // One outline per Place and colour: fewer than the marks (a label's words, a hatch and its border).
+  expect(s.drawn.outlines).toBeGreaterThan(0);
+  expect(s.drawn.outlines).toBeLessThan(s.drawn.marks);
   const rect = (x0: number, y0: number, x1: number, y1: number) => ({ x: (x0 - s.visible.x0) * s.zoom, y: (y0 - s.visible.y0) * s.zoom, w: (x1 - x0) * s.zoom, h: (y1 - y0) * s.zoom });
   /** The x–x–x's dark yellow, not the mark's own yellow. */
   const ink = (part: { x: number; y: number; w: number; h: number }) =>
