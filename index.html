@@ -371,6 +371,10 @@
       /* No nowrap: a long key description wraps instead of pushing the explanations aside. */
       table.keys { table-layout: fixed; }
       table.keys td:first-child { width: 30%; }
+      /* One heading row per tab: the keys depend on the tab (a deviation from the clipper's flat table). */
+      table.keys tr.group th { text-align: left; font-size: 12px; font-weight: 600; color: var(--muted); padding: 10px 0 2px; }
+      table.keys tr.group:first-child th { padding-top: 0; }
+      kbd { font: 11px/1 ui-monospace, Consolas, monospace; padding: 2px 5px; border: 1px solid var(--line-strong); border-bottom-width: 2px; border-radius: 4px; background: #fafbfc; color: var(--text); }
       dialog h3 { margin: 18px 0 6px; font-size: 14px; }
       dialog .foot { display: flex; justify-content: flex-end; padding: 12px 16px 16px; }
       /* ---- Vorlage dropdown and window (ADR 0009, from the clipper's ADR 0015) ---- */
@@ -596,9 +600,24 @@
         <h3>Über das Projekt</h3>
         <p>Vergleicht zwei Fassungen eines Vektor-PDF-Plans und zeigt, was hinzugekommen (rot) und was weggefallen (gelb) ist. Läuft vollständig lokal; die Pläne verlassen diesen Computer nicht.</p>
         <h3 id="about-howto" tabindex="-1">Wie geht's</h3>
-        <p class="muted">Die Anleitung folgt mit den nächsten Schritten. Bisher: den alten und den neuen Plan öffnen (ziehen oder anklicken) und mit „Weiter“ in die Arbeitsansicht wechseln. Hat eine Datei mehrere Seiten, die Seite wählen, die verglichen werden soll.</p>
+        <ol id="about-steps">
+          <li><strong>Öffnen.</strong> Den alten und den neuen Plan in die beiden Felder ziehen oder anklicken, dann „Weiter“. Hat eine Datei mehrere Seiten, die Seite wählen, die verglichen werden soll. Im Tab „Öffnen“ lassen sich die beiden Dateien tauschen (⇄) oder ersetzen; dort auch wählen, in welche Richtung die Zeit läuft: senkrecht oder waagerecht.</li>
+          <li><strong>Alter Plan.</strong> Kopf und Fuß sind erkannt und als blaue Linien gezeigt; sie lassen sich ziehen. Was dazwischen liegt, wird verglichen. Auf dem Plan einen Bereich aufziehen: „Ausgenommen“ wird nicht verglichen; „Zeitachse“, „Wegachse“ und „Vorgänge“ sagen, wo die Daten, die Kilometer und die Zeilennamen stehen (sie werden nur gelesen). Die Kanten rasten an Linien des Plans ein, mit <kbd>Alt</kbd> beim Ziehen frei. ⇕ zieht einen Bereich über die ganze Länge des Plans. Mit ✎ lässt sich der Aufbau als Vorlage speichern.</li>
+          <li><strong>Neuer Plan.</strong> Die Bereiche des alten Plans sind hierher kopiert; schraffiert steht, wo sie im alten Plan lagen. Anpassen, falls nötig.</li>
+          <li><strong>Versatz.</strong> Beide Pläne liegen übereinander: Schwarz ist in beiden gleich, Blau nur im alten, Rot nur im neuen Plan. Liegt der Versatz richtig, liegt alles Gleiche übereinander; sonst erscheint es doppelt. Einen Vorschlag anklicken, den Plan ziehen, mit den Pfeiltasten schieben oder den Wert eintippen. Dann „Vergleichen“.</li>
+          <li><strong>Vergleich.</strong> Rot ist hinzugekommen, gelb weggefallen. Die Liste zeigt jede Stelle mit Namen, Art der Änderung, Wann und Wo; ein Klick springt auf dem Plan dorthin, ◀ ▶ gehen die Stellen der Reihe nach durch. Der Filter grenzt die Liste nach Art, Wann und Wo ein. Stellen, die keine echte Änderung sind, mit <kbd>H</kbd> ausblenden. „Exportieren“ speichert alle Stellen als Excel-Tabelle (.xlsx), auch die ausgefilterten und die ausgeblendeten (als solche markiert).</li>
+        </ol>
+        <p><strong>Gut zu wissen</strong></p>
+        <ul>
+          <li>Ansicht verschieben: mit rechter oder mittlerer Maustaste ziehen. Das Mausrad zoomt. Die Übersicht unten rechts zeigt, wo man gerade ist; ein Klick oder Ziehen darin springt dorthin.</li>
+          <li>Im Vergleich zeigt <kbd>Leertaste</kbd> (gehalten) nur den neuen Plan, <kbd>Strg</kbd> + <kbd>Leertaste</kbd> nur den alten, jeweils ohne Markierungen.</li>
+          <li>Die Tabs oben lassen sich jederzeit wieder anklicken; zurückgehen verwirft nichts. Wird eine Datei, die Seite oder die Zeitrichtung geändert, sind die Schritte danach noch einmal zu bestätigen.</li>
+          <li>Kopf, Fuß und Bereiche werden in diesem Browser für das nächste Planpaar gemerkt, für jede Zeitrichtung getrennt. Der Versatz wird für jedes Paar neu gesucht.</li>
+          <li>Die Seitenleiste lässt sich am rechten Rand breiter oder schmaler ziehen; die Spalten der Liste lassen sich verschieben und sortieren.</li>
+        </ul>
         <h3>Tastenkürzel</h3>
-        <p class="muted">Die Tastenkürzel folgen mit den nächsten Schritten.</p>
+        <!-- Filled from src/ui/shortcuts.ts. -->
+        <table class="keys" id="shortcuts"></table>
         <h3>Lizenz &amp; Dank</h3>
         <p>Quellcode: <a href="https://github.com/futureradius/simplepdfcompare" target="_blank" rel="noopener">github.com/futureradius/simplepdfcompare</a></p>
         <p class="muted">

@@ -9,6 +9,7 @@ import { createExportBar } from "./ui/exportui";
 import { ComparisonHandoff } from "./ui/handoff";
 import { setUpOffsetTab } from "./ui/offsettab";
 import { setUpSetupTabs, type SetupPlan } from "./ui/setuptabs";
+import { renderShortcuts } from "./ui/shortcuts";
 import { dropTargets, isPdf, needsPagePicker, swapped, type Role, type Sides } from "./ui/openplans";
 import { PagePicker, type PageSize } from "./ui/pagepicker";
 import { DIRECTION_LABEL, preselectedDirection, type Direction } from "./ui/direction";
@@ -25,6 +26,7 @@ $("version").textContent = `Version ${__APP_VERSION__} vom ${__BUILD_DATE__.spli
 
 // ---- About -------------------------------------------------------------------
 const about = $<HTMLDialogElement>("about");
+renderShortcuts($<HTMLTableElement>("shortcuts"));
 $("about-open").addEventListener("click", () => {
   about.showModal();
   about.querySelector(".body")!.scrollTop = 0;
