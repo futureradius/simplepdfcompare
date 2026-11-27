@@ -469,6 +469,7 @@ const places = setUpPlaces({
     prev: $<HTMLButtonElement>("cmp-prev"),
     next: $<HTMLButtonElement>("cmp-next"),
     navText: $<HTMLButtonElement>("cmp-nav-text"),
+    minimaps: [$("cmp-minimap"), $("cmp-minimap-expand")],
   },
 });
 (window as unknown as { __places: typeof places }).__places = places;

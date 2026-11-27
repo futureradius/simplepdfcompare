@@ -16,7 +16,7 @@ import { EYE_OFF, h } from "./dom";
 import type { FilterPanel } from "./filterpanel";
 import { kindOn } from "./placefilter";
 import type { PlacesState, Row, StateChange } from "./placesstate";
-import { COLUMN_IDS, COLUMN_LABEL, COLUMN_TITLE, type ColumnId } from "./placetable";
+import { COLUMN_IDS, COLUMN_LABEL, COLUMN_TITLE, isDataColumn, type ColumnId } from "./placetable";
 import { rowWindow, scrollToShow } from "./virtuallist";
 
 /** A row is this tall, px; its picture is THUMB_W by THUMB_H. */
@@ -31,6 +31,7 @@ const THUMB_DELAY_MS = 90;
 
 /** The width each column asks for (px) and its share of what is left; the picture and the hide button have fixed widths. */
 const COLUMN_WIDTH: Record<ColumnId, { min: number; fr: number }> = {
+  thumb: { min: THUMB_W, fr: 0 },
   no: { min: 36, fr: 0 },
   name: { min: 110, fr: 1.4 },
   kind: { min: 116, fr: 1 },
@@ -188,23 +189,26 @@ export class PlacesPanel {
 
   private template(): string {
     const cols = this.state.columns.map((c) => (COLUMN_WIDTH[c].fr ? `minmax(${COLUMN_WIDTH[c].min}px, ${COLUMN_WIDTH[c].fr}fr)` : `${COLUMN_WIDTH[c].min}px`));
-    return [`${THUMB_W}px`, ...cols, `${ACTION_W}px`].join(" ");
+    return [...cols, `${ACTION_W}px`].join(" ");
   }
 
   private minWidth(): number {
-    return THUMB_W + ACTION_W + this.state.columns.reduce((s, c) => s + COLUMN_WIDTH[c].min, 0) + 8 * (this.state.columns.length + 2) + 12;
+    return ACTION_W + this.state.columns.reduce((s, c) => s + COLUMN_WIDTH[c].min, 0) + 8 * (this.state.columns.length + 1) + 12;
   }
 
   private drawHead(): void {
     const sort = this.state.sort;
     const column = (id: ColumnId) => {
       const i = sort.findIndex((k) => k.key === id);
-      const title = h(
-        "button",
-        { class: `col-title${i === 0 ? " main" : ""}`, type: "button", title: COLUMN_TITLE[id], data: { column: id }, on: { click: () => this.state.sortBy(id) } },
-        COLUMN_LABEL[id],
-        i === 0 ? h("span", { class: "arrow" }, sort[0]!.dir > 0 ? " ▲" : " ▼") : null,
-      );
+      // The picture's column has a name to grab it by, but does not sort.
+      const title = !isDataColumn(id)
+        ? h("span", { class: "col-title col-thumb" }, COLUMN_LABEL[id])
+        : h(
+            "button",
+            { class: `col-title${i === 0 ? " main" : ""}`, type: "button", title: COLUMN_TITLE[id], data: { column: id }, on: { click: () => this.state.sortBy(id) } },
+            COLUMN_LABEL[id],
+            i === 0 ? h("span", { class: "arrow" }, sort[0]!.dir > 0 ? " ▲" : " ▼") : null,
+          );
       const cell = h("span", { class: "col-cell", draggable: true, title: "Ziehen, um die Spalte zu verschieben", data: { column: id } }, title, id === "when" || id === "where" ? this.filter.rangeButton(id) : null);
       cell.addEventListener("dragstart", (e) => {
         this.dragColumn = id;
@@ -237,7 +241,6 @@ export class PlacesPanel {
     this.head.style.gridTemplateColumns = this.template();
     this.head.style.minWidth = `${this.minWidth()}px`;
     this.head.replaceChildren(
-      h("span"),
       ...this.state.columns.map(column),
       h(
         "span",
@@ -313,14 +316,13 @@ export class PlacesPanel {
           },
         },
       },
-      box,
-      ...this.state.columns.map((c) => this.cell(p, c)),
+      ...this.state.columns.map((c) => (c === "thumb" ? box : this.cell(p, c))),
       action,
     );
     return el;
   }
 
-  private cell(p: Place, col: ColumnId): HTMLElement {
+  private cell(p: Place, col: Exclude<ColumnId, "thumb">): HTMLElement {
     switch (col) {
       case "no":
         return h("span", { class: "c-no" }, String(p.no));

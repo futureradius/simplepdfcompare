@@ -9,7 +9,7 @@ import type { Place } from "../compare/places";
 import type { Shown } from "./compareframe";
 import { HiddenPlaces } from "./hiddenplaces";
 import { markShown, placeShown, defaultFilter, type PlaceFilter } from "./placefilter";
-import { columnOrder, listRows, moveColumn as moveColumnIn, sortBy as sortByIn, sortPlaces, type ColumnId, type ListRow, type SortKey } from "./placetable";
+import { columnOrder, listRows, moveColumn as moveColumnIn, sortBy as sortByIn, sortPlaces, type ColumnId, type DataColumnId, type ListRow, type SortKey } from "./placetable";
 import { Selection } from "./selection";
 import { cursorAfterHide, step, type Cursor } from "./stepping";
 
@@ -121,7 +121,7 @@ export class PlacesState {
   }
 
   /** The list as a table, as shown: for the export (ADR 0007). */
-  table(opts: { withHidden?: boolean } = {}): { columns: ColumnId[]; rows: ListRow[] } {
+  table(opts: { withHidden?: boolean } = {}): { columns: DataColumnId[]; rows: ListRow[] } {
     return listRows(this.all, { filter: this.filterNow, sort: this.sortNow, isHidden: (p) => this.hidden.has(p), columns: this.columnsNow }, opts);
   }
 
@@ -155,7 +155,7 @@ export class PlacesState {
     return this.sortNow;
   }
 
-  sortBy(col: ColumnId): void {
+  sortBy(col: DataColumnId): void {
     this.sortNow = sortByIn(this.sortNow, col);
     this.invalidate();
     this.emit("sort");

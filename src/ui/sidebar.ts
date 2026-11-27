@@ -16,7 +16,7 @@ export type PanelKind = "setup" | "compare";
 
 const WIDTH_KEY: Record<PanelKind, string> = {
   setup: "simplepdfcompare.panelWidth",
-  compare: "simplepdfcompare.panelWidthCompare",
+  compare: "simplepdfcompare.panelWidthVergleich", // renamed when the default became wider, so an older remembered width does not hide it
 };
 
 export const panelKindFor = (tab: TabId): PanelKind => (tab === "compare" ? "compare" : "setup");
@@ -28,9 +28,15 @@ export function clampPanelWidth(width: number, windowWidth: number): number {
   return Math.round(Math.min(max, Math.max(PANEL_MIN, width)));
 }
 
-/** Setup: the width the tab names need. "Vergleich": half the window. Double-click resets to this. */
+/** What the list of Places needs in "Vergleich" to show every column without scrolling sideways. */
+export const COMPARE_TABLE_W = 780;
+
+/**
+ * Setup: the width the tab names need. "Vergleich": wide, for the table of Places: 60 % of the
+ * window but at least what the table needs (both capped at two thirds). Double-click resets to this.
+ */
 export function defaultPanelWidth(kind: PanelKind, windowWidth: number): number {
-  return kind === "setup" ? PANEL_DEFAULT : clampPanelWidth(windowWidth / 2, windowWidth);
+  return kind === "setup" ? PANEL_DEFAULT : clampPanelWidth(Math.max(windowWidth * 0.6, COMPARE_TABLE_W), windowWidth);
 }
 
 /** A remembered width, or undefined if none (usable) is stored. */

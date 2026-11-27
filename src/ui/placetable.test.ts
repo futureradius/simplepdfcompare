@@ -56,15 +56,28 @@ describe("the columns", () => {
     expect(columnOrder(undefined)).toEqual(COLUMN_IDS);
   });
 
-  it("repairs a saved order: unknown columns go, missing ones follow in the original order", () => {
-    expect(columnOrder(["where", "bogus", "no", "where"])).toEqual(["where", "no", "name", "kind", "amount", "when"]);
+  it("starts with the small picture, then the columns of text", () => {
+    expect(COLUMN_IDS).toEqual(["thumb", "no", "name", "kind", "amount", "when", "where"]);
+  });
+
+  it("repairs a saved order: unknown columns go, a missing one comes back after the column it followed originally", () => {
+    expect(columnOrder(["where", "bogus", "no", "where"])).toEqual(["thumb", "where", "no", "name", "kind", "amount", "when"]);
+    expect(columnOrder(["thumb", "where", "no"])).toEqual(["thumb", "where", "no", "name", "kind", "amount", "when"]);
+    expect(columnOrder(["no", "name", "kind", "amount", "when", "where"])).toEqual(COLUMN_IDS); // saved before the picture could move
     expect(columnOrder("x")).toEqual(COLUMN_IDS);
   });
 
-  it("moves a column before or after another", () => {
-    expect(moveColumn(COLUMN_IDS, "where", "no", "before")).toEqual(["where", "no", "name", "kind", "amount", "when"]);
-    expect(moveColumn(COLUMN_IDS, "no", "when", "after")).toEqual(["name", "kind", "amount", "when", "no", "where"]);
+  it("moves any column before or after another, the picture too", () => {
+    expect(moveColumn(COLUMN_IDS, "where", "no", "before")).toEqual(["thumb", "where", "no", "name", "kind", "amount", "when"]);
+    expect(moveColumn(COLUMN_IDS, "no", "when", "after")).toEqual(["thumb", "name", "kind", "amount", "when", "no", "where"]);
+    expect(moveColumn(COLUMN_IDS, "thumb", "where", "after")).toEqual(["no", "name", "kind", "amount", "when", "where", "thumb"]);
     expect(moveColumn(COLUMN_IDS, "no", "no", "after")).toEqual(COLUMN_IDS);
+  });
+
+  it("leaves the picture out of the table for the export", () => {
+    const t = listRows([place({ no: 1, name: "a" })], { filter: defaultFilter(), sort: [], isHidden: () => false, columns: ["name", "thumb", "no"] });
+    expect(t.columns).toEqual(["name", "no"]);
+    expect(t.rows[0]!.cells).toEqual(["a", "1"]);
   });
 });
 

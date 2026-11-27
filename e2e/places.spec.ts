@@ -65,6 +65,28 @@ const onScreen = (page: Page, no: number) =>
 const scrollTop = (page: Page) => page.locator("#body-compare .pl-scroll").evaluate((e) => e.scrollTop);
 const navBox = (page: Page) => page.locator("#cmp-nav").boundingBox();
 
+/** A point on a Place's own red marks on the Plan (its frame's corner may be empty), in page px. */
+async function markPoint(page: Page, no: number) {
+  const r = (await onScreen(page, no))!;
+  expect(r).not.toBeNull();
+  const c = (await page.locator("#compare-canvas").boundingBox())!;
+  const at = await page.evaluate(
+    ({ r }) => {
+      const cv = document.getElementById("compare-canvas") as HTMLCanvasElement;
+      const d = devicePixelRatio;
+      const px = cv.getContext("2d")!.getImageData(Math.round(r.x * d), Math.round(r.y * d), Math.max(1, Math.round(r.w * d)), Math.max(1, Math.round(r.h * d))).data;
+      const w = Math.max(1, Math.round(r.w * d));
+      for (let i = 0; i < px.length; i += 4) if (px[i]! > 200 && px[i + 1]! < 90 && px[i + 2]! < 90) return { x: r.x + ((i / 4) % w) / d, y: r.y + Math.floor(i / 4 / w) / d };
+      return { x: r.x + r.w / 2, y: r.y + r.h / 2 };
+    },
+    { r },
+  );
+  return { x: c.x + at.x, y: c.y + at.y };
+}
+
+const overlap = (a: { x: number; y: number; width: number; height: number }, b: { x: number; y: number; width: number; height: number }) =>
+  a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+
 async function shot(page: Page, name: string) {
   if (!SHOTS) return;
   mkdirSync(SHOTS, { recursive: true });
@@ -184,7 +206,23 @@ test.describe("the list of Places", () => {
     expect(await nos()).toEqual([...(await nos())].sort((a, b) => a - b));
     // Dragging a title moves its column.
     await page.locator('.col-cell[data-column="where"]').dragTo(page.locator('.col-cell[data-column="no"]'), { targetPosition: { x: 2, y: 5 } });
-    await expect(page.locator(".pl-head .col-cell").first()).toHaveAttribute("data-column", "where");
+    const heads = () => page.locator(".pl-head .col-cell").evaluateAll((els) => els.map((e) => (e as HTMLElement).dataset.column));
+    expect(await heads()).toEqual(["thumb", "where", "no", "name", "kind", "amount", "when"]);
+    // The small picture is a column like the others: it moves, and the rows follow.
+    const whenW = (await page.locator('.col-cell[data-column="when"]').boundingBox())!.width;
+    await page.locator('.col-cell[data-column="thumb"]').dragTo(page.locator('.col-cell[data-column="when"]'), { targetPosition: { x: whenW - 3, y: 5 } });
+    expect(await heads()).toEqual(["where", "no", "name", "kind", "amount", "when", "thumb"]);
+    const cells = await rows(page).first().evaluate((r) => [...r.children].map((c) => c.className));
+    expect(cells.indexOf("thumb-box")).toBe(6);
+    // Remembered.
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem("simplepdfcompare.listColumns")!))).toEqual(await heads());
+  });
+
+  test("Vergleich starts with a sidebar wide enough for the whole table", async ({ page }) => {
+    await compared(page, { width: 1280, height: 800 });
+    expect((await page.locator("#panel").boundingBox())!.width).toBeGreaterThanOrEqual(780);
+    const scroller = page.locator("#body-compare .pl-scroll");
+    expect(await scroller.evaluate((e) => e.scrollWidth - e.clientWidth)).toBeLessThanOrEqual(0);
   });
 });
 
@@ -256,6 +294,29 @@ test.describe("selecting", () => {
     expect(await selectedNos(page)).toEqual([]);
   });
 
+  test("a click on a Place of the Plan scrolls the list just enough to show its row", async ({ page }) => {
+    await compared(page, { width: 1500, height: 560 });
+    const ps = await places(page);
+    const last = ps[ps.length - 1]!.no;
+    const scroller = page.locator("#body-compare .pl-scroll");
+    // Fly to the last Place through the list, then scroll the list back to the top.
+    await scroller.evaluate((e) => (e.scrollTop = e.scrollHeight));
+    await row(page, last).click();
+    await settled(page);
+    await page.keyboard.press("Escape");
+    await scroller.evaluate((e) => (e.scrollTop = 0));
+    await expect(row(page, last)).not.toBeInViewport();
+    const view = await inspect(page);
+    const at = await markPoint(page, last);
+    await page.mouse.click(at.x, at.y);
+    expect(await selectedNos(page)).toEqual([last]);
+    await expect(row(page, last)).toBeInViewport({ ratio: 0.95 }); // the head's height may be a fraction of a pixel
+    // The Plan did not move.
+    const after = await inspect(page);
+    expect(after.centre).toEqual(view.centre);
+    expect(after.zoom).toBe(view.zoom);
+  });
+
   test("a box dragged to the right takes what lies fully inside, to the left what it touches; Ctrl removes", async ({ page }) => {
     await compared(page);
     const ps = await places(page);
@@ -313,6 +374,23 @@ test.describe("selecting", () => {
     expect(await scrollTop(page)).toBe(top);
     expect((await inspect(page)).centre).toEqual(centre);
   });
+});
+
+test("the minimap moves up when it would cover the ◀ ▶ bar, and stays in its corner otherwise", async ({ page }) => {
+  for (const viewport of [{ width: 1500, height: 900 }, { width: 1100, height: 800 }]) {
+    await compared(page, viewport);
+    const ps = await places(page);
+    await row(page, ps[3]!.no).click(); // zoomed in: the minimap shows
+    await settled(page);
+    const map = page.locator("#cmp-minimap");
+    await expect(map).toBeVisible();
+    await expect.poll(async () => overlap((await map.boundingBox())!, (await navBox(page))!)).toBe(false);
+  }
+  // Collapsed to its round button, it keeps clear of the bar too.
+  await page.locator("#cmp-minimap-collapse").click();
+  const button = page.locator("#cmp-minimap-expand");
+  await expect(button).toBeVisible();
+  await expect.poll(async () => overlap((await button.boundingBox())!, (await navBox(page))!)).toBe(false);
 });
 
 test.describe("hiding", () => {
@@ -447,7 +525,7 @@ test.describe("the display settings", () => {
 test("the list's rows are available as a table, for the export", async ({ page }) => {
   await compared(page);
   const t = await page.evaluate(() => (window as any).__places.state.table());
-  expect(t.columns).toEqual(["no", "name", "kind", "amount", "when", "where"]);
+  expect(t.columns).toEqual(["no", "name", "kind", "amount", "when", "where"]); // no picture in the export
   expect(t.rows.length).toBe((await places(page)).length);
   expect(t.rows[0].cells[0]).toBe("1");
 });

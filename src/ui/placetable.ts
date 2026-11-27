@@ -10,13 +10,18 @@ import type { Place } from "../compare/places";
 import { kindText, umText, wannText, woText, wasText } from "../compare/wording";
 import { placeShown, type PlaceFilter } from "./placefilter";
 
-export type ColumnId = "no" | "name" | "kind" | "amount" | "when" | "where";
+/** The columns of text: they sort, and the export has them. */
+export type DataColumnId = "no" | "name" | "kind" | "amount" | "when" | "where";
+/** Every column of the list; the small picture moves like the others but neither sorts nor is exported. */
+export type ColumnId = "thumb" | DataColumnId;
 
 /** The columns in their original order. */
-export const COLUMN_IDS: readonly ColumnId[] = ["no", "name", "kind", "amount", "when", "where"];
+export const COLUMN_IDS: readonly ColumnId[] = ["thumb", "no", "name", "kind", "amount", "when", "where"];
 
-export const COLUMN_LABEL: Record<ColumnId, string> = { no: "Nr", name: "Was", kind: "Art", amount: "Um", when: "Wann", where: "Wo" };
-export const COLUMN_TITLE: Record<ColumnId, string> = {
+export const isDataColumn = (c: ColumnId): c is DataColumnId => c !== "thumb";
+
+export const COLUMN_LABEL: Record<ColumnId, string> = { thumb: "Bild", no: "Nr", name: "Was", kind: "Art", amount: "Um", when: "Wann", where: "Wo" };
+export const COLUMN_TITLE: Record<DataColumnId, string> = {
   no: "Nach Nummer (Lage entlang der Zeit)",
   name: "Nach Name, A–Z",
   kind: "Nach Art der Änderung",
@@ -26,10 +31,10 @@ export const COLUMN_TITLE: Record<ColumnId, string> = {
 };
 
 /** The direction a column sorts in the first time it is clicked. */
-const FIRST_DIR: Record<ColumnId, 1 | -1> = { no: 1, name: 1, kind: 1, amount: -1, when: 1, where: 1 };
+const FIRST_DIR: Record<DataColumnId, 1 | -1> = { no: 1, name: 1, kind: 1, amount: -1, when: 1, where: 1 };
 
 export interface SortKey {
-  key: ColumnId;
+  key: DataColumnId;
   dir: 1 | -1;
 }
 
@@ -40,14 +45,14 @@ const MAX_KEYS = 4;
  * A click on a column: it becomes the main key and the earlier keys stay as tie-breakers inside
  * it, as in Excel; clicking the main key again turns it round.
  */
-export function sortBy(keys: readonly SortKey[], key: ColumnId): SortKey[] {
+export function sortBy(keys: readonly SortKey[], key: DataColumnId): SortKey[] {
   const first = keys[0];
   if (first && first.key === key) return [{ key, dir: first.dir === 1 ? -1 : 1 }, ...keys.slice(1)];
   return [{ key, dir: FIRST_DIR[key] }, ...keys.filter((k) => k.key !== key)].slice(0, MAX_KEYS);
 }
 
 /** What a Place is sorted by in a column; null when it has none (those come last). */
-function sortValue(p: Place, key: ColumnId): number | string | null {
+function sortValue(p: Place, key: DataColumnId): number | string | null {
   switch (key) {
     case "no":
       return p.no;
@@ -91,10 +96,19 @@ export function sortPlaces(places: readonly Place[], keys: readonly SortKey[]): 
   });
 }
 
-/** A saved column order, repaired: unknown and repeated columns dropped, missing ones back in their place. */
+/**
+ * A saved column order, repaired: unknown and repeated columns dropped, and a missing one (such
+ * as the picture, in an order saved before it could move) put back right after the column it
+ * follows in the original order, or first.
+ */
 export function columnOrder(saved: unknown): ColumnId[] {
-  const kept = Array.isArray(saved) ? saved.filter((c): c is ColumnId => COLUMN_IDS.includes(c as ColumnId)) : [];
-  return [...new Set([...kept, ...COLUMN_IDS])];
+  const order = [...new Set(Array.isArray(saved) ? saved.filter((c): c is ColumnId => COLUMN_IDS.includes(c as ColumnId)) : [])];
+  for (const [i, c] of COLUMN_IDS.entries()) {
+    if (order.includes(c)) continue;
+    const before = i > 0 ? order.indexOf(COLUMN_IDS[i - 1]!) : -1;
+    order.splice(before + 1, 0, c);
+  }
+  return order;
 }
 
 /** Moves `from` to just before or after `to`. */
@@ -106,7 +120,7 @@ export function moveColumn(order: readonly ColumnId[], from: ColumnId, to: Colum
 }
 
 /** What a column says about a Place, as text (the list's own cells draw more, such as tags; the export uses this). */
-export function cellText(p: Place, col: ColumnId): string {
+export function cellText(p: Place, col: DataColumnId): string {
   switch (col) {
     case "no":
       return String(p.no);
@@ -150,8 +164,8 @@ export interface ListRow {
  * The list as a table: its columns and rows as shown (filter applied, in the sort order, hidden
  * Places left out, or with `withHidden` marked). The export reads this (ADR 0007).
  */
-export function listRows(places: readonly Place[], state: ListState, opts: { withHidden?: boolean } = {}): { columns: ColumnId[]; rows: ListRow[] } {
-  const columns = state.columns ? [...state.columns] : [...COLUMN_IDS];
+export function listRows(places: readonly Place[], state: ListState, opts: { withHidden?: boolean } = {}): { columns: DataColumnId[]; rows: ListRow[] } {
+  const columns = (state.columns ?? COLUMN_IDS).filter(isDataColumn);
   const shown = places.filter((p) => placeShown(state.filter, p) && (opts.withHidden || !state.isHidden(p)));
   const rows = sortPlaces(shown, state.sort).map((p) => ({ no: p.no, hidden: state.isHidden(p), cells: columns.map((c) => cellText(p, c)) }));
   return { columns, rows };

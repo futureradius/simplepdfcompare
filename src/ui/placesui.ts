@@ -13,7 +13,8 @@ import { h } from "./dom";
 import { FilterPanel } from "./filterpanel";
 import { PlacesPanel } from "./placespanel";
 import { PlacesState } from "./placesstate";
-import { columnOrder, type SortKey } from "./placetable";
+import { minimapBottom } from "./navlayout";
+import { COLUMN_IDS, isDataColumn, type SortKey } from "./placetable";
 
 const SORT_KEY = "simplepdfcompare.listSort";
 const COLUMNS_KEY = "simplepdfcompare.listColumns";
@@ -40,6 +41,8 @@ export interface PlacesElements {
   prev: HTMLButtonElement;
   next: HTMLButtonElement;
   navText: HTMLButtonElement;
+  /** The minimap and its round button: lifted above the bar when they would overlap it. */
+  minimaps: HTMLElement[];
 }
 
 export interface PlacesDeps {
@@ -64,7 +67,7 @@ export interface PlacesUi {
 /** A remembered sort, checked. */
 const parseSort = (raw: unknown): SortKey[] =>
   Array.isArray(raw)
-    ? raw.filter((k): k is SortKey => !!k && typeof k === "object" && columnOrder([(k as SortKey).key])[0] === (k as SortKey).key && ((k as SortKey).dir === 1 || (k as SortKey).dir === -1)).slice(0, 4)
+    ? raw.filter((k): k is SortKey => !!k && typeof k === "object" && COLUMN_IDS.includes((k as SortKey).key) && isDataColumn((k as SortKey).key) && ((k as SortKey).dir === 1 || (k as SortKey).dir === -1)).slice(0, 4)
     : [];
 
 export function setUpPlaces(deps: PlacesDeps): PlacesUi {
@@ -104,9 +107,26 @@ export function setUpPlaces(deps: PlacesDeps): PlacesUi {
     }
     if (e.no === null) {
       if (e.mode === "replace") state.clearSelection(); // a click on empty Plan: nothing selected
-    } else if (e.mode === "replace") state.select(e.no, {}, { reveal: false }); // the Plan stays where it is
-    else state.selectMany([e.no], e.mode === "remove" || state.selection.has(e.no) ? "remove" : "add");
+    } else if (e.mode === "replace") {
+      state.select(e.no, {}, { reveal: false }); // the Plan stays where it is
+      panel.scrollToPlace(e.no); // the list scrolls just enough to show the row
+    } else {
+      const remove = e.mode === "remove" || state.selection.has(e.no);
+      state.selectMany([e.no], remove ? "remove" : "add");
+      if (!remove) panel.scrollToPlace(e.no);
+    }
   };
+
+  // ---- The minimap moves up when it would cover the bar ----------------------------
+
+  function placeMinimaps(): void {
+    const viewW = el.nav.parentElement?.clientWidth ?? 0;
+    if (!viewW) return;
+    const bar = { w: el.nav.offsetWidth, h: el.nav.offsetHeight, bottom: parseFloat(getComputedStyle(el.nav).bottom) || 0 };
+    for (const m of el.minimaps) if (m.offsetWidth) m.style.bottom = `${minimapBottom({ viewW, mapW: m.offsetWidth, bar })}px`;
+  }
+  const lift = new ResizeObserver(placeMinimaps);
+  for (const m of [el.nav, ...(el.nav.parentElement ? [el.nav.parentElement] : []), ...el.minimaps]) lift.observe(m);
 
   // ---- The ◀ ▶ bar ------------------------------------------------------------------
 
