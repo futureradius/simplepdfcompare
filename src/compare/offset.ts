@@ -65,14 +65,26 @@ function inBody(o: DrawnObject, t: number, [b0, b1]: [number, number]): boolean 
   return (t ? b.y0 : b.x0) >= b0 && (t ? b.y1 : b.x1) <= b1;
 }
 
-export function findOffset(oldObjs: readonly DrawnObject[], newObjs: readonly DrawnObject[], opts: OffsetOptions): OffsetResult {
+/** Objects handled between two pauses of the search that can be stopped. */
+const CHUNK = 4000;
+
+/** The search as a generator: it yields now and then, so that it can be paused or stopped between pieces. */
+function* offsetSteps(oldObjs: readonly DrawnObject[], newObjs: readonly DrawnObject[], opts: OffsetOptions, chunk: number): Generator<void, OffsetResult> {
   const t = tIndex(opts.axis),
     top = opts.top ?? 4;
-  const keep = (objs: readonly DrawnObject[], body: [number, number], ignored: Box[] = []) =>
-    objs.filter((o) => inBody(o, t, body) && !isIgnored(o, ignored));
+  let work = 0;
+  const due = () => ++work % chunk === 0;
+  function* keep(objs: readonly DrawnObject[], body: [number, number], ignored: Box[] = []): Generator<void, DrawnObject[]> {
+    const out: DrawnObject[] = [];
+    for (const o of objs) {
+      if (inBody(o, t, body) && !isIgnored(o, ignored)) out.push(o);
+      if (due()) yield;
+    }
+    return out;
+  }
 
   const byKey = new Map<string, [number, number][]>();
-  for (const o of keep(oldObjs, opts.bodyOld, opts.ignoredOld)) {
+  for (const o of yield* keep(oldObjs, opts.bodyOld, opts.ignoredOld)) {
     const k = shapeKey(o);
     if (!k) continue;
     let list = byKey.get(k);
@@ -81,7 +93,8 @@ export function findOffset(oldObjs: readonly DrawnObject[], newObjs: readonly Dr
   }
   const bins = new Map<number, number>();
   const deltas: number[] = [];
-  for (const o of keep(newObjs, opts.bodyNew, opts.ignoredNew)) {
+  for (const o of yield* keep(newObjs, opts.bodyNew, opts.ignoredNew)) {
+    if (due()) yield;
     const k = shapeKey(o),
       list = k ? byKey.get(k) : undefined;
     if (!list || list.length > MAX_TWINS) continue;
@@ -112,4 +125,39 @@ export function findOffset(oldObjs: readonly DrawnObject[], newObjs: readonly Dr
     return { offset: near.reduce((a, b) => a + b, 0) / near.length, votes: near.length };
   });
   return { ...candidates[0]!, candidates };
+}
+
+export function findOffset(oldObjs: readonly DrawnObject[], newObjs: readonly DrawnObject[], opts: OffsetOptions): OffsetResult {
+  const g = offsetSteps(oldObjs, newObjs, opts, Infinity);
+  for (;;) {
+    const r = g.next();
+    if (r.done) return r.value;
+  }
+}
+
+/** Thrown by the search that can be stopped, once it is. */
+export class OffsetCancelled extends Error {
+  constructor() {
+    super("offset search cancelled");
+    this.name = "OffsetCancelled";
+  }
+}
+
+export interface OffsetControl {
+  /** Called between pieces: lets the thread do other work (a stop request arrives meanwhile). */
+  pause(): Promise<void>;
+  cancelled(): boolean;
+  /** Objects per piece. */
+  chunk?: number;
+}
+
+/** The same search, in pieces: it pauses between them, and ends with OffsetCancelled once `cancelled()` is true. */
+export async function findOffsetAsync(oldObjs: readonly DrawnObject[], newObjs: readonly DrawnObject[], opts: OffsetOptions, ctl: OffsetControl): Promise<OffsetResult> {
+  const g = offsetSteps(oldObjs, newObjs, opts, ctl.chunk ?? CHUNK);
+  for (;;) {
+    const r = g.next();
+    if (r.done) return r.value;
+    await ctl.pause();
+    if (ctl.cancelled()) throw new OffsetCancelled();
+  }
 }

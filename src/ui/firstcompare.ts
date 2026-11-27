@@ -1,18 +1,16 @@
-// The first thin pass through the comparison (slice "match objects and show the first
-// Differences"), behind the URL flag `?vergleich`: the "Vergleich" tab compares the two
-// Plans with the detected Offset, the default Header and Footer and the Time direction
-// from the Old Plan's page shape, and shows both Plans in one picture with the marks.
-// A temporary view: the setup tabs and the smooth comparison view replace it.
+// The temporary "Vergleich" view (until the smooth comparison view replaces it): it listens
+// for the ComparisonResult that "Vergleichen" hands over (src/ui/handoff.ts) and shows both
+// Plans in one picture with the marks, and the facts and the Places in the sidebar.
 
-import { guessTimeDirection } from "../compare/body";
 import type { Place } from "../compare/places";
 import { kindText, umText, wannText, wasText, woText } from "../compare/wording";
 import type { ComparisonSetup, Mark } from "../compare/compare";
-import type { TimeDirection } from "../compare/objects";
+import type { ComparisonResult } from "../compare/result";
 import type { Engine } from "../engine/client";
 import type { BusyWindow } from "./busy";
 import { markFrame, type MarkFrame } from "./markframe";
 import { drawMarks, MARK_COLOURS } from "./marks";
+import type { ComparisonHandoff } from "./handoff";
 import type { Role, Sides } from "./openplans";
 
 export interface ComparedPlan {
@@ -26,19 +24,13 @@ export interface FirstComparisonDeps {
   engines: () => Sides<Engine>;
   plans: () => Sides<ComparedPlan | undefined>;
   busy: BusyWindow;
-  /** Until the "Öffnen" tab sets it: guessed from the Old Plan's page shape. */
-  timeDirection?: () => TimeDirection;
+  handoff: ComparisonHandoff;
 }
-
-export const FLAG = "vergleich";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const mm = (v: number) => v.toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const seconds = (ms: number) => `${(ms / 1000).toLocaleString("de-DE", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} s`;
 const count = (n: number) => n.toLocaleString("de-DE");
-
-/** Is the first pass switched on for this page? */
-export const isOn = (search = location.search) => new URLSearchParams(search).has(FLAG);
 
 async function picture(engine: Engine, plan: ComparedPlan, frame: MarkFrame): Promise<HTMLCanvasElement> {
   const t = await engine.renderThumbnail({
@@ -110,70 +102,63 @@ function showPlaces(places: readonly Place[]): void {
   $("body-compare").append(h, ol);
 }
 
-export function setUpFirstComparison(deps: FirstComparisonDeps): void {
-  if (!isOn()) return;
-  const tab = $<HTMLButtonElement>("tab-compare");
+export function setUpFirstComparison(deps: FirstComparisonDeps) {
   const view = $("marks-view"),
     canvas = $<HTMLCanvasElement>("marks-canvas"),
     plansView = $("plans");
-  const unlock = () => (tab.disabled = false);
-  unlock();
-  $("proceed").addEventListener("click", unlock);
-  let running = false;
+  let shown = false;
+  /** The result the picture and the sidebar show now. */
+  let drawn: ComparisonResult | undefined;
+  let drawing = false;
 
-  async function run(): Promise<void> {
+  async function show(r: ComparisonResult): Promise<void> {
     const plans = deps.plans(),
       engines = deps.engines();
-    if (running || !plans.old || !plans.new) return;
-    running = true;
+    if (drawing || !plans.old || !plans.new) return;
+    drawing = true;
     view.dataset.state = "running";
-    await deps.busy.start("Vergleich wird berechnet…");
+    await deps.busy.start("Vergleich wird angezeigt…");
     try {
       const started = performance.now();
       const old = plans.old,
         nu = plans.new;
-      const timeDirection = deps.timeDirection?.() ?? guessTimeDirection([old.widthMm, old.heightMm]);
-      // Both Plans are read at the same time, each in its worker.
-      const [newPlan] = await Promise.all([engines.new.planObjects(), engines.old.extractObjects()]);
-      const read = performance.now();
-      const r = await engines.old.firstPass({ objects: newPlan.objects, pageMm: newPlan.pageMm }, timeDirection);
-      const compared = performance.now();
       const frame = markFrame({ old: [old.widthMm, old.heightMm], new: [nu.widthMm, nu.heightMm] }, r.setup.axis, r.setup.offset);
       const pictures = await Promise.all((["old", "new"] as Role[]).map((role) => picture(engines[role], plans[role]!, frame)));
       draw(frame, pictures as [HTMLCanvasElement, HTMLCanvasElement], r.comparison.marks, r.setup);
-      const drawn = performance.now();
       const { counts } = r.comparison;
       Object.assign(view.dataset, {
         state: "done",
         added: String(counts.added),
         removed: String(counts.removed),
         offset: r.setup.offset.toFixed(3),
-        timeDirection,
+        timeDirection: r.timeDirection,
+        places: String(r.places.length),
       });
       showFacts(
         [
-          ["Zeitrichtung", timeDirection === "down" ? "senkrecht" : "waagerecht"],
+          ["Zeitrichtung", r.timeDirection === "down" ? "senkrecht" : "waagerecht"],
           ["Versatz", `${mm(r.setup.offset)} mm`],
-          ["Kandidaten", r.offset.candidates.map((c) => `${mm(c.offset)} mm (${count(c.votes)})`).join(", ") || "–"],
+          ["Kopf und Fuß alt", `${mm(r.setup.old.body[0])} / ${mm(r.setup.old.body[1])} mm`],
+          ["Kopf und Fuß neu", `${mm(r.setup.new.body[0])} / ${mm(r.setup.new.body[1])} mm`],
+          ["Ausgenommen", `${count(r.setup.old.ignored.length)} alt / ${count(r.setup.new.ignored.length)} neu`],
+          ["Kandidaten", r.offsetCandidates.map((c) => `${mm(c.offset)} mm (${count(c.votes)})`).join(", ") || "–"],
           ["Hinzugefügt", count(counts.added)],
           ["Entfernt", count(counts.removed)],
           ["Gleiche Objekte", `${count(counts.unchanged)} von ${count(counts.old)} / ${count(counts.new)}`],
-          ["Objekte lesen", `${seconds(r.extractMs)} / ${seconds(newPlan.extractMs)} (zusammen ${seconds(read - started)})`],
-          ["Versatz suchen", seconds(r.ms.offset)],
           ["Abgleich", seconds(r.ms.compare)],
           ["Stellen bilden", seconds(r.ms.places)],
-          ["Übertragen", seconds(compared - read - r.ms.offset - r.ms.compare - r.ms.places)],
-          ["Bild zeichnen", seconds(drawn - compared)],
-          ["Gesamt", seconds(drawn - started)],
+          ["Übertragen", seconds(r.ms.transfer)],
+          ["Bild zeichnen", seconds(performance.now() - started)],
         ],
-        "Vorläufig: Kopf und Fuß geschätzt, Versatz automatisch gefunden, keine Bereiche ausgenommen.",
+        "Vorläufige Ansicht: Sie zeigt das Ergebnis des Vergleichs mit Ihren Einstellungen.",
       );
       showPlaces(r.places);
+      drawn = r;
     } catch (e) {
       view.dataset.state = "error";
-      showFacts([], `Der Vergleich ist fehlgeschlagen: ${String(e)}`);
+      showFacts([], `Der Vergleich konnte nicht gezeigt werden: ${String(e)}`);
     } finally {
-      running = false;
+      drawing = false;
       await deps.busy.end();
     }
   }
@@ -203,14 +188,26 @@ export function setUpFirstComparison(deps: FirstComparisonDeps): void {
     canvas.style.width = `${frame.widthPx}px`;
   }
 
-  for (const t of document.querySelectorAll<HTMLButtonElement>(".tab")) {
-    t.addEventListener("click", () => {
-      const on = t === tab;
-      view.hidden = !on;
-      plansView.hidden = on;
-      // the sidebar shows its facts and the Places (the tab flow does not reach this tab yet)
-      if (on) for (const b of document.querySelectorAll<HTMLElement>(".tab-body")) b.hidden = b.id !== "body-compare";
-      if (on) void run();
-    });
-  }
+  return {
+    /** The "Vergleich" tab is shown: draws the latest result (once). */
+    enter(): void {
+      shown = true;
+      view.hidden = false;
+      plansView.hidden = true;
+      const r = deps.handoff.latest();
+      if (r && r !== drawn) void show(r);
+    },
+    /** Another tab is shown. */
+    leave(): void {
+      shown = false;
+      view.hidden = true;
+      plansView.hidden = false;
+    },
+    /** Hears a new result while the tab is already shown (it is drawn at once). */
+    listen(): () => void {
+      return deps.handoff.subscribe((r) => {
+        if (shown && r !== drawn) void show(r);
+      });
+    },
+  };
 }

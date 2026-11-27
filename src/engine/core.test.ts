@@ -88,13 +88,40 @@ describe("engine core", () => {
     expect(core.planObjects().pageMm.map(Math.round)).toEqual([420, 297]);
   });
 
-  it("compares the Plan, as the Old Plan, with the New Plan's objects in a first pass", () => {
+  it("searches the Offset of the Plan, as the Old Plan, against the New Plan's objects", async () => {
     const gt = pair("right");
     core.openDocument(fileBuffer(gt.old.file));
     core.openPage(0);
-    const r = core.firstPass({ objects: objectsOf(gt.new.file), pageMm: gt.new.pageMm }, "right");
-    expect(r.offset.offset).toBeCloseTo(gt.offsetMm, 2);
+    const r = await core.findOffset(
+      { newPlan: { objects: objectsOf(gt.new.file), pageMm: gt.new.pageMm }, axis: "x", bodyOld: gt.old.bodyMm, bodyNew: gt.new.bodyMm },
+      { pause: async () => {}, cancelled: () => false },
+    );
+    expect(r.offset).toBeCloseTo(gt.offsetMm, 2);
+  });
+
+  it("stops the Offset search when it is cancelled", async () => {
+    const gt = pair("right");
+    core.openDocument(fileBuffer(gt.old.file));
+    core.openPage(0);
+    const search = core.findOffset(
+      { newPlan: { objects: objectsOf(gt.new.file), pageMm: gt.new.pageMm }, axis: "x", bodyOld: gt.old.bodyMm, bodyNew: gt.new.bodyMm },
+      { pause: async () => {}, cancelled: () => true, chunk: 10 },
+    );
+    await expect(search).rejects.toThrow(/cancelled/);
+  });
+
+  it("compares the Plan, as the Old Plan, with the New Plan's objects under the given setup", () => {
+    const gt = pair("right");
+    core.openDocument(fileBuffer(gt.old.file));
+    core.openPage(0);
+    const setup = { axis: "x" as const, offset: gt.offsetMm, old: { body: gt.old.bodyMm, ignored: [] }, new: { body: gt.new.bodyMm, ignored: [] } };
+    const r = core.runComparison({ newPlan: { objects: objectsOf(gt.new.file), pageMm: gt.new.pageMm }, setup, axisZones: { old: {}, new: {} } });
     expect(r.comparison.marks.some((m) => m.kind === "Added")).toBe(true);
     expect(r.comparison.marks.some((m) => m.kind === "Removed")).toBe(true);
+    expect(r.places.length).toBeGreaterThan(0);
+    // The same call with every object inside an Ausgenommen box finds nothing.
+    const all = { x0: 0, y0: 0, x1: 1e4, y1: 1e4 };
+    const none = core.runComparison({ newPlan: { objects: objectsOf(gt.new.file), pageMm: gt.new.pageMm }, setup: { ...setup, old: { ...setup.old, ignored: [all] }, new: { ...setup.new, ignored: [all] } }, axisZones: { old: {}, new: {} } });
+    expect(none.comparison.marks).toEqual([]);
   });
 });
