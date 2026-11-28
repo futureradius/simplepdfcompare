@@ -1453,12 +1453,14 @@ export class CompareView {
       drawnRings = 0;
     this.marksReady = true;
     this.drawnVersion = this.tileVersion;
+    if (!marksOn) this.painter.set("view", []);
     if (marksOn) {
       const v = this.visible();
       const level = levelFor(vp.s);
       if (level === null) {
-        // Zoomed in: few marks in view, painted live.
+        // Zoomed in: few marks in view, painted live; no tile is wanted for the view.
         this.tileStats = null;
+        this.painter.set("view", []);
         const n = this.paintLive(ctx, this.layers, vp, t0 + OUTLINE_FRAME_MS);
         this.marksReady = !this.outlinesMissing;
         if (this.outlinesMissing) this.requestDraw();
