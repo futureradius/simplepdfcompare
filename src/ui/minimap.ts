@@ -5,6 +5,7 @@
 // Adapted from simplepdfclipper's minimap.ts.
 
 import type { Box } from "../compare/objects";
+import { span } from "./spans";
 
 /** Largest share of the view's height and width the minimap may take. */
 export const MINIMAP_SHARE = 1 / 3;
@@ -78,6 +79,8 @@ export class Minimap {
   private plan: { width: number; height: number } | undefined;
   private origin: Origin = ZERO;
   private painter: MinimapPainter | undefined;
+  /** The Places layer is to be painted again, once the minimap shows. */
+  private placesDirty = false;
   private scale = 1;
   private collapsed = false;
   private whole = false;
@@ -125,7 +128,10 @@ export class Minimap {
     this.layout();
   }
 
-  /** Paints the Places layer again (or clears it), e.g. after the filter or hiding changed. */
+  /**
+   * Paints the Places layer again (or clears it), e.g. after the filter or hiding changed. Only
+   * while the minimap shows: hidden, it is painted when it shows again.
+   */
   setPlaces(painter: MinimapPainter | undefined): void {
     this.painter = painter;
     this.paintPlaces();
@@ -134,6 +140,11 @@ export class Minimap {
   private paintPlaces(): void {
     const c = this.el.places;
     if (!c || !this.plan) return;
+    if (this.el.root.hidden) {
+      this.placesDirty = true;
+      return;
+    }
+    this.placesDirty = false;
     const dpr = window.devicePixelRatio || 1;
     const w = this.plan.width * this.scale,
       h = this.plan.height * this.scale;
@@ -144,7 +155,7 @@ export class Minimap {
     const ctx = c.getContext("2d")!;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
-    this.painter?.(ctx, this.scale, this.origin);
+    span("minimap Places", () => this.painter?.(ctx, this.scale, this.origin));
   }
 
   setZones(boxes: Box[]): void {
@@ -170,6 +181,7 @@ export class Minimap {
   private updateVisibility(): void {
     this.el.root.hidden = !this.plan || this.collapsed || this.whole;
     this.el.expand.hidden = !this.plan || !this.collapsed || this.whole;
+    if (!this.el.root.hidden && this.placesDirty) this.paintPlaces();
   }
 
   private layout(): void {

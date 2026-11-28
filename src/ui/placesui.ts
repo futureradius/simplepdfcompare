@@ -13,6 +13,7 @@ import { h } from "./dom";
 import { FilterPanel } from "./filterpanel";
 import { PlacesPanel } from "./placespanel";
 import { PlacesState } from "./placesstate";
+import { span } from "./spans";
 import { minimapBottom } from "./navlayout";
 import { COLUMN_IDS, isDataColumn, type SortKey } from "./placetable";
 
@@ -209,11 +210,11 @@ export function setUpPlaces(deps: PlacesDeps): PlacesUi {
   // ---- The state tells everyone ----------------------------------------------------------
 
   state.onChange = (what) => {
-    panel.update(what);
-    if (what === "filter" || what === "result") filter.draw();
+    span("list", () => panel.update(what));
+    if (what === "filter" || what === "result") span("filter panel", () => filter.draw());
     drawNav();
     if (what === "result") return; // the view takes the result's `shown` with `show`
-    if (what === "filter" || what === "hidden") view.setShown(state.shown());
+    if (what === "filter" || what === "hidden") span("Plan: shown marks", () => view.setShown(state.shown()));
     if (what === "selection" || what === "hidden" || what === "filter") view.setSelection(state.selection.nos());
   };
 

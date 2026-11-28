@@ -1,5 +1,67 @@
 import { describe, expect, it } from "vitest";
-import { LEVEL_STEP, levelFor, levelScale, MAX_TILED_S, metricScale, tilesFor, TILE_PX } from "./marktiles";
+import { LEVEL_STEP, levelFor, levelScale, MAX_TILED_S, metricScale, nearestFirst, pictureFor, tilesFor, TILE_PX } from "./marktiles";
+
+describe("pictureFor: what stands for a tile whose own picture is not up to date", () => {
+  const frame = { x0: 0, y0: 0, x1: 3000, y1: 3000 };
+  // Level 4 (1.0 px/mm, 1024 mm tiles) and its neighbours.
+  const k = 4;
+  const t = tilesFor(k, frame, { x0: 10, y0: 10, x1: 20, y1: 20 })[0]!;
+  type C = { current: boolean; name: string };
+  const cache = (entries: Record<string, C>) => (kk: number, tx: number, ty: number) => entries[`${kk}:${tx}:${ty}`];
+  const all = (kk: number, current: boolean, name: string) =>
+    Object.fromEntries(tilesFor(kk, frame, t.rect).map((u) => [`${kk}:${u.tx}:${u.ty}`, { current, name }]));
+
+  it("is its own picture when that is up to date", () => {
+    const p = pictureFor(k, t, frame, cache({ "4:0:0": { current: true, name: "own" }, ...all(5, true, "coarser") }));
+    expect(p.own?.name).toBe("own");
+    expect(p.current).toBe(true);
+  });
+
+  it("is another level's up-to-date pictures before its own outdated one, the nearest level and coarser first", () => {
+    const p = pictureFor(k, t, frame, cache({ "4:0:0": { current: false, name: "own" }, ...all(3, true, "finer"), ...all(5, true, "coarser"), ...all(6, true, "coarser 2") }));
+    expect(p.own).toBeUndefined();
+    expect(p.cover?.level).toBe(5);
+    expect(p.cover?.tiles.map(([c]) => c.name)).toEqual(["coarser"]);
+    expect(p.current).toBe(true);
+  });
+
+  it("takes a level only when all its pictures over the tile are there", () => {
+    const finer = all(3, true, "finer");
+    delete finer[Object.keys(finer)[0]!];
+    const p = pictureFor(k, t, frame, cache({ ...finer, ...all(6, true, "coarser 2") }));
+    expect(p.cover?.level).toBe(6);
+  });
+
+  it("is its own outdated picture when nothing up to date can stand in, and says so", () => {
+    const p = pictureFor(k, t, frame, cache({ "4:0:0": { current: false, name: "own" }, ...all(5, false, "coarser") }));
+    expect(p.own?.name).toBe("own");
+    expect(p.current).toBe(false);
+  });
+
+  it("takes an outdated coarser level before an outdated finer one: fewer pictures to draw", () => {
+    const p = pictureFor(k, t, frame, cache({ ...all(3, false, "finer"), ...all(6, false, "coarser 2") }));
+    expect(p.cover?.level).toBe(6);
+    expect(p.current).toBe(false);
+  });
+
+  it("is an outdated cover when there is no picture of its own, and nothing when there is none at all", () => {
+    expect(pictureFor(k, t, frame, cache(all(5, false, "coarser"))).cover?.level).toBe(5);
+    const none = pictureFor(k, t, frame, cache({}));
+    expect(none.own).toBeUndefined();
+    expect(none.cover).toBeUndefined();
+    expect(none.current).toBe(false);
+  });
+});
+
+describe("nearestFirst: the tiles in view are painted from the middle of the view out", () => {
+  it("orders them by their distance from the view's centre", () => {
+    const frame = { x0: 0, y0: 0, x1: 4096, y1: 4096 };
+    const ts = tilesFor(8, frame, frame); // 0.5 px/mm: 2048 mm tiles, 2 × 2
+    const order = nearestFirst(ts, { x: 3000, y: 1000 }).map((u) => `${u.tx}:${u.ty}`);
+    expect(order[0]).toBe("1:0");
+    expect(order[3]).toBe("0:1");
+  });
+});
 
 describe("levelFor: the cached level a zoom draws from", () => {
   it("is none when zoomed in further than the finest level", () => {
