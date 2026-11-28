@@ -87,6 +87,8 @@ function makePage(wMm, hMm) {
     lw: (mm) => ops.push(`${L(mm)} w`),
     dash: (onMm, offMm) => ops.push(onMm ? `[${L(onMm)} ${L(offMm)}] 0 d` : "[] 0 d"),
     line: (x1, y1, x2, y2) => ops.push(`${X(x1)} ${Y(y1)} m ${X(x2)} ${Y(y2)} l S`),
+    /** An open line through many points, stroked once. */
+    polyline: (pts) => ops.push(pts.map(([x, y], i) => `${X(x)} ${Y(y)} ${i ? "l" : "m"}`).join(" ") + " S"),
     rectFill: (x, y, w, h) => ops.push(`${X(x)} ${Y(y + h)} ${L(w)} ${L(h)} re f`),
     rectStroke: (x, y, w, h) => ops.push(`${X(x)} ${Y(y + h)} ${L(w)} ${L(h)} re S`),
     poly: (pts, op) => ops.push(pts.map(([x, y], i) => `${X(x)} ${Y(y)} ${i ? "l" : "m"}`).join(" ") + ` h ${op}`),
@@ -1088,6 +1090,9 @@ function densePair() {
     // week ticks along the Activity, so that each Place has a few more marks.
     a.note = `km ${fmtKm(a.ka)} – ${fmtKm(a.kb)} Gl. ${1 + Math.floor(rnd() * 3)} ${pk(TRADES)[0]}`;
     a.feet = rnd() < 0.6;
+    // Some carry a progress line drawn as one long polyline of hundreds to a thousand-odd
+    // segments, as Plan software exports curves: few marks, but each costly to draw.
+    if (rnd() < 0.05) a.curve = { n: 300 + Math.floor(rnd() * 900), amp: btw(1, 4), waves: btw(3, 12) };
     const r = rnd();
     // About a third changed: moved, longer, relabelled, removed; and some added.
     const nu =
@@ -1146,6 +1151,16 @@ function densePair() {
       if (a.line) {
         p.lw(0.6);
         p.line(KX(a.ka), y0, KX(a.kb), y1);
+      }
+      if (a.curve) {
+        const { n, amp, waves } = a.curve, pts = [];
+        for (let i = 0; i <= n; i++) {
+          const f = i / n;
+          pts.push([KX(a.ka + (a.kb - a.ka) * f) + 6 + amp * Math.sin(f * waves * 2 * Math.PI), y0 + (y1 - y0) * f]);
+        }
+        p.rgb(a.color, true);
+        p.lw(0.2);
+        p.polyline(pts);
       }
       // week ticks across the Activity
       p.lw(0.15);
