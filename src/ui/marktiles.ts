@@ -56,3 +56,51 @@ export function tilesFor(k: number, frame: Box, visible: Box): Tile[] {
   }
   return out;
 }
+
+/** The levels that may stand in for level k: the nearest first, coarser before finer, then only coarser. */
+function standInLevels(k: number): number[] {
+  const out = [k + 1, k - 1, k + 2, k - 2, k + 3, k - 3];
+  for (let i = 4; i < 44; i++) out.push(k + i);
+  return out.filter((kk) => kk >= 0);
+}
+
+/** A cached picture of a tile; `current`: it shows the marks as they are now. */
+export interface Cached {
+  current: boolean;
+}
+
+export interface Picture<T extends Cached> {
+  /** The tile's own picture. */
+  own?: T;
+  /** Else another level's pictures over the tile, all of them there. */
+  cover?: { level: number; tiles: [T, Box][] };
+  /** What it shows is up to date. */
+  current: boolean;
+}
+
+/**
+ * What a frame draws for tile `t` of level k, from the cached pictures (`get`): its own when
+ * up to date; else another level's up-to-date pictures (a little off in size and sharpness,
+ * but right); else its own outdated picture, else another level's outdated ones, until the
+ * new one is painted; else nothing.
+ */
+export function pictureFor<T extends Cached>(k: number, t: Tile, frame: Box, get: (k: number, tx: number, ty: number) => T | undefined): Picture<T> {
+  const own = get(k, t.tx, t.ty);
+  if (own?.current) return { own, current: true };
+  let outdated: Picture<T>["cover"];
+  for (const kk of standInLevels(k)) {
+    const under = tilesFor(kk, frame, t.rect).map((u) => [get(kk, u.tx, u.ty), u.rect] as const);
+    if (!under.length || !under.every(([u]) => u)) continue;
+    const cover = { level: kk, tiles: under as [T, Box][] };
+    if (under.every(([u]) => u!.current)) return { cover, current: true };
+    outdated ??= cover;
+  }
+  if (own) return { own, current: false };
+  return outdated ? { cover: outdated, current: false } : { current: false };
+}
+
+/** The tiles ordered by the distance of their middle from `centre` (Old frame mm), the nearest first. */
+export function nearestFirst(tiles: readonly Tile[], centre: { x: number; y: number }): Tile[] {
+  const d = (t: Tile) => Math.hypot((t.rect.x0 + t.rect.x1) / 2 - centre.x, (t.rect.y0 + t.rect.y1) / 2 - centre.y);
+  return [...tiles].sort((a, b) => d(a) - d(b));
+}
