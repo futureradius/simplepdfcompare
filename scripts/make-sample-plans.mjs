@@ -1084,6 +1084,10 @@ function densePair() {
     const a = line
       ? { line, color, t0, t1: t0 + Math.floor(btw(3, 40)), ka, kb: Math.min(KM1 - 0.3, ka + btw(-1, 2.5)), w: 0, label: `${pk(OBJECTS)} ${pk(VERBS)}` }
       : { line, color, t0, t1: t0 + Math.floor(btw(3, 25)), ka, kb: ka + btw(-0.5, 1.5), w: btw(0.2, 1), label: `${pk(OBJECTS)} ${pk(VERBS)}` };
+    // As on a full real schedule: a second label line (km range and track), hatched feet, and
+    // week ticks along the Activity, so that each Place has a few more marks.
+    a.note = `km ${fmtKm(a.ka)} – ${fmtKm(a.kb)} Gl. ${1 + Math.floor(rnd() * 3)} ${pk(TRADES)[0]}`;
+    a.feet = rnd() < 0.6;
     const r = rnd();
     // About a third changed: moved, longer, relabelled, removed; and some added.
     const nu =
@@ -1143,17 +1147,38 @@ function densePair() {
         p.lw(0.6);
         p.line(KX(a.ka), y0, KX(a.kb), y1);
       }
+      // week ticks across the Activity
+      p.lw(0.15);
+      for (let d = a.t0 + 7; d < a.t1; d += 7) {
+        const f = (d - a.t0) / (a.t1 - a.t0), x = KX(a.ka + (a.kb - a.ka) * f);
+        p.line(x - 1.5, DY(d), x + 1.5, DY(d));
+      }
+      if (a.feet) {
+        const fw = 10, fh = 2 * DAY;
+        for (const [fx, fy] of [[KX(a.ka) - fw / 2, y0 - fh], [KX(a.kb) - fw / 2, y1]]) {
+          const fp = [[fx, fy], [fx + fw, fy], [fx + fw, fy + fh], [fx, fy + fh]];
+          p.fillPattern(p.hatch(a.color, 1.5, fp[0], 0.1), fp);
+          p.rgb(a.color, true);
+          p.lw(0.25);
+          p.rectStroke(fx, fy, fw, fh);
+        }
+      }
       const ly = y0 + 4;
       const right = pts[1][0] + ((pts[2][0] - pts[1][0]) * (ly - y0)) / (y1 - y0);
-      const lx = right + 3, by = ly + 1;
-      const tb = grow(box(lx, by - 0.72 * 7 * PT_MM, lx + textWidthMm("F1", 7, a.label), by + 0.22 * 7 * PT_MM), 0.3);
-      p.rgb([1, 1, 1], false);
-      p.rectFill(tb.x0, tb.y0, tb.x1 - tb.x0, tb.y1 - tb.y0);
-      p.rgb(a.color, false);
-      p.text("F1", 7, lx, by, a.label);
+      const lx = right + 3;
+      let first = null;
+      [a.label, a.note].forEach((s, i) => {
+        const by = ly + 1 + i * 2.8;
+        const tb = grow(box(lx, by - 0.72 * 7 * PT_MM, lx + textWidthMm("F1", 7, s), by + 0.22 * 7 * PT_MM), 0.3);
+        first ??= tb;
+        p.rgb([1, 1, 1], false);
+        p.rectFill(tb.x0, tb.y0, tb.x1 - tb.x0, tb.y1 - tb.y0);
+        p.rgb(a.color, false);
+        p.text("F1", 7, lx, by, s);
+      });
       p.rgb(a.color, true);
       p.lw(0.12);
-      p.line(right, ly, tb.x0, ly);
+      p.line(right, ly, first.x0, ly);
     };
     for (const a of acts) if (a[version]) drawAct(a[version]);
     p.unclip();
