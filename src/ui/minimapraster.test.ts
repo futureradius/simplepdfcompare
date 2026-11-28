@@ -29,6 +29,15 @@ describe("placesMask: the Places of the minimap as pixels, each mark grown by ha
     expect(at(m, W, 25, 5)).toBe(0); // inside its box, away from the line
   });
 
+  it("a polyline of a thousand tiny segments sets the pixels of its course, as one line would", () => {
+    const n = 1000,
+      coords: number[] = [];
+    for (let i = 0; i < n; i++) coords.push(2 + (30 * i) / n, 5, 2 + (30 * (i + 1)) / n, 5);
+    const many = placesMask(W, H, [{ colour: "added", marks: [{ shape: "line", box: { x0: 2, y0: 5, x1: 32, y1: 5 }, coords }] }], { scale: 1, origin: { x: 0, y: 0 }, r: 1.5 });
+    const one = placesMask(W, H, [{ colour: "added", marks: [{ shape: "line", box: { x0: 2, y0: 5, x1: 32, y1: 5 }, coords: [2, 5, 32, 5] }] }], { scale: 1, origin: { x: 0, y: 0 }, r: 1.5 });
+    expect([...many]).toEqual([...one]);
+  });
+
   it("a larger area is filled inside, not only along its edges", () => {
     const area = { shape: "area" as const, box: { x0: 5, y0: 5, x1: 30, y1: 30 }, coords: [5, 5, 30, 5, 30, 30, 5, 30] };
     const m = placesMask(W, H, [{ colour: "removed", marks: [area] }], { scale: 1, origin: { x: 0, y: 0 }, r: 1.5 });

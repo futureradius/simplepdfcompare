@@ -96,7 +96,27 @@ export function placesMask(w: number, h: number, items: readonly MaskItem[], o: 
     if (k.shape === "word" || (x1 - x0 < below && y1 - y0 < below)) return rect(x0 - r, y0 - r, x1 + r, y1 + r);
     const c = k.coords;
     if (k.shape === "line") {
-      for (let q = 0; q + 3 < c.length; q += 4) capsule(X(c[q]!), Y(c[q + 1]!), X(c[q + 2]!), Y(c[q + 3]!));
+      // A polyline of many short segments: runs that stay within a pixel are set as one, so a
+      // line of a thousand segments costs what its course on the minimap costs.
+      let sx = 0,
+        sy = 0,
+        ex = 0,
+        ey = 0,
+        open = false;
+      for (let q = 0; q + 3 < c.length; q += 4) {
+        const ax = X(c[q]!),
+          ay = Y(c[q + 1]!),
+          bx = X(c[q + 2]!),
+          by = Y(c[q + 3]!);
+        if (open && Math.abs(ax - ex) < 0.01 && Math.abs(ay - ey) < 0.01 && Math.hypot(bx - sx, by - sy) < 1) {
+          ex = bx;
+          ey = by;
+          continue;
+        }
+        if (open) capsule(sx, sy, ex, ey);
+        (sx = ax), (sy = ay), (ex = bx), (ey = by), (open = true);
+      }
+      if (open) capsule(sx, sy, ex, ey);
       return;
     }
     // An area: its edges, then its inside (even-odd, as it is filled on the Plan).
