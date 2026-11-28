@@ -4,6 +4,8 @@ ADR 0004 draws the Differences every frame as vector shapes. On a full-size Plan
 
 ## Decision
 
+Amended by ADR 0011: tiles are painted in slices, the tiles in view first, and a change makes them outdated rather than dropping them.
+
 - **Zoomed out, the marks are pictures.** Up to 2 device px per mm they are painted once into tiles of 1024 px at levels 2^¼ apart, and a frame only draws those tiles, as it does with the Plans' pictures. Zoomed in further, the marks are still drawn live.
 - **Sizes kept on screen stay within ±9 %.** A tile sizes the outline, the x–x–x and the thinnest line for the middle of the zooms it is drawn at. Thin lines are a little softer than live, as the Plans' pictures are.
 - **Nothing waits for a tile.**

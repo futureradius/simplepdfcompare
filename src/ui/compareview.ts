@@ -3,9 +3,11 @@
 // whatever comparison it is given (`show`): the marks, the Places and the setup used.
 //
 // Smooth on a 14 m Plan (ADR 0004): every frame draws only cached pictures (each Plan's
-// overview, rendered once at 0.5 px/mm, and up to two sharp layers per Plan) and the marks as
-// vector shapes. 120 ms after the view rests, the visible area plus 25 % is rendered sharp by
-// each Plan's worker through the bands it touches. Nothing renders while the view moves.
+// overview, rendered once at 0.5 px/mm, and up to two sharp layers per Plan) and the marks:
+// zoomed out from cached tiles (ADR 0010), painted in short slices, the view's first (ADR
+// 0011), zoomed in as vector shapes. 120 ms after the view rests, the visible area plus 25 %
+// is rendered sharp by each Plan's worker through the bands it touches. Nothing renders while
+// the view moves.
 //
 // The camera is simplepdfclipper's viewer (as in planview.ts): the wheel zooms around the
 // pointer, the right or middle button pans. The left button is left for selecting Places (a
@@ -31,13 +33,14 @@ import {
   type Shown,
   type ViewSettings,
 } from "./compareframe";
-import { Layers, MARK_COLOURS, paintMark, paintMarks, paintNotCompared, paintNotComparedLabels, paintOutline, paintRings, pill, REMOVED_INK, type PaintMark, type PaintOutline, type Viewport } from "./comparepaint";
+import { AT_ONCE, Layers, MARK_COLOURS, paintMark, paintMarks, paintMarkSteps, paintNotCompared, paintNotComparedLabels, paintOutline, paintRings, pill, REMOVED_INK, type Pace, type PaintMark, type PaintOutline, type Viewport } from "./comparepaint";
 import { Minimap, minimapShapes, type MinimapElements } from "./minimap";
-import { levelFor, levelScale, MAX_TILED_S, metricScale, tilesFor, TILE_PX, type Tile } from "./marktiles";
+import { levelFor, levelScale, MAX_TILED_S, metricScale, nearestFirst, pictureFor, tilesFor, TILE_PX, type Tile } from "./marktiles";
 import { boxOutline, OUTLINE_MARGIN_MM, outlineGroups, outlineOf, type OutlineGroup } from "./outlines";
 import type { Role, Sides } from "./openplans";
 import { boxSelect, placeAt, type Pickable } from "./picking";
 import { PX_PER_MM_100 } from "./planview";
+import { BatchSizer, SliceRunner, type Lane } from "./slices";
 
 /** CAD: a plain drag or click replaces, Shift adds, Ctrl removes. */
 export type SelectMode = "replace" | "add" | "remove";
@@ -129,21 +132,39 @@ const OUTLINE_FRAME_MS = 6;
 const MAX_TILES = 40;
 /** Levels with at most this many tiles for the whole frame are painted ahead, when idle. */
 const AHEAD_TILES = 3;
-const AHEAD_PAUSE_MS = 40;
+/**
+ * Tiles are painted in slices of about this (ADR 0011), each a task of its own, so that input
+ * and frames come between; a slice is made of batches of marks of about BATCH_MS each.
+ */
+const SLICE_MS = 10;
+const BATCH_MS = 5;
+/** A tile in view makes the outlines it needs that are not made yet, for up to this; painted ahead, it takes the rough ones. */
+const OUTLINE_TILE_MS = 150;
+/** Tile canvases kept to be used again. */
+const SPARE_CANVASES = 6;
 
 /**
- * A canvas keeps what it is told to draw and rasterizes it only when its picture is used:
- * the first frame to draw a tile painted ahead would pay for it. Reading a pixel makes it
- * rasterize now, while idle (or inside the busy window).
+ * A canvas keeps what it is told to draw and rasterizes it only when its picture is used, all
+ * at once. Reading a pixel makes it rasterize now: after each batch of a tile painted in
+ * slices, so that the cost is spread over the slices, not paid by the first frame to draw it.
  */
-const rasterize = (t: MarkTile) => void t.canvas.getContext("2d")!.getImageData(0, 0, 1, 1);
+const rasterize = (l: CanvasRenderingContext2D) => void l.getImageData(0, 0, 1, 1);
+const inMemory = () => {
+  const c = document.createElement("canvas");
+  c.width = c.height = TILE_PX;
+  return c.getContext("2d", { willReadFrequently: true })!;
+};
 
 /** A cached picture of the marks in one tile of one level (marktiles.ts). */
 interface MarkTile {
   canvas: HTMLCanvasElement;
+  /** What the tiles showed when it was painted (the shown marks, the display settings). */
+  version: number;
+  /** It shows the marks as they are now (its version is the view's), updated when looked at. */
+  current: boolean;
   /** Painted with rough outlines (not all made yet): painted again once they are. */
   rough: boolean;
-  /** Its outlines are all made now: still drawn, and painted again when the view rests. */
+  /** Its outlines are all made now, or a sharp picture of a Plan came: still drawn, and painted again when the view rests. */
   stale?: boolean;
   /** The frame that last drew it. */
   used: number;
@@ -189,13 +210,53 @@ export class CompareView {
   /** Rough outlines (the box around the marks) for groups whose outline is not made yet. */
   private roughOutlines = new Map<string, PaintOutline>();
   private outlineIdle: ReturnType<typeof setTimeout> | undefined;
-  /** The marks zoomed out, by level and tile ("k:tx:ty"). Dropped when what they show changes. */
+  /**
+   * The marks zoomed out, by level and tile ("k:tx:ty"). When what they show changes they are
+   * outdated: still drawn, where nothing up to date can stand in, until painted again.
+   */
   private tiles = new Map<string, MarkTile>();
-  private readonly tileLayers = new Layers();
+  /** Counts the changes of what the tiles show (the shown marks, the display settings). */
+  private tileVersion = 0;
+  /** Paints the tiles in slices: those in view first, then those painted ahead (ADR 0011). */
+  private readonly painter = new SliceRunner(
+    { now: () => performance.now(), later: (fn) => void setTimeout(fn, 0) },
+    { sliceMs: SLICE_MS, may: (lane) => lane === "view" || !this.moving, onError: (e) => console.warn("tile not painted", e) },
+  );
+  /**
+   * Each lane paints on its own canvases, so that a tile painted ahead may wait half done
+   * while one in view is painted. They are in memory (rasterized on the CPU): a batch is read
+   * back without waiting for the GPU. A tile painted is then copied once to a canvas of its own.
+   */
+  private readonly lanes: Record<Lane, { layers: Layers; work: CanvasRenderingContext2D }> = {
+    view: { layers: new Layers({ willReadFrequently: true }), work: inMemory() },
+    ahead: { layers: new Layers({ willReadFrequently: true }), work: inMemory() },
+  };
+  private readonly sizers = new Map<string, BatchSizer>();
+  /** Tile canvases to use again (takeCanvas). */
+  private readonly spare: HTMLCanvasElement[] = [];
+  /** Batches that take about BATCH_MS each, rasterized one by one. */
+  private readonly pace: Pace = (() => {
+    let t0 = 0;
+    const sizer = (phase: string) => {
+      let b = this.sizers.get(phase);
+      if (!b) this.sizers.set(phase, (b = new BatchSizer(BATCH_MS)));
+      return b;
+    };
+    return {
+      size: (phase) => {
+        t0 = performance.now();
+        return sizer(phase).size();
+      },
+      done: (phase, l, n) => {
+        rasterize(l);
+        sizer(phase).took(n, performance.now() - t0);
+      },
+      flush: rasterize,
+    };
+  })();
   private frameNo = 0;
   /** What the last frame drew from the tiles, for the tests. */
-  private tileStats: { level: number; drawn: number; painted: number; standIn: number } | null = null;
-  private tilesIdle: ReturnType<typeof setTimeout> | undefined;
+  private tileStats: { level: number; drawn: number; wanted: number; standIn: number; outdated: number } | null = null;
   private settings: ViewSettings = { ...DEFAULT_SETTINGS };
   /** The Places that are selected (the list and the Plan share one selection). */
   private selected: ReadonlySet<number> = new Set();
@@ -229,6 +290,10 @@ export class CompareView {
   private outlineMs = 0;
   /** The last frame drew a rough outline. */
   private outlinesMissing = false;
+  /** The last frame showed the marks as they are: no tile in view still to paint (for measuring). */
+  private marksReady = true;
+  /** The tile version the last frame drew with. */
+  private drawnVersion = -1;
   /** Sharp layers that arrived (for measuring). */
   private sharpRenders = 0;
   /** What the last frame drew, for the tests. */
@@ -302,6 +367,7 @@ export class CompareView {
     this.outlines.clear();
     this.roughOutlines.clear();
     this.tiles.clear();
+    this.tilesChanged();
     this.pickables = undefined;
     const sameFrame = Math.abs(before.x0 - this.frame.x0) + Math.abs(before.y0 - this.frame.y0) + Math.abs(before.x1 - this.frame.x1) + Math.abs(before.y1 - this.frame.y1) < 0.01;
     this.measure();
@@ -331,27 +397,34 @@ export class CompareView {
     this.setPeek(false, false);
   }
 
-  /** Which Places and marks are shown (filter and hiding, a later slice). Nothing moves. */
+  /**
+   * Which Places and marks are shown (filter and hiding). Nothing moves. The tiles in view are
+   * painted again first, in slices; until then the old ones stand in.
+   */
   setShown(shown: Shown): void {
     this.shown = shown;
-    this.tiles.clear();
-    this.scheduleTiles();
     this.updateSpots();
+    this.tilesChanged();
     this.scheduleOutlines();
+    this.scheduleTiles();
     this.requestDraw();
   }
 
-  /** The display settings (a later slice): base Plan, fade, outline, x–x–x. */
+  /** The display settings: base Plan, fade, outline, x–x–x, rings, the marks on or off. */
   setSettings(patch: Partial<ViewSettings>): void {
-    const baseChanged = patch.base !== undefined && patch.base !== this.settings.base;
+    const changed = (Object.keys(patch) as (keyof ViewSettings)[]).filter((k) => patch[k] !== this.settings[k]);
     this.settings = { ...this.settings, ...patch };
-    if (baseChanged) this.updateMinimapPicture();
-    // The tiles hold the marks as the settings draw them; the Plan under them and its fade are not in them.
-    if (Object.keys(patch).some((k) => k !== "base" && k !== "fade")) {
-      this.tiles.clear();
-      this.scheduleTiles();
-    }
+    if (changed.includes("base")) this.updateMinimapPicture();
+    // The tiles hold the marks as the settings draw them; the Plan under them, its fade, and whether the marks are on are not in them.
+    if (changed.some((k) => k !== "base" && k !== "fade" && k !== "marks")) this.tilesChanged();
+    if (changed.length) this.scheduleTiles();
     this.requestDraw();
+  }
+
+  /** What the tiles show changed: those painted are outdated, the painting under way stops. */
+  private tilesChanged(): void {
+    this.tileVersion++;
+    this.painter.clear();
   }
 
   /** Key 1: both Plans whole. */
@@ -487,6 +560,8 @@ export class CompareView {
       outlineMs: this.outlineMs,
       outlinesMade: this.outlines.size,
       tiles: this.tileStats,
+      marksReady: this.marksReady && this.drawnVersion === this.tileVersion,
+      tileVersion: this.tileVersion,
       outlineGroups: this.groups.length,
       drawn: { ...this.drawn, notCompared: this.drawn.notCompared.map((z) => ({ plan: z.plan, kind: z.kind, label: z.label })) },
     };
@@ -839,7 +914,10 @@ export class CompareView {
   private measure(): void {
     const parent = this.el.root;
     const dpr = window.devicePixelRatio || 1;
-    if (dpr !== this.dpr) this.tiles.clear();
+    if (dpr !== this.dpr) {
+      this.tiles.clear();
+      this.tilesChanged();
+    }
     this.dpr = dpr;
     const w = Math.max(1, parent.clientWidth),
       h = Math.max(1, parent.clientHeight);
@@ -858,6 +936,7 @@ export class CompareView {
     clearTimeout(this.restTimer);
     this.restTimer = setTimeout(() => {
       this.moving = false;
+      this.painter.kick();
       this.requestDraw();
     }, MOVING_MS);
     this.requestDraw();
@@ -946,6 +1025,18 @@ export class CompareView {
     metricS = vp.s,
     plan: (role: Role) => void = (role) => this.drawPlan(ctx, role, vp),
   ): { marks: number; outlines: number } {
+    const { met, vis, groups } = this.liveParts(vp, metricS);
+    this.outlinesMissing = false;
+    const outs = groups.map(({ g, small }) => (small ? this.roughOutline(g) : this.outlineOf(g, until)));
+    paintMarks(ctx, layers, vis, outs, vp, met, this.settings, plan);
+    return { marks: vis.length, outlines: outs.length };
+  }
+
+  /**
+   * What `vp` shows of the marks: the shown marks in it and the outline groups around it
+   * (`small`: smaller than a ring on screen, drawn as its rounded box).
+   */
+  private liveParts(vp: Viewport, metricS: number) {
     // Sizes kept on screen (outline, x–x–x, thinnest line) as at metricS: a tile is drawn at other zooms too.
     const met = markMetrics(this.settings, metricS, vp.dpr);
     const pad = met.outlineMm + met.xxx.distanceMm + (8 * vp.dpr) / vp.s;
@@ -953,8 +1044,7 @@ export class CompareView {
     const vis = this.marks.filter((pm) => touches(pm.mark.box, view) && this.isShown(pm.index));
     const m = OUTLINE_MARGIN_MM,
       around = { x0: view.x0 - m, y0: view.y0 - m, x1: view.x1 + m, y1: view.y1 + m };
-    this.outlinesMissing = false;
-    const outs: PaintOutline[] = [];
+    const groups: { g: OutlineGroup; small: boolean }[] = [];
     if (met.outlineMm > 0 || this.settings.removed === "xxx") {
       // Smaller than a ring on screen: no outline where the Place gets a ring, else its rounded box.
       const small = (RING_BELOW_PX * vp.dpr) / metricS,
@@ -962,11 +1052,10 @@ export class CompareView {
       const ringed = new Set(this.settings.rings ? this.spots.filter((p) => size(p.box) < small).map((p) => p.no) : []);
       for (const g of this.groups) {
         if (!touches(g.box, around) || (g.place !== null && ringed.has(g.place))) continue;
-        outs.push(size(g.box) < small ? this.roughOutline(g) : this.outlineOf(g, until));
+        groups.push({ g, small: size(g.box) < small });
       }
     }
-    paintMarks(ctx, layers, vis, outs, vp, met, this.settings, plan);
-    return { marks: vis.length, outlines: outs.length };
+    return { met, vis, groups };
   }
 
   /**
@@ -1033,49 +1122,113 @@ export class CompareView {
     }
   }
 
-  /** Paints one tile of the marks at level k. */
-  private paintTile(k: number, t: Tile): MarkTile {
-    const canvas = document.createElement("canvas");
-    canvas.width = canvas.height = TILE_PX;
-    const tctx = canvas.getContext("2d")!;
+  /**
+   * Paints one tile of the marks at level k, in steps (a batch of marks each, as `pace` says),
+   * and keeps it once painted. A tile in view makes the outlines it needs first, for up to
+   * OUTLINE_TILE_MS; one painted ahead takes the rough ones for those not made yet. Stopped
+   * (by the runner) when what the tiles show changes.
+   */
+  private *tileJob(k: number, t: Tile, lane: Lane, pace: Pace = this.pace): Generator<void> {
+    const version = this.tileVersion;
+    const { layers, work } = this.lanes[lane];
+    work.setTransform(1, 0, 0, 1, 0, 0);
+    work.globalCompositeOperation = "source-over";
+    work.globalAlpha = 1;
+    work.clearRect(0, 0, TILE_PX, TILE_PX);
     const vp: Viewport = { x0: t.rect.x0, y0: t.rect.y0, s: levelScale(k), w: TILE_PX, h: TILE_PX, dpr: this.dpr };
-    this.tileLayers.size(TILE_PX, TILE_PX);
-    this.paintLive(tctx, this.tileLayers, vp, performance.now() + OUTLINE_FRAME_MS, metricScale(k));
-    const tile = { canvas, rough: this.outlinesMissing, used: this.frameNo };
-    this.outlinesMissing = false;
-    this.tiles.set(`${k}:${t.tx}:${t.ty}`, tile);
+    layers.size(TILE_PX, TILE_PX);
+    const { met, vis, groups } = this.liveParts(vp, metricScale(k));
+    yield;
+    if (lane === "view") {
+      const until = performance.now() + OUTLINE_TILE_MS;
+      for (const { g, small } of groups) {
+        if (small || this.outlines.has(g.key)) continue;
+        if (performance.now() >= until) break;
+        this.outlineOf(g);
+        yield;
+      }
+    }
+    let rough = false;
+    const outs = groups.map(({ g, small }) => {
+      if (small) return this.roughOutline(g);
+      const o = this.outlines.get(g.key);
+      if (!o) rough = true;
+      return o ?? this.roughOutline(g);
+    });
+    yield* paintMarkSteps(work, layers, vis, outs, vp, met, this.settings, (role) => this.drawPlan(work, role, vp), pace);
+    if (version !== this.tileVersion) return;
+    const canvas = this.takeCanvas();
+    canvas.getContext("2d")!.drawImage(work.canvas, 0, 0);
+    this.keepTile(`${k}:${t.tx}:${t.ty}`, { canvas, version, current: true, rough, used: this.frameNo });
+    this.requestDraw();
+  }
+
+  /**
+   * Tile canvases are used again rather than made anew: a new 4 MB canvas for every tile
+   * painted, the old one dropped, cost pauses of a few hundred ms in the measurements.
+   */
+  private takeCanvas(): HTMLCanvasElement {
+    const c = this.spare.pop();
+    if (!c) {
+      const n = document.createElement("canvas");
+      n.width = n.height = TILE_PX;
+      return n;
+    }
+    const ctx = c.getContext("2d")!;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalCompositeOperation = "source-over";
+    ctx.globalAlpha = 1;
+    ctx.clearRect(0, 0, TILE_PX, TILE_PX);
+    return c;
+  }
+
+  private spareCanvas(c: HTMLCanvasElement): void {
+    if (this.spare.length < SPARE_CANVASES) this.spare.push(c);
+  }
+
+  /** Keeps a tile painted; the picture it replaces is used again. */
+  private keepTile(key: string, tile: MarkTile): void {
+    const was = this.tiles.get(key);
+    if (was) this.spareCanvas(was.canvas);
+    this.tiles.set(key, tile);
+  }
+
+  /** Drops a tile; its canvas is used again. */
+  private dropTile(key: string): void {
+    const was = this.tiles.get(key);
+    if (!was) return;
+    this.tiles.delete(key);
+    this.spareCanvas(was.canvas);
+  }
+
+  /** A tile's picture, if painted; `current` says whether it is up to date. */
+  private tileAt(k: number, tx: number, ty: number): MarkTile | undefined {
+    const tile = this.tiles.get(`${k}:${tx}:${ty}`);
+    if (tile) tile.current = tile.version === this.tileVersion;
     return tile;
   }
 
   /**
-   * Paints the coarse levels of the whole frame ahead, one tile at a time while the view
-   * rests, coarsest first, so that zooming out finds them there.
+   * Paints the coarse levels of the whole frame ahead while the view rests, coarsest first,
+   * in slices after the tiles in view, so that zooming out finds them there.
    */
   private scheduleTiles(): void {
-    if (this.tilesIdle !== undefined) clearTimeout(this.tilesIdle);
-    const gen = this.generation;
-    const next = () => {
-      this.tilesIdle = undefined;
-      // Room is left for the tiles in view: painting ahead never pushes them out.
-      if (gen !== this.generation || !this.result || !this.settings.marks || this.tiles.size > MAX_TILES - 12) return;
-      if (this.moving) {
-        this.tilesIdle = setTimeout(next, MOVING_MS);
-        return;
-      }
+    const jobs: { key: string; start: () => Generator<void> }[] = [];
+    // Room is left for the tiles in view: painting ahead never pushes them out.
+    if (this.result && this.settings.marks && this.tiles.size <= MAX_TILES - 12) {
       // From the level that shows the whole frame.
       const f = this.frame,
         fit = Math.min(this.el.canvas.width / (f.x1 - f.x0), this.el.canvas.height / (f.y1 - f.y0), MAX_TILED_S);
       for (let k = levelFor(fit) ?? 0; k >= 0; k--) {
-        const ts = tilesFor(k, this.frame, this.frame);
+        const ts = tilesFor(k, f, f);
         if (ts.length > AHEAD_TILES) break;
-        const t = ts.find((u) => !this.tiles.get(`${k}:${u.tx}:${u.ty}`) || this.tiles.get(`${k}:${u.tx}:${u.ty}`)!.stale);
-        if (!t) continue;
-        rasterize(this.paintTile(k, t));
-        this.tilesIdle = setTimeout(next, AHEAD_PAUSE_MS);
-        return;
+        for (const t of ts) {
+          const tile = this.tileAt(k, t.tx, t.ty);
+          if (!tile?.current || tile.stale) jobs.push({ key: `${k}:${t.tx}:${t.ty}`, start: () => this.tileJob(k, t, "ahead") });
+        }
       }
-    };
-    this.tilesIdle = setTimeout(next, AHEAD_PAUSE_MS);
+    }
+    this.painter.set("ahead", jobs);
   }
 
   /**
@@ -1094,8 +1247,9 @@ export class CompareView {
       if (levelScale(k) <= overviewPxPerMm) continue;
       const mm = TILE_PX / levelScale(k),
         t = { x0: this.frame.x0 + tx * mm, y0: this.frame.y0 + ty * mm, x1: this.frame.x0 + (tx + 1) * mm, y1: this.frame.y0 + (ty + 1) * mm };
-      if (touches(t, r)) this.tiles.delete(key);
+      if (touches(t, r)) this.tiles.get(key)!.stale = true;
     }
+    this.scheduleTiles();
   }
 
   /** The tiles the view opens with, painted now (inside the busy window). */
@@ -1104,19 +1258,23 @@ export class CompareView {
     const vp = this.viewport(),
       k = levelFor(vp.s);
     if (k === null) return;
-    for (const t of tilesFor(k, this.frame, this.visible())) if (!this.tiles.has(`${k}:${t.tx}:${t.ty}`)) rasterize(this.paintTile(k, t));
+    for (const t of tilesFor(k, this.frame, this.visible())) {
+      if (this.tiles.has(`${k}:${t.tx}:${t.ty}`)) continue;
+      const steps = this.tileJob(k, t, "view", AT_ONCE);
+      while (!steps.next().done);
+    }
   }
 
   /**
-   * Draws the marks from the tiles of level k. A missing tile is painted when no other level's
-   * tiles can stand in; else they stand in while the view moves, and at rest one missing tile
-   * is painted a frame.
+   * Draws the marks from the tiles of level k. A tile not painted or not up to date is stood
+   * in for (pictureFor) and asked of the painter, the middle of the view first: at rest, or
+   * while the view moves when nothing up to date can stand in. Nothing waits for a tile.
    */
   private drawTiles(ctx: CanvasRenderingContext2D, vp: Viewport, k: number): void {
     const frameNo = ++this.frameNo;
-    this.tileStats = { level: k, drawn: 0, painted: 0, standIn: 0 };
-    let missing = false,
-      painted = 0;
+    const stats = (this.tileStats = { level: k, drawn: 0, wanted: 0, standIn: 0, outdated: 0 });
+    const want: Tile[] = [];
+    let ready = true;
     const place = (tile: MarkTile, rect: Box) => {
       tile.used = frameNo;
       const x0 = Math.round((rect.x0 - vp.x0) * vp.s),
@@ -1129,52 +1287,42 @@ export class CompareView {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     // A tile is drawn at most a level step smaller: plain bilinear keeps its thin lines crisp.
     ctx.imageSmoothingQuality = "low";
-    for (const t of tilesFor(k, this.frame, this.visible())) {
-      let tile = this.tiles.get(`${k}:${t.tx}:${t.ty}`);
-      if (tile?.stale) {
-        if (this.moving || painted > 0) missing = true;
-        else {
-          tile = this.paintTile(k, t);
-          painted++;
-          this.tileStats.painted++;
-        }
+    const v = this.visible();
+    const get = (kk: number, tx: number, ty: number) => this.tileAt(kk, tx, ty);
+    for (const t of nearestFirst(tilesFor(k, this.frame, v), { x: (v.x0 + v.x1) / 2, y: (v.y0 + v.y1) / 2 })) {
+      const pic = pictureFor(k, t, this.frame, get);
+      if (pic.own && pic.current) {
+        // Up to date; one with rough outlines is painted again at rest.
+        if (pic.own.stale && !this.moving) want.push(t);
+        place(pic.own, t.rect);
+        stats.drawn++;
+        continue;
       }
-      if (!tile) {
-        // Another level's tiles over this one, all of them there: the nearest, coarser first.
-        let cover: [MarkTile, Box][] | undefined;
-        for (const kk of [k + 1, k - 1, k + 2, k - 2, k + 3, k - 3, ...Array.from({ length: 40 }, (_, i) => k + 4 + i)]) {
-          if (kk < 0) continue;
-          const under = tilesFor(kk, this.frame, t.rect).map((u) => [this.tiles.get(`${kk}:${u.tx}:${u.ty}`), u.rect] as const);
-          if (under.length && under.every(([u]) => u)) {
-            cover = under as [MarkTile, Box][];
-            break;
-          }
-        }
-        // While the view moves it stands in; at rest the tile is painted, one a frame.
-        if (cover && (this.moving || painted > 0)) {
-          missing = true;
-          this.tileStats.standIn++;
-          ctx.save();
-          ctx.beginPath();
-          ctx.rect((t.rect.x0 - vp.x0) * vp.s, (t.rect.y0 - vp.y0) * vp.s, (t.rect.x1 - t.rect.x0) * vp.s, (t.rect.y1 - t.rect.y0) * vp.s);
-          ctx.clip();
-          for (const [u, rect] of cover) place(u, rect);
-          ctx.restore();
-          continue;
-        }
-        tile = this.paintTile(k, t);
-        painted++;
-        this.tileStats.painted++;
+      ready = false;
+      if (!this.moving || !pic.current) want.push(t);
+      if (!pic.current) stats.outdated++;
+      if (pic.own) place(pic.own, t.rect);
+      else if (pic.cover) {
+        stats.standIn++;
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect((t.rect.x0 - vp.x0) * vp.s, (t.rect.y0 - vp.y0) * vp.s, (t.rect.x1 - t.rect.x0) * vp.s, (t.rect.y1 - t.rect.y0) * vp.s);
+        ctx.clip();
+        for (const [u, rect] of pic.cover.tiles) place(u, rect);
+        ctx.restore();
       }
-      place(tile, t.rect);
-      this.tileStats.drawn++;
     }
     ctx.restore();
-    if (missing) this.requestDraw();
+    this.marksReady = ready;
+    stats.wanted = want.length;
+    this.painter.set(
+      "view",
+      want.map((t) => ({ key: `${k}:${t.tx}:${t.ty}`, start: () => this.tileJob(k, t, "view") })),
+    );
     // Keep the most recently drawn.
     if (this.tiles.size > MAX_TILES) {
       const old = [...this.tiles].filter(([, t]) => t.used !== frameNo).sort((a, b) => a[1].used - b[1].used);
-      for (const [key] of old.slice(0, this.tiles.size - MAX_TILES)) this.tiles.delete(key);
+      for (const [key] of old.slice(0, this.tiles.size - MAX_TILES)) this.dropTile(key);
     }
   }
 
@@ -1303,6 +1451,8 @@ export class CompareView {
     let drawnMarks = 0,
       drawnOutlines = 0,
       drawnRings = 0;
+    this.marksReady = true;
+    this.drawnVersion = this.tileVersion;
     if (marksOn) {
       const v = this.visible();
       const level = levelFor(vp.s);
@@ -1310,6 +1460,7 @@ export class CompareView {
         // Zoomed in: few marks in view, painted live.
         this.tileStats = null;
         const n = this.paintLive(ctx, this.layers, vp, t0 + OUTLINE_FRAME_MS);
+        this.marksReady = !this.outlinesMissing;
         if (this.outlinesMissing) this.requestDraw();
         drawnMarks = n.marks;
         drawnOutlines = n.outlines;
