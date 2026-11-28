@@ -6,6 +6,11 @@
 //       legend and stamp in the Footer. About 14 m long, so it needs /UserUnit.
 //   samples/right-old.pdf, samples/right-new.pdf  Time direction right: a small classic
 //       bar chart, task table in the Header (left), legend and stamp in the Footer (right).
+//   samples/activities-old.pdf, ...-new.pdf       Activities drawn in one go, for Places.
+//   samples/dense-old.pdf, samples/dense-new.pdf  Time direction down, 14 m long, thousands
+//       of Activities drawn in one go, a good part of them changed: thousands of Places and
+//       tens of thousands of marks, for measuring how the comparison view copes with many
+//       marks (issue #57). Not in the ground truth: no planted change is listed.
 //   samples/ground-truth.json                     Offsets, Body bounds and the planted
 //       Differences (where, what) for judging detection.
 //
@@ -1051,6 +1056,117 @@ function activityPair() {
   };
 }
 
+// =====================================================================================
+// Pair 4: dense (time down, 14 m), for measuring the comparison view with many marks
+// =====================================================================================
+// Drawn like the activities pair (each Activity in one go: white underlay, hatch, outline,
+// centre line, a label on a white background with a leader), but thousands of them over a
+// 14 m Body, and a good part changed in the New Plan: moved later or earlier, longer,
+// relabelled, removed, added. Its own random numbers, so the other pairs stay as they are.
+function densePair() {
+  let s = 4711;
+  const rnd = () => (s = (s * 1664525 + 1013904223) >>> 0) / 2 ** 32;
+  const pk = (arr) => arr[Math.floor(rnd() * arr.length)];
+  const btw = (a, b) => a + rnd() * (b - a);
+  const W = 1189, HEADER = 150, FOOTER = 120, DAY = 10;
+  const KM0 = 10, KM1 = 40, TIMECOL = 60;
+  const KX = (km) => TIMECOL + ((km - KM0) * (W - TIMECOL - 10)) / (KM1 - KM0);
+  const DAY0 = new Date(Date.UTC(2027, 0, 4));
+  const OLD = { start: 0, days: 1330 }, NEW = { start: 14, days: 1330 };
+  const TOTAL = NEW.start + NEW.days;
+  const N = Number(process.env.DENSE_ACTIVITIES || 4000);
+  const acts = [];
+  for (let i = 0; i < N; i++) {
+    const [, color] = pk(TRADES);
+    const line = rnd() < 0.7;
+    const t0 = Math.floor(btw(OLD.start + NEW.start + 5, OLD.start + OLD.days - 60));
+    const ka = btw(KM0 + 0.3, KM1 - 3);
+    const a = line
+      ? { line, color, t0, t1: t0 + Math.floor(btw(3, 40)), ka, kb: Math.min(KM1 - 0.3, ka + btw(-1, 2.5)), w: 0, label: `${pk(OBJECTS)} ${pk(VERBS)}` }
+      : { line, color, t0, t1: t0 + Math.floor(btw(3, 25)), ka, kb: ka + btw(-0.5, 1.5), w: btw(0.2, 1), label: `${pk(OBJECTS)} ${pk(VERBS)}` };
+    const r = rnd();
+    // About a third changed: moved, longer, relabelled, removed; and some added.
+    const nu =
+      r < 0.08 ? { ...a, t0: a.t0 + 2, t1: a.t1 + 2 }
+      : r < 0.14 ? { ...a, t0: a.t0 - 1, t1: a.t1 - 1 }
+      : r < 0.2 ? { ...a, t1: a.t1 + 3 }
+      : r < 0.26 ? { ...a, label: `${a.label} (neu)` }
+      : r < 0.3 ? null
+      : a;
+    acts.push({ old: r < 0.97 ? a : null, new: r < 0.97 ? nu : { ...a } });
+  }
+
+  function draw(plan, version) {
+    const bodyLen = plan.days * DAY, Hp = HEADER + bodyLen + FOOTER;
+    const p = makePage(W, Hp);
+    const DY = (d) => HEADER + (d - plan.start) * DAY;
+    p.rgb([1, 1, 1], false);
+    p.rectFill(0, 0, W, Hp);
+    p.rgb([0, 0, 0], false);
+    p.text("F2", 28, 10, 24, "Bauablaufplan dicht (synthetisch)");
+    p.text("F1", 12, 10, 40, version === "new" ? "Stand: Index b" : "Stand: Index a");
+    p.rgb([0, 0, 0], true);
+    for (let km = KM0; km <= KM1; km++) {
+      p.lw(0.35);
+      p.line(KX(km), HEADER - 14, KX(km), HEADER);
+      p.rgb([0, 0, 0], false);
+      p.text("F1", 9, KX(km) - 5, HEADER - 18, `${km},0`);
+    }
+    p.lw(0.5);
+    p.line(0, HEADER, W, HEADER);
+    p.clip(0, HEADER, W, bodyLen);
+    for (let d = plan.start; d < plan.start + plan.days; d++) {
+      const y = DY(d);
+      if (d % 7 === 0) {
+        p.rgb([0.3, 0.3, 0.3], true);
+        p.lw(0.25);
+        p.line(0, y, W - 10, y);
+        p.rgb([0, 0, 0], false);
+        p.text("F1", 7, 4, y + 6, `KW ${String(isoWeek(dateOf(DAY0, d))).padStart(2, "0")} ${dmy(dateOf(DAY0, d))}`);
+      }
+    }
+    p.rgb([0.7, 0.7, 0.7], true);
+    p.lw(0.1);
+    for (let km = KM0; km <= KM1; km++) p.line(KX(km), HEADER, KX(km), HEADER + bodyLen);
+    const drawAct = (a) => {
+      const y0 = DY(a.t0), y1 = DY(a.t1), half = 0.4;
+      const pts = a.line
+        ? [[KX(a.ka) - half, y0], [KX(a.ka) + half, y0], [KX(a.kb) + half, y1], [KX(a.kb) - half, y1]]
+        : [[KX(a.ka), y0], [KX(a.ka + a.w), y0], [KX(a.kb + a.w), y1], [KX(a.kb), y1]];
+      p.rgb([1, 1, 1], false);
+      p.poly(pts, "f");
+      p.fillPattern(p.hatch(a.color, a.line ? 1 : 2.5, pts[0], 0.12), pts);
+      p.rgb(a.color, true);
+      p.lw(a.line ? 0.1 : 0.25);
+      p.poly(pts, "S");
+      if (a.line) {
+        p.lw(0.6);
+        p.line(KX(a.ka), y0, KX(a.kb), y1);
+      }
+      const ly = y0 + 4;
+      const right = pts[1][0] + ((pts[2][0] - pts[1][0]) * (ly - y0)) / (y1 - y0);
+      const lx = right + 3, by = ly + 1;
+      const tb = grow(box(lx, by - 0.72 * 7 * PT_MM, lx + textWidthMm("F1", 7, a.label), by + 0.22 * 7 * PT_MM), 0.3);
+      p.rgb([1, 1, 1], false);
+      p.rectFill(tb.x0, tb.y0, tb.x1 - tb.x0, tb.y1 - tb.y0);
+      p.rgb(a.color, false);
+      p.text("F1", 7, lx, by, a.label);
+      p.rgb(a.color, true);
+      p.lw(0.12);
+      p.line(right, ly, tb.x0, ly);
+    };
+    for (const a of acts) if (a[version]) drawAct(a[version]);
+    p.unclip();
+    p.rgb([0, 0, 0], true);
+    p.lw(0.5);
+    p.line(0, HEADER + bodyLen, W, HEADER + bodyLen);
+    p.rgb([0, 0, 0], false);
+    p.text("F1", 12, 10, HEADER + bodyLen + 20, version === "new" ? "Index b" : "Index a");
+    return { p, header: [0, HEADER], body: [HEADER, HEADER + bodyLen], footer: [HEADER + bodyLen, Hp] };
+  }
+  return { name: "dense", old: draw(OLD, "old"), neu: draw(NEW, "new"), offsetMm: (NEW.start - OLD.start) * DAY, changed: acts.filter((a) => a.old !== a.new).length, total: acts.length };
+}
+
 // ---- Write everything ------------------------------------------------------------
 mkdirSync("samples", { recursive: true });
 const truth = {
@@ -1082,6 +1198,15 @@ for (const pair of [downPair(), rightPair(), activityPair()]) {
   for (const [r, plan] of [[ro, pair.old], [rn, pair.neu]])
     console.log(`${r.file}: ${(r.bytes / 1e6).toFixed(2)} MB, ${r2(plan.p.wMm)} x ${r2(plan.p.hMm)} mm, UserUnit ${r2(plan.p.userUnit * 1e4) / 1e4}, ${r.ops} drawing ops`);
   console.log(`  ${pair.name}: Offset ${pair.offsetMm} mm, ${pair.changes.length} planted changes`);
+}
+// The dense pair is for measuring only: written, not in the ground truth.
+{
+  const pair = densePair();
+  for (const [plan, v] of [[pair.old, "old"], [pair.neu, "new"]]) {
+    const r = savePage(plan.p, `samples/${pair.name}-${v}.pdf`);
+    console.log(`${r.file}: ${(r.bytes / 1e6).toFixed(2)} MB, ${r2(plan.p.wMm)} x ${r2(plan.p.hMm)} mm, UserUnit ${r2(plan.p.userUnit * 1e4) / 1e4}, ${r.ops} drawing ops`);
+  }
+  console.log(`  ${pair.name}: Offset ${pair.offsetMm} mm, ${pair.changed} of ${pair.total} Activities changed (not in the ground truth)`);
 }
 writeFileSync("samples/ground-truth.json", JSON.stringify(truth, null, 2) + "\n");
 console.log("samples/ground-truth.json");
