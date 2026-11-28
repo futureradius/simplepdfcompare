@@ -38,6 +38,12 @@ describe("pictureFor: what stands for a tile whose own picture is not up to date
     expect(p.current).toBe(false);
   });
 
+  it("takes an outdated coarser level before an outdated finer one: fewer pictures to draw", () => {
+    const p = pictureFor(k, t, frame, cache({ ...all(3, false, "finer"), ...all(6, false, "coarser 2") }));
+    expect(p.cover?.level).toBe(6);
+    expect(p.current).toBe(false);
+  });
+
   it("is an outdated cover when there is no picture of its own, and nothing when there is none at all", () => {
     expect(pictureFor(k, t, frame, cache(all(5, false, "coarser"))).cover?.level).toBe(5);
     const none = pictureFor(k, t, frame, cache({}));

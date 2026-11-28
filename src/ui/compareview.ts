@@ -238,29 +238,33 @@ export class CompareView {
   private readonly sizers = new Map<string, BatchSizer>();
   /** Tile canvases to use again (takeCanvas). */
   private readonly spare: HTMLCanvasElement[] = [];
-  /** Batches that take about BATCH_MS each, rasterized one by one. */
-  private readonly pace: Pace = (() => {
+  /**
+   * Batches that take about BATCH_MS each, rasterized one by one. What a batch may cost is
+   * learned per phase and level: a segment costs more to rasterize the larger it is drawn.
+   */
+  private paceFor(k: number): Pace {
     let t0 = 0;
     const sizer = (phase: string) => {
-      let b = this.sizers.get(phase);
-      if (!b) this.sizers.set(phase, (b = new BatchSizer(BATCH_MS)));
+      const key = `${phase}@${k}`;
+      let b = this.sizers.get(key);
+      if (!b) this.sizers.set(key, (b = new BatchSizer(BATCH_MS)));
       return b;
     };
     return {
-      size: (phase) => {
+      budget: (phase) => {
         t0 = performance.now();
         return sizer(phase).size();
       },
-      done: (phase, l, n) => {
+      done: (phase, l, cost) => {
         rasterize(l);
         const t1 = performance.now();
-        sizer(phase).took(n, t1 - t0);
-        // A batch that took long (a single item can): named, for the measurement (spans.ts).
+        sizer(phase).took(cost, t1 - t0);
+        // A batch that took long: named, for the measurement (spans.ts).
         if (t1 - t0 >= SPAN_MS) performance.measure(`spc tile batch: ${phase}`, { start: t0, end: t1 });
       },
       flush: rasterize,
     };
-  })();
+  }
   private frameNo = 0;
   /** What the last frame drew from the tiles, for the tests. */
   private tileStats: { level: number; drawn: number; wanted: number; standIn: number; outdated: number } | null = null;
@@ -1145,7 +1149,7 @@ export class CompareView {
    * OUTLINE_TILE_MS; one painted ahead takes the rough ones for those not made yet. Stopped
    * (by the runner) when what the tiles show changes.
    */
-  private *tileJob(k: number, t: Tile, lane: Lane, pace: Pace = this.pace): Generator<void> {
+  private *tileJob(k: number, t: Tile, lane: Lane, pace: Pace = this.paceFor(k)): Generator<void> {
     const version = this.tileVersion;
     const { layers, work } = this.lanes[lane];
     work.setTransform(1, 0, 0, 1, 0, 0);
@@ -1316,8 +1320,9 @@ export class CompareView {
         continue;
       }
       ready = false;
-      // While the view moves, only a tile with nothing at all to stand in for it: outdated marks are painted again at rest.
-      if (!this.moving || (!pic.own && !pic.cover)) want.push(t);
+      // While the view moves, only a tile that nothing up to date stands in for (in short slices):
+      // left outdated, a long zoom would draw the stand-ins, several pictures a tile, every frame.
+      if (!this.moving || !pic.current) want.push(t);
       if (!pic.current) stats.outdated++;
       if (pic.own) place(pic.own, t.rect);
       else if (pic.cover) {

@@ -87,15 +87,18 @@ export interface Picture<T extends Cached> {
 export function pictureFor<T extends Cached>(k: number, t: Tile, frame: Box, get: (k: number, tx: number, ty: number) => T | undefined): Picture<T> {
   const own = get(k, t.tx, t.ty);
   if (own?.current) return { own, current: true };
-  let outdated: Picture<T>["cover"];
+  // Outdated: a coarser level first, which draws fewer pictures than a finer one.
+  let coarser: Picture<T>["cover"], finer: Picture<T>["cover"];
   for (const kk of standInLevels(k)) {
     const under = tilesFor(kk, frame, t.rect).map((u) => [get(kk, u.tx, u.ty), u.rect] as const);
     if (!under.length || !under.every(([u]) => u)) continue;
     const cover = { level: kk, tiles: under as [T, Box][] };
     if (under.every(([u]) => u!.current)) return { cover, current: true };
-    outdated ??= cover;
+    if (kk > k) coarser ??= cover;
+    else finer ??= cover;
   }
   if (own) return { own, current: false };
+  const outdated = coarser ?? finer;
   return outdated ? { cover: outdated, current: false } : { current: false };
 }
 

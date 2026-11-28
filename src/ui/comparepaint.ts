@@ -16,6 +16,7 @@ import type { Mark } from "../compare/compare";
 import type { Box } from "../compare/objects";
 import { RING_RADIUS_PX, type MarkMetrics, type NotCompared, type Ring, type ViewSettings } from "./compareframe";
 import { crossesAlong, OUTLINE_MARGIN_MM, simplifiedOutline, xxxOffsetMm, type Outline } from "./outlines";
+import { batchEnd } from "./slices";
 
 export const MARK_COLOURS = { Added: "#dc2a1e", Removed: "#f0be00", Unchanged: "#4a4a4a" } as const;
 /** The x–x–x line and the Removed ring: the yellow, darker, so that it reads on white. */
@@ -158,27 +159,102 @@ const lineWidthOf = (pm: PaintMark, met: MarkMetrics) => Math.max(pm.mark.lineWi
 
 /**
  * How a painting in steps goes (ADR 0011). Painted at once (a frame, a thumbnail) every
- * batch holds all the items; a tile is painted in batches that each take a few ms: `size`
- * says how many items the next batch of a phase draws, `done` makes the batch rasterize now
- * (a canvas otherwise rasterizes all it was told at once, when its picture is first used)
- * and learns from the time it took, `flush` makes a full-layer step rasterize.
+ * batch holds all the items; a tile is painted in batches that each take a few ms. Items are
+ * weighed (a mark by its segments in view, an outline by its points): `budget` says how much
+ * the next batch of a phase may weigh, `done` makes the batch rasterize now (a canvas
+ * otherwise rasterizes all it was told at once, when its picture is first used) and learns
+ * from the time it took, `flush` makes a full-layer step rasterize.
  */
 export interface Pace {
-  size(phase: string): number;
-  done(phase: string, l: CanvasRenderingContext2D, n: number): void;
+  budget(phase: string): number;
+  done(phase: string, l: CanvasRenderingContext2D, cost: number): void;
   flush(l: CanvasRenderingContext2D): void;
 }
 
 /** All at once: one batch per phase, nothing forced to rasterize. */
-export const AT_ONCE: Pace = { size: () => Infinity, done: () => {}, flush: () => {} };
+export const AT_ONCE: Pace = { budget: () => Infinity, done: () => {}, flush: () => {} };
 
-/** Draws `items` onto `l` in batches as `pace` says, a step each. */
-function* batches<T>(items: readonly T[], phase: string, l: CanvasRenderingContext2D, pace: Pace, draw: (item: T) => void): Generator<void> {
+/**
+ * What drawing a mark costs, for sizing the batches: the number of its segments (a line's)
+ * or edges (an area's) that touch `view` (mm), at least one. A line of a thousand segments
+ * weighs a thousand marks of one.
+ */
+export function costIn(m: Pick<Mark, "shape" | "coords">, view: Box): number {
+  const c = m.coords;
+  let n = 0;
+  const seg = (ax: number, ay: number, bx: number, by: number) => {
+    if (Math.max(ax, bx) >= view.x0 && Math.min(ax, bx) <= view.x1 && Math.max(ay, by) >= view.y0 && Math.min(ay, by) <= view.y1) n++;
+  };
+  if (m.shape === "line") for (let q = 0; q + 3 < c.length; q += 4) seg(c[q]!, c[q + 1]!, c[q + 2]!, c[q + 3]!);
+  else if (m.shape === "area") {
+    let first = 0;
+    for (let q = 0; q + 1 < c.length; q += 2) {
+      const last = q + 3 >= c.length || Number.isNaN(c[q + 2]!);
+      if (Number.isNaN(c[q]!)) {
+        first = q + 2;
+        continue;
+      }
+      // The edge to the next point, or back to the polygon's first one.
+      if (last) seg(c[q]!, c[q + 1]!, c[first]!, c[first + 1]!);
+      else seg(c[q]!, c[q + 1]!, c[q + 2]!, c[q + 3]!);
+    }
+  }
+  return Math.max(1, n);
+}
+
+/**
+ * What filling costs besides the outline's points: the pixels filled, the part of `b` (mm)
+ * on the tile, in thousands of device px.
+ */
+export function areaCost(b: Box, v: Viewport): number {
+  const w = Math.min(v.w, (b.x1 - v.x0) * v.s) - Math.max(0, (b.x0 - v.x0) * v.s),
+    h = Math.min(v.h, (b.y1 - v.y0) * v.s) - Math.max(0, (b.y0 - v.y0) * v.s);
+  return w > 0 && h > 0 ? (w * h) / 1000 : 0;
+}
+
+/** A changed word draws the Plan inside its box: a few segments' worth, and its pixels. */
+const wordCost = (v: Viewport) => (pm: PaintMark) => 4 + areaCost(pm.mark.box, v);
+
+/** What drawing an outline costs: its points, and the pixels it fills (grown by `growMm`, a halo's stroke). */
+const outlineCost =
+  (v: Viewport, growMm = 0) =>
+  (o: PaintOutline) => {
+    let n = 1;
+    for (const c of o.outline.outer) n += c.length / 2;
+    for (const c of o.outline.holes) n += c.length / 2;
+    const g = Math.max(0, growMm),
+      b = o.box;
+    return n + areaCost({ x0: b.x0 - g, y0: b.y0 - g, x1: b.x1 + g, y1: b.y1 + g }, v);
+  };
+/**
+ * An outline's paths: their points, the pixels filled or stroked around them (grown by
+ * `growMm`), and their length on the tile (a dashed line and its × cost by length): about
+ * the box's perimeter, a unit per 50 device px.
+ */
+const pathsCost =
+  (v: Viewport, box: Map<OutlinePaths, Box>, growMm = 0) =>
+  (p: OutlinePaths) => {
+    let n = 1;
+    for (const c of p.subpaths) n += c.length / 2;
+    const b = box.get(p),
+      g = Math.max(0, growMm);
+    if (!b) return n;
+    const w = Math.min(v.w, (b.x1 - v.x0) * v.s) - Math.max(0, (b.x0 - v.x0) * v.s),
+      h = Math.min(v.h, (b.y1 - v.y0) * v.s) - Math.max(0, (b.y0 - v.y0) * v.s);
+    return n + areaCost({ x0: b.x0 - g, y0: b.y0 - g, x1: b.x1 + g, y1: b.y1 + g }, v) + (w > 0 && h > 0 ? (2 * (w + h)) / 50 : 0);
+  };
+
+/** Draws `items` onto `l` in batches as `pace` says (by what they cost), a step each. */
+function* batches<T>(items: readonly T[], phase: string, l: CanvasRenderingContext2D, pace: Pace, draw: (item: T) => void, cost: (item: T) => number): Generator<void> {
   for (let i = 0; i < items.length; ) {
-    const end = Math.min(items.length, i + pace.size(phase)),
-      n = end - i;
-    for (; i < end; i++) draw(items[i]!);
-    pace.done(phase, l, n);
+    const budget = pace.budget(phase);
+    let spent = 0;
+    const end = budget === Infinity ? items.length : batchEnd((j) => cost(items[j]!), i, items.length, budget);
+    for (; i < end; i++) {
+      if (budget !== Infinity) spent += cost(items[i]!);
+      draw(items[i]!);
+    }
+    pace.done(phase, l, spent);
     yield;
   }
 }
@@ -197,12 +273,20 @@ function* objectSteps(l: CanvasRenderingContext2D, marks: readonly PaintMark[], 
   l.lineJoin = "round";
   // The word itself is its tinted ink, see wordSteps.
   const mine = marks.filter((pm) => pm.mark.kind === kind && pm.mark.shape !== "word");
-  yield* batches(mine, "objects", l, pace, (pm) => {
-    if (pm.mark.shape === "line") {
-      l.lineWidth = lineWidthOf(pm, met);
-      l.stroke(pm.path);
-    } else l.fill(pm.path, "evenodd");
-  });
+  const view = { x0: v.x0, y0: v.y0, x1: v.x0 + v.w / v.s, y1: v.y0 + v.h / v.s };
+  yield* batches(
+    mine,
+    "objects",
+    l,
+    pace,
+    (pm) => {
+      if (pm.mark.shape === "line") {
+        l.lineWidth = lineWidthOf(pm, met);
+        l.stroke(pm.path);
+      } else l.fill(pm.path, "evenodd");
+    },
+    (pm) => costIn(pm.mark, view) + (pm.mark.shape === "area" ? areaCost(pm.mark.box, v) : 0),
+  );
 }
 
 /**
@@ -226,6 +310,7 @@ function* haloSteps(l: CanvasRenderingContext2D, outlines: readonly PaintOutline
       l.fill(p.shape, "evenodd");
       if (grow > 0) l.stroke(p.shape);
     },
+    outlineCost(v, grow),
   );
 }
 
@@ -312,7 +397,7 @@ function* wordSteps(ctx: CanvasRenderingContext2D, marks: readonly PaintMark[], 
       ctx.fillRect(x, y, w, h);
     }
     ctx.restore();
-  });
+  }, wordCost(v));
 }
 
 /**
@@ -325,6 +410,7 @@ function* wordSteps(ctx: CanvasRenderingContext2D, marks: readonly PaintMark[], 
 function* xxxSteps(ctx: CanvasRenderingContext2D, layers: Layers, outlines: readonly PaintOutline[], v: Viewport, met: MarkMetrics, pace: Pace): Generator<void> {
   const ring = layers.c;
   const removed: OutlinePaths[] = [];
+  const boxes = new Map<OutlinePaths, Box>();
   yield* batches(
     outlines.filter((o) => o.kind === "Removed"),
     "paths",
@@ -332,9 +418,15 @@ function* xxxSteps(ctx: CanvasRenderingContext2D, layers: Layers, outlines: read
     pace,
     (o) => {
       const p = outlinePaths(o, v.s);
-      if (p) removed.push(p);
+      if (!p) return;
+      removed.push(p);
+      boxes.set(p, o.box);
     },
+    outlineCost(v),
   );
+  const cost = pathsCost(v, boxes);
+  // The x–x–x line and the insides taken out after it reach this far beyond the outline.
+  const strokeCost = pathsCost(v, boxes, xxxOffsetMm(met.xxx, v.s) + met.xxx.lineMm);
   if (!removed.length) return;
   clear(ring);
   toMm(ring, v);
@@ -346,15 +438,22 @@ function* xxxSteps(ctx: CanvasRenderingContext2D, layers: Layers, outlines: read
   const off = xxxOffsetMm(met.xxx, v.s);
   ring.setLineDash([dash, gap]);
   ring.lineWidth = 2 * off + t;
-  yield* batches(removed, "xxx", ring, pace, (p) => ring.stroke(p.around));
+  yield* batches(removed, "xxx line", ring, pace, (p) => ring.stroke(p.around), strokeCost);
   ring.globalCompositeOperation = "destination-out";
   ring.setLineDash([]);
   const inner = 2 * off - t;
   if (inner > 0) ring.lineWidth = inner;
-  yield* batches(removed, "xxx", ring, pace, (p) => {
-    if (inner > 0) ring.stroke(p.around);
-    ring.fill(p.around);
-  });
+  yield* batches(
+    removed,
+    "xxx inside",
+    ring,
+    pace,
+    (p) => {
+      if (inner > 0) ring.stroke(p.around);
+      ring.fill(p.around);
+    },
+    strokeCost,
+  );
   // × in the middle of each gap, on the outer side, then the insides out again: no × inside
   // another Removed shape.
   ring.globalCompositeOperation = "source-over";
@@ -382,10 +481,10 @@ function* xxxSteps(ctx: CanvasRenderingContext2D, layers: Layers, outlines: read
       }
     }
     ring.stroke();
-  });
+  }, cost);
   ring.globalCompositeOperation = "destination-out";
   toMm(ring, v);
-  yield* batches(removed, "xxx", ring, pace, (p) => ring.fill(p.around));
+  yield* batches(removed, "xxx inside", ring, pace, (p) => ring.fill(p.around), cost);
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.drawImage(ring.canvas, 0, 0);

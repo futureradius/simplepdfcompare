@@ -4,7 +4,27 @@
 // painted in batches, each made to rasterize before the next, and a batch draws as many
 // items as fit in its time. Pure logic, no DOM.
 
-/** How many items the next batch draws, so that a batch (drawing and rasterizing) takes about `targetMs`. */
+/**
+ * Where a batch that starts at item `from` ends (exclusive): it takes items while their summed
+ * `cost` stays within `budget`, and always at least one. Items can differ in cost by orders of
+ * magnitude (a line of a thousand segments, a box), so a batch is sized by cost, not count.
+ */
+export function batchEnd(cost: (i: number) => number, from: number, to: number, budget: number): number {
+  let i = from,
+    sum = 0;
+  while (i < to) {
+    const c = cost(i);
+    if (i > from && sum + c > budget) break;
+    sum += c;
+    i++;
+  }
+  return i;
+}
+
+/**
+ * How much the next batch may cost (in the units its items are weighed in), so that a batch
+ * (drawing and rasterizing) takes about `targetMs`: learned from the batches before.
+ */
 export class BatchSizer {
   private n: number;
   constructor(
@@ -18,7 +38,7 @@ export class BatchSizer {
     return this.n;
   }
 
-  /** A batch of `n` items took `ms`. */
+  /** A batch that cost `n` took `ms`. */
   took(n: number, ms: number): void {
     const fit = ms > 0 ? Math.floor((n * this.targetMs) / ms) : Infinity;
     this.n = Math.max(1, Math.min(2 * n, fit));
@@ -113,11 +133,14 @@ export class SliceRunner {
     const t0 = this.clock.now(),
       ms = this.opts.sliceMs;
     const budget = typeof ms === "number" ? ms : ms();
-    while (this.clock.now() - t0 < budget) {
+    // At least one step; another only when, judged by the last one, it ends within the budget.
+    let last = 0;
+    for (let first = true; first || this.clock.now() - t0 + last <= budget; first = false) {
       const lane = this.lane();
       if (!lane) return;
       const q = this.lanes.get(lane)!,
         j = q[0]!;
+      const s0 = this.clock.now();
       try {
         j.it ??= j.start();
         if (j.it.next().done) q.shift();
@@ -125,6 +148,7 @@ export class SliceRunner {
         q.shift();
         this.opts.onError?.(e);
       }
+      last = this.clock.now() - s0;
     }
     this.schedule();
   }
