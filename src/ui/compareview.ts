@@ -137,6 +137,8 @@ const AHEAD_TILES = 3;
  * and frames come between; a slice is made of batches of marks of about BATCH_MS each.
  */
 const SLICE_MS = 10;
+/** While the view moves the frames come first: shorter slices, so that one still fits between two frames. */
+const MOVING_SLICE_MS = 4;
 const BATCH_MS = 5;
 /** A tile in view makes the outlines it needs that are not made yet, for up to this; painted ahead, it takes the rough ones. */
 const OUTLINE_TILE_MS = 150;
@@ -220,7 +222,7 @@ export class CompareView {
   /** Paints the tiles in slices: those in view first, then those painted ahead (ADR 0011). */
   private readonly painter = new SliceRunner(
     { now: () => performance.now(), later: (fn) => void setTimeout(fn, 0) },
-    { sliceMs: SLICE_MS, may: (lane) => lane === "view" || !this.moving, onError: (e) => console.warn("tile not painted", e) },
+    { sliceMs: () => (this.moving ? MOVING_SLICE_MS : SLICE_MS), may: (lane) => lane === "view" || !this.moving, onError: (e) => console.warn("tile not painted", e) },
   );
   /**
    * Each lane paints on its own canvases, so that a tile painted ahead may wait half done

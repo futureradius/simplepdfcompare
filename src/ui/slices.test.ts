@@ -144,6 +144,19 @@ describe("SliceRunner: paints in slices, the view's tiles first", () => {
     expect(r.idle).toBe(true);
   });
 
+  it("takes shorter slices while told to (the view moves, and frames come first)", () => {
+    const c = fakeClock(),
+      log: string[] = [];
+    let moving = true;
+    const r = new SliceRunner(c, { sliceMs: () => (moving ? 4 : 10) });
+    r.set("view", [{ key: "v", start: () => job(c, log, "v", 6, 3) }]);
+    c.flush(1);
+    expect(log).toEqual(["v0", "v1"]);
+    moving = false;
+    c.flush(1);
+    expect(log).toEqual(["v0", "v1", "v2", "v3", "v4", "v5"]);
+  });
+
   it("drops a job that fails, and goes on with the next", () => {
     const c = fakeClock(),
       log: string[] = [];

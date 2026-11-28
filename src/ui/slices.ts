@@ -45,14 +45,17 @@ interface Queued extends Job {
   it?: Iterator<unknown>;
 }
 
-/** Runs jobs step by step in slices of about `sliceMs`, each slice a task of its own. */
+/**
+ * Runs jobs step by step in slices of about `sliceMs` (asked again for each slice), each slice
+ * a task of its own.
+ */
 export class SliceRunner {
   private readonly lanes = new Map<Lane, Queued[]>(LANES.map((l) => [l, []]));
   private scheduled = false;
 
   constructor(
     private readonly clock: Clock,
-    private readonly opts: { sliceMs: number; may?: (lane: Lane) => boolean; onError?: (e: unknown) => void },
+    private readonly opts: { sliceMs: number | (() => number); may?: (lane: Lane) => boolean; onError?: (e: unknown) => void },
   ) {}
 
   /** Nothing to run. */
@@ -107,8 +110,10 @@ export class SliceRunner {
   }
 
   private slice(): void {
-    const t0 = this.clock.now();
-    while (this.clock.now() - t0 < this.opts.sliceMs) {
+    const t0 = this.clock.now(),
+      ms = this.opts.sliceMs;
+    const budget = typeof ms === "number" ? ms : ms();
+    while (this.clock.now() - t0 < budget) {
       const lane = this.lane();
       if (!lane) return;
       const q = this.lanes.get(lane)!,
