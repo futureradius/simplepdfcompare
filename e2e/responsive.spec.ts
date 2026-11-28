@@ -48,7 +48,14 @@ async function compared(page: Page) {
     try {
       new PerformanceObserver((list) => {
         for (const e of list.getEntries() as any[])
-          w.__loaf.push({ start: e.startTime, ms: e.duration, scripts: (e.scripts ?? []).map((x: any) => ({ invoker: String(x.invokerType ?? x.invoker ?? ""), ms: x.duration })) });
+          w.__loaf.push({
+            start: e.startTime,
+            ms: e.duration,
+            // The rendering at its end: style and layout, then paint and commit.
+            styleLayout: e.styleAndLayoutStart ? e.startTime + e.duration - e.styleAndLayoutStart : 0,
+            render: e.renderStart ? e.startTime + e.duration - e.renderStart : 0,
+            scripts: (e.scripts ?? []).map((x: any) => ({ invoker: String(x.invokerType ?? x.invoker ?? ""), ms: x.duration })),
+          });
       }).observe({ type: "long-animation-frame", buffered: true });
     } catch {
       // not supported: the steps below still say what was slow
@@ -94,7 +101,7 @@ interface Probe {
    * name, how often, the longest and the total, ms. Says which step a long task was.
    */
   steps: Record<string, [number, number, number]>;
-  /** Of the frames over 100 ms: per kind of callback that ran in them, the longest and the total, ms. */
+  /** Of the frames over 100 ms (long animation frames): the whole frame, its rendering (style and layout among it), and each kind of script in it; the longest and the total, ms. */
   frames: Record<string, [number, number]>;
 }
 
@@ -163,11 +170,14 @@ async function probe(page: Page, name: string, act: () => Promise<void>, opts: {
       })(),
       frames: (() => {
         const out: Record<string, [number, number]> = {};
-        for (const f of w.__loaf as { start: number; ms: number; scripts: { invoker: string; ms: number }[] }[]) {
+        for (const f of w.__loaf as { start: number; ms: number; styleLayout: number; render: number; scripts: { invoker: string; ms: number }[] }[]) {
           if (f.start < w.__t0 - 5 || f.ms < 100) continue;
           const by: Record<string, number> = {};
-          for (const x of f.scripts) by[x.invoker] = (by[x.invoker] ?? 0) + x.ms;
-          if (!f.scripts.length) by["(no script)"] = f.ms;
+          for (const x of f.scripts) by[`script: ${x.invoker}`] = (by[`script: ${x.invoker}`] ?? 0) + x.ms;
+          // What the frame spent besides scripts: in its rendering (style, layout, paint, commit), or before it.
+          by["rendering"] = f.render;
+          by["of which style and layout"] = f.styleLayout;
+          by["frame, all"] = f.ms;
           for (const [k, ms] of Object.entries(by)) {
             const o = (out[k] ??= [0, 0]);
             o[0] = Math.max(o[0], Math.round(ms));
