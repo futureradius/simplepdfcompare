@@ -59,7 +59,7 @@ function run(page: Page, m: Motion) {
       const tick = (t: number) => {
         if (last) gaps.push(t - last);
         last = t;
-        if (i > 0) js.push(api.inspect().drawn.ms);
+        if (i > 0) js.push(api.frame().ms);
         if (i > m.frames) return done();
         const u = i / m.frames;
         // Zoom moves geometrically, so a zoom path feels even.
@@ -99,7 +99,7 @@ function sharpAfterRest(page: Page, at: [number, number, number]) {
     // Both Plans: two sharp layers, one from each worker.
     while (performance.now() - t0 < 5000) {
       await new Promise((r) => requestAnimationFrame(r));
-      if (api.inspect().sharpRenders >= before + 2) return Math.round(performance.now() - t0);
+      if (api.frame().sharpRenders >= before + 2) return Math.round(performance.now() - t0);
     }
     return -1;
   }, at);

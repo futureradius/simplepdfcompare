@@ -34,13 +34,15 @@ import {
   type ViewSettings,
 } from "./compareframe";
 import { AT_ONCE, Layers, MARK_COLOURS, paintMark, paintMarks, paintMarkSteps, paintNotCompared, paintNotComparedLabels, paintOutline, paintRings, pill, REMOVED_INK, type Pace, type PaintMark, type PaintOutline, type Viewport } from "./comparepaint";
-import { Minimap, minimapShapes, type MinimapElements } from "./minimap";
+import { Minimap, minimapShapes, PLACE_MIN_PX, type MinimapElements } from "./minimap";
+import { placesMask, type MaskItem } from "./minimapraster";
 import { levelFor, levelScale, MAX_TILED_S, metricScale, nearestFirst, pictureFor, tilesFor, TILE_PX, type Tile } from "./marktiles";
 import { boxOutline, OUTLINE_MARGIN_MM, outlineGroups, outlineOf, type OutlineGroup } from "./outlines";
 import type { Role, Sides } from "./openplans";
 import { boxSelect, placeAt, type Pickable } from "./picking";
 import { PX_PER_MM_100 } from "./planview";
 import { BatchSizer, SliceRunner, type Lane } from "./slices";
+import { span, SPAN_MS } from "./spans";
 
 /** CAD: a plain drag or click replaces, Shift adds, Ctrl removes. */
 export type SelectMode = "replace" | "add" | "remove";
@@ -221,7 +223,7 @@ export class CompareView {
   private tileVersion = 0;
   /** Paints the tiles in slices: those in view first, then those painted ahead (ADR 0011). */
   private readonly painter = new SliceRunner(
-    { now: () => performance.now(), later: (fn) => void setTimeout(fn, 0) },
+    { now: () => performance.now(), later: (fn) => void setTimeout(() => span("tile slice", fn), 0) },
     { sliceMs: () => (this.moving ? MOVING_SLICE_MS : SLICE_MS), may: (lane) => lane === "view" || !this.moving, onError: (e) => console.warn("tile not painted", e) },
   );
   /**
@@ -251,7 +253,10 @@ export class CompareView {
       },
       done: (phase, l, n) => {
         rasterize(l);
-        sizer(phase).took(n, performance.now() - t0);
+        const t1 = performance.now();
+        sizer(phase).took(n, t1 - t0);
+        // A batch that took long (a single item can): named, for the measurement (spans.ts).
+        if (t1 - t0 >= SPAN_MS) performance.measure(`spc tile batch: ${phase}`, { start: t0, end: t1 });
       },
       flush: rasterize,
     };
@@ -298,7 +303,9 @@ export class CompareView {
   private drawnVersion = -1;
   /** Sharp layers that arrived (for measuring). */
   private sharpRenders = 0;
-  /** What the last frame drew, for the tests. */
+  /** What the last frame showed from the tiles, where the marks drawn are counted when asked. */
+  private countedIn: Box = { x0: 0, y0: 0, x1: 0, y1: 0 };
+  /** What the last frame drew, for the tests (marks: -1 from the tiles, see inspect). */
   drawn: { notCompared: NotCompared[]; marks: number; outlines: number; rings: number; ms: number } = { notCompared: [], marks: 0, outlines: 0, rings: 0, ms: 0 };
 
   constructor(
@@ -545,6 +552,11 @@ export class CompareView {
   }
 
   /** For the tests. */
+  /** For the measurements: cheap enough to ask every frame. */
+  frameStats() {
+    return { ms: this.drawn.ms, marksReady: this.marksReady && this.drawnVersion === this.tileVersion, tileVersion: this.tileVersion, sharpRenders: this.sharpRenders };
+  }
+
   inspect() {
     return {
       zoom: this.zoom,
@@ -565,7 +577,11 @@ export class CompareView {
       marksReady: this.marksReady && this.drawnVersion === this.tileVersion,
       tileVersion: this.tileVersion,
       outlineGroups: this.groups.length,
-      drawn: { ...this.drawn, notCompared: this.drawn.notCompared.map((z) => ({ plan: z.plan, kind: z.kind, label: z.label })) },
+      drawn: {
+        ...this.drawn,
+        marks: this.drawn.marks >= 0 ? this.drawn.marks : this.marks.filter((pm) => touches(pm.mark.box, this.countedIn) && this.isShown(pm.index)).length,
+        notCompared: this.drawn.notCompared.map((z) => ({ plan: z.plan, kind: z.kind, label: z.label })),
+      },
     };
   }
 
@@ -792,36 +808,35 @@ export class CompareView {
 
   private updateSpots(): void {
     if (!this.result) return;
-    this.spots = placeSpots(this.result.places, this.result.comparison.marks, this.shown);
+    const res = this.result;
+    this.spots = span("places on the Plan", () => placeSpots(res.places, res.comparison.marks, this.shown));
     this.spotByNo = new Map(this.spots.map((p) => [p.no, p] as const));
     this.pickables = undefined;
-    this.groups = outlineGroups(this.result.places, this.result.comparison.marks, (i) => this.isShown(i));
+    this.groups = span("outline groups", () => outlineGroups(res.places, res.comparison.marks, (i) => this.isShown(i)));
     const spots = this.spots,
       marks = this.marks;
     const byNo = new Map(this.result.places.map((p) => [p.no, p] as const));
     this.minimap.setPlaces((ctx, scale, origin) => {
-      ctx.lineJoin = ctx.lineCap = "round";
-      for (const shape of minimapShapes(spots, scale, origin)) {
-        const colour = shape.colour === "added" ? MARK_COLOURS.Added : MARK_COLOURS.Removed;
-        ctx.fillStyle = ctx.strokeStyle = colour;
-        if (shape.type === "dot") {
-          ctx.beginPath();
-          ctx.arc(shape.x, shape.y, shape.d / 2, 0, 2 * Math.PI);
-          ctx.fill();
-          continue;
-        }
-        // Its own shape: its shown marks, outlined so that it is at least 3 px in every direction.
-        ctx.save();
-        ctx.setTransform(ctx.getTransform().scale(scale).translate(-origin.x, -origin.y));
-        ctx.lineWidth = shape.strokePx / scale;
-        for (const i of byNo.get(shape.no)!.marks) {
-          if (!this.isShown(i)) continue;
-          const pm = marks[i]!;
-          ctx.stroke(pm.path);
-          if (pm.closed) ctx.fill(pm.path);
-        }
-        ctx.restore();
-      }
+      // As pixels (minimapraster.ts): the dots, and each larger Place's shown marks grown to a 3 px line.
+      const dpr = ctx.getTransform().a,
+        W = ctx.canvas.width,
+        H = ctx.canvas.height;
+      let strokePx = PLACE_MIN_PX;
+      const items: MaskItem[] = minimapShapes(spots, scale, origin).map((shape) => {
+        if (shape.type === "dot") return { colour: shape.colour, dot: { x: shape.x * dpr, y: shape.y * dpr, d: shape.d * dpr } };
+        strokePx = shape.strokePx;
+        return { colour: shape.colour, marks: byNo.get(shape.no)!.marks.filter((i) => this.isShown(i)).map((i) => marks[i]!.mark) };
+      });
+      const mask = placesMask(W, H, items, { scale: scale * dpr, origin, r: (strokePx * dpr) / 2, boxBelow: 2 * dpr });
+      const img = ctx.createImageData(W, H),
+        px = new Uint32Array(img.data.buffer);
+      const rgba = (hex: string) => {
+        const n = parseInt(hex.slice(1), 16);
+        return (0xff << 24) | ((n & 0xff) << 16) | (n & 0xff00) | (n >> 16);
+      };
+      const ink = [0, rgba(MARK_COLOURS.Removed), rgba(MARK_COLOURS.Added)];
+      for (let i = 0; i < mask.length; i++) if (mask[i]) px[i] = ink[mask[i]!]!;
+      ctx.putImageData(img, 0, 0);
     });
   }
 
@@ -833,7 +848,7 @@ export class CompareView {
     let o = this.outlines.get(g.key);
     if (o) return o;
     if (performance.now() < until) {
-      o = paintOutline(g.kind, outlineOf(g.marks.map((i) => this.marks[i]!.mark)));
+      o = span("an outline", () => paintOutline(g.kind, outlineOf(g.marks.map((i) => this.marks[i]!.mark))));
       this.outlines.set(g.key, o);
       return o;
     }
@@ -953,7 +968,7 @@ export class CompareView {
     if (this.frameId) return;
     this.frameId = requestAnimationFrame(() => {
       this.frameId = 0;
-      this.draw();
+      span("frame", () => this.draw());
     });
   }
 
@@ -1116,7 +1131,7 @@ export class CompareView {
       }
       if (this.settings.marks) {
         // The changed words' own ink comes from the Plan that draws them.
-        this.paintLive(ctx, this.thumbLayers, vp, performance.now() + 25, vp.s, (role) => ctx.drawImage(maps.get(role)!, 0, 0, W, H));
+        span("list picture", () => this.paintLive(ctx, this.thumbLayers, vp, performance.now() + 25, vp.s, (role) => ctx.drawImage(maps.get(role)!, 0, 0, W, H)));
       }
       return true;
     } finally {
@@ -1301,7 +1316,8 @@ export class CompareView {
         continue;
       }
       ready = false;
-      if (!this.moving || !pic.current) want.push(t);
+      // While the view moves, only a tile with nothing at all to stand in for it: outdated marks are painted again at rest.
+      if (!this.moving || (!pic.own && !pic.cover)) want.push(t);
       if (!pic.current) stats.outdated++;
       if (pic.own) place(pic.own, t.rect);
       else if (pic.cover) {
@@ -1470,7 +1486,9 @@ export class CompareView {
         drawnOutlines = n.outlines;
       } else {
         this.drawTiles(ctx, vp, level);
-        for (const pm of this.marks) if (touches(pm.mark.box, v) && this.isShown(pm.index)) drawnMarks++;
+        // Counted only when asked (inspect): a loop over every mark is too dear for every frame.
+        drawnMarks = -1;
+        this.countedIn = v;
       }
       if (this.settings.rings) {
         const rs = rings(this.spots, this.zoom, v);
@@ -1521,6 +1539,8 @@ export function setUpCompareView(deps: CompareViewDeps): CompareView {
   // For the e2e tests and the frame-time measurement.
   (window as unknown as { __spcCompare: unknown }).__spcCompare = {
     inspect: () => view.inspect(),
+    /** What the last frame took and whether it showed the marks up to date: cheap, for every frame of a measurement. */
+    frame: () => view.frameStats(),
     centerOn: (x: number, y: number) => view.centerOn({ x, y }),
     setView: (cx: number, cy: number, zoom: number) => view.setView(cx, cy, zoom),
     notComparedOnScreen: (plan: Role, kind: NotCompared["kind"]) => view.notComparedOnScreen(plan, kind),

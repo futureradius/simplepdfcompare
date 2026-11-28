@@ -43,6 +43,16 @@ async function compared(page: Page) {
     new PerformanceObserver((list) => {
       for (const e of list.getEntries()) w.__long.push({ start: e.startTime, ms: e.duration });
     }).observe({ type: "longtask", buffered: true });
+    // Long animation frames, with what ran in them (which kind of callback), where supported.
+    w.__loaf = [];
+    try {
+      new PerformanceObserver((list) => {
+        for (const e of list.getEntries() as any[])
+          w.__loaf.push({ start: e.startTime, ms: e.duration, scripts: (e.scripts ?? []).map((x: any) => ({ invoker: String(x.invokerType ?? x.invoker ?? ""), ms: x.duration })) });
+      }).observe({ type: "long-animation-frame", buffered: true });
+    } catch {
+      // not supported: the steps below still say what was slow
+    }
   });
   await page.setViewportSize({ width: 1600, height: 1000 });
   await page.goto(APP);
@@ -79,6 +89,13 @@ interface Probe {
   shownMs: number;
   /** The longest gap between two frames in the window, ms. */
   maxFrameMs: number;
+  /**
+   * The app's named steps that took 15 ms or more ("spc …" measures, src/ui/spans.ts): per
+   * name, how often, the longest and the total, ms. Says which step a long task was.
+   */
+  steps: Record<string, [number, number, number]>;
+  /** Of the frames over 100 ms: per kind of callback that ran in them, the longest and the total, ms. */
+  frames: Record<string, [number, number]>;
 }
 
 /**
@@ -93,7 +110,7 @@ async function probe(page: Page, name: string, act: () => Promise<void>, opts: {
     w.__gaps = [];
     w.__shown = -1;
     const id = (w.__probing = (w.__probe = (w.__probe ?? 0) + 1));
-    const v0 = w.__spcCompare.inspect().tileVersion;
+    const v0 = w.__spcCompare.frame().tileVersion;
     let last = 0,
       changed = changesTiles ? -1 : w.__t0 + 30;
     const tick = (t: number) => {
@@ -101,7 +118,7 @@ async function probe(page: Page, name: string, act: () => Promise<void>, opts: {
       if (last) w.__gaps.push(t - last);
       last = t;
       if (w.__shown < 0) {
-        const s = w.__spcCompare.inspect();
+        const s = w.__spcCompare.frame();
         if (changed < 0 && s.tileVersion !== v0) changed = t;
         if (changed >= 0 && t >= changed && s.marksReady) w.__shown = t - changed;
       }
@@ -132,8 +149,46 @@ async function probe(page: Page, name: string, act: () => Promise<void>, opts: {
       totalMs: Math.round(long.reduce((s, e) => s + e.ms, 0)),
       shownMs: Math.round(w.__shown),
       maxFrameMs: Math.round(Math.max(0, ...(w.__gaps as number[]))),
+      steps: (() => {
+        const out: Record<string, [number, number, number]> = {};
+        for (const m of performance.getEntriesByType("measure")) {
+          if (!m.name.startsWith("spc ") || m.startTime < w.__t0 - 5) continue;
+          const o = (out[m.name.slice(4)] ??= [0, 0, 0]);
+          o[0]++;
+          o[1] = Math.max(o[1], Math.round(m.duration));
+          o[2] += Math.round(m.duration);
+        }
+        performance.clearMeasures();
+        return out;
+      })(),
+      frames: (() => {
+        const out: Record<string, [number, number]> = {};
+        for (const f of w.__loaf as { start: number; ms: number; scripts: { invoker: string; ms: number }[] }[]) {
+          if (f.start < w.__t0 - 5 || f.ms < 100) continue;
+          const by: Record<string, number> = {};
+          for (const x of f.scripts) by[x.invoker] = (by[x.invoker] ?? 0) + x.ms;
+          if (!f.scripts.length) by["(no script)"] = f.ms;
+          for (const [k, ms] of Object.entries(by)) {
+            const o = (out[k] ??= [0, 0]);
+            o[0] = Math.max(o[0], Math.round(ms));
+            o[1] += Math.round(ms);
+          }
+        }
+        w.__loaf = [];
+        return out;
+      })(),
     };
   }, name);
+}
+
+/** The slow steps and the scripts in long frames of a probe, on one line, the longest first. */
+function steps(r: Probe): string {
+  const st = Object.entries(r.steps).sort((a, b) => b[1][1] - a[1][1]);
+  const fr = Object.entries(r.frames).sort((a, b) => b[1][0] - a[1][0]);
+  return (
+    (st.length ? `\n    steps (count, longest, total ms): ${st.map(([n, [c, m, t]]) => `${n} ${c}× ${m}/${t}`).join("; ")}` : "") +
+    (fr.length ? `\n    in frames over 100 ms (longest, total ms): ${fr.map(([n, [m, t]]) => `${n} ${m}/${t}`).join("; ")}` : "")
+  );
 }
 
 interface Motion {
@@ -149,12 +204,16 @@ function run(page: Page, m: Motion) {
     const api = (window as any).__spcCompare;
     api.setView(...m.from);
     await new Promise((r) => setTimeout(r, 1500));
-    const gaps: number[] = [];
+    const gaps: number[] = [],
+      js: number[] = [];
+    performance.clearMeasures();
+    const t0 = performance.now();
     await new Promise<void>((done) => {
       let i = 0,
         last = 0;
       const tick = (t: number) => {
         if (last) gaps.push(t - last);
+        if (i > 0) js.push(api.frame().ms);
         last = t;
         if (i > m.frames) return done();
         const u = i / m.frames;
@@ -167,7 +226,15 @@ function run(page: Page, m: Motion) {
     });
     const s = [...gaps].sort((x, y) => x - y);
     const q = (p: number) => +s[Math.min(s.length - 1, Math.floor(p * s.length))]!.toFixed(1);
-    return { name: m.name, frames: gaps.length, p50: q(0.5), p95: q(0.95), max: q(1), dropped: gaps.filter((g) => g > 1.5 * (1000 / 60)).length };
+    const steps: Record<string, [number, number]> = {};
+    for (const e of performance.getEntriesByType("measure")) {
+      if (!e.name.startsWith("spc ") || e.startTime < t0) continue;
+      const o = (steps[e.name.slice(4)] ??= [0, 0]);
+      o[0]++;
+      o[1] = Math.max(o[1], Math.round(e.duration));
+    }
+    const jsMax = Math.round(Math.max(0, ...js) * 10) / 10;
+    return { name: m.name, frames: gaps.length, p50: q(0.5), p95: q(0.95), max: q(1), dropped: gaps.filter((g) => g > 1.5 * (1000 / 60)).length, jsMax, steps };
   }, m);
 }
 
@@ -183,7 +250,8 @@ test("the view stays responsive after filtering, hiding, M and a display setting
     const count = new Map<string, number>();
     for (const p of ps) if (p.kinds.length === 1) count.set(p.kind, (count.get(p.kind) ?? 0) + 1);
     const kind = [...count].sort((a, b) => b[1] - a[1])[0]?.[0] ?? ps[0]!.kind;
-    return { places: ps.length, kind, marks: (window as any).__spcCompare.inspect().outlineGroups as number };
+    const s = (window as any).__spcCompare.inspect();
+    return { places: ps.length, kind, groups: s.outlineGroups as number, marks: s.drawn.marks as number };
   });
 
   await page.locator(".filter-btn").click();
@@ -229,12 +297,18 @@ test("the view stays responsive after filtering, hiding, M and a display setting
   for (const m of motions) frames.push(await run(page, m));
 
   mkdirSync("test-results", { recursive: true });
-  writeFileSync("test-results/responsive.json", JSON.stringify({ synthetic: PAIR.synthetic, places: info.places, outlineGroups: info.marks, results, frames }, null, 2));
+  writeFileSync("test-results/responsive.json", JSON.stringify({ synthetic: PAIR.synthetic, places: info.places, outlineGroups: info.groups, marks: info.marks, results, frames }, null, 2));
   console.log(
     `RESPONSIVENESS (${PAIR.synthetic ? "synthetic dense pair" : "given pair"}; long tasks in the ${WINDOW_MS / 1000} s after each change):\n` +
-      results.map((r) => `${r.name}: tasks=${r.tasks} max=${r.maxMs} ms total=${r.totalMs} ms outdated marks shown for ${r.shownMs} ms, longest frame ${r.maxFrameMs} ms`).join("\n") +
+      results.map((r) => `${r.name}: tasks=${r.tasks} max=${r.maxMs} ms total=${r.totalMs} ms outdated marks shown for ${r.shownMs} ms, longest frame ${r.maxFrameMs} ms` + steps(r)).join("\n") +
       "\nFRAME TIMES (ms between frames):\n" +
-      frames.map((r) => `${r.name}: frames=${r.frames} p50=${r.p50} p95=${r.p95} max=${r.max} dropped=${r.dropped}`).join("\n"),
+      frames
+        .map(
+          (r) =>
+            `${r.name}: frames=${r.frames} p50=${r.p50} p95=${r.p95} max=${r.max} dropped=${r.dropped}, draw JS max ${r.jsMax} ms` +
+            (Object.keys(r.steps).length ? `\n    steps (count, longest ms): ${Object.entries(r.steps).map(([n, [c, mx]]) => `${n} ${c}× ${mx}`).join("; ")}` : ""),
+        )
+        .join("\n"),
   );
   if (PAIR.synthetic) {
     for (const r of results) expect(r.maxMs, r.name).toBeLessThan(MAX_MS);
